@@ -6,7 +6,7 @@ from flask import Flask, flash, render_template, request
 
 from gemeni_api_helper import edit_image
 from openai_helper import generate_tags_for_product_for_pintrest, generate_text
-from pinterest_helper import create_pinterest_pin
+from pintrest.pinterest_helper import create_pinterest_pin
 
 load_dotenv()
 

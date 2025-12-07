@@ -63,8 +63,8 @@ def edit_image(
         return original_bytes
 
     try:
-        import google.generativeai as genai  # type: ignore
-        from google.generativeai import types  # type: ignore
+        from google import genai
+        from google.genai import types
     except ImportError:
         logger.warning("google-generativeai package not installed; returning original image.")
         return original_bytes

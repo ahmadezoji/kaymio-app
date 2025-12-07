@@ -21,8 +21,15 @@ def create_pinterest_pin(
 ) -> Dict[str, str]:
     """Upload a pin to Pinterest using the v5 API."""
 
-    access_token = os.getenv("PINTEREST_ACCESS_TOKEN")
-    board_id = os.getenv("PINTEREST_BOARD_ID")
+    with open("access_token.txt", 'r') as f:
+        access_token = f.read().strip()
+
+    if not access_token:
+        print("Pinterest access token not found")
+        return None
+    
+    board_id = os.getenv("PINTEREST_BOARD_ID") or get_default_board_id()
+    
     if not access_token or not board_id:
         logger.warning("Pinterest credentials missing; returning local-only payload.")
         return {
@@ -63,3 +70,29 @@ def create_pinterest_pin(
         "id": data.get("id") or data.get("pin_id"),
         "url": data.get("link") or data.get("url"),
     }
+
+
+def get_default_board_id():
+    
+    try:
+        with open("access_token.txt", 'r') as f:
+            access_token = f.read().strip()
+
+        if not access_token:
+            print("Pinterest access token not found")
+            return None
+        response = requests.get(
+            'https://api.pinterest.com/v5/boards',
+            headers={'Authorization': f'Bearer {access_token}'}
+        )
+
+        if response.status_code == 200:
+            boards = response.json().get('items', [])
+            if boards:
+                return boards[0].get('id')
+
+        return None
+
+    except Exception as e:
+        print(f"Error getting boards: {e}")
+        return None
