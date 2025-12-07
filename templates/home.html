@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Kaymio Affiliate Studio</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">Kaymio Affiliate Studio</p>
+          <h1>Launch scroll-stopping pins in minutes.</h1>
+          <p class="lede">
+            Drop in your marketplace listing, polish the copy, and let the AI workflow craft a
+            Pinterest-ready visual + caption combo tailored for your affiliate stores.
+          </p>
+        </div>
+        <div class="hero-pill">
+          <span>Multi-market ready</span>
+          <span>Gemini visuals</span>
+          <span>Pinterest automation</span>
+        </div>
+      </header>
+
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          <div class="flash-stack">
+            {% for category, message in messages %}
+              <div class="flash {{ category }}">{{ message }}</div>
+            {% endfor %}
+          </div>
+        {% endif %}
+      {% endwith %}
+
+      <main class="layout">
+        {% set values = form_values or {} %}
+        <form
+          method="post"
+          action="{{ url_for('generate_pinterest') }}"
+          enctype="multipart/form-data"
+          class="grid"
+        >
+          <section class="card">
+            <div class="card-header">
+              <h2>Product Data Entry</h2>
+              <p>Pick the marketplace and drop in the SKU or URL you want to boost.</p>
+            </div>
+            <div class="field-grid">
+              <label>
+                <span>Marketplace</span>
+                <div class="input-shell">
+                  <select name="market" required>
+                    <option value="" disabled {% if not values.get('market') %}selected{% endif %}>
+                      Choose a marketplace
+                    </option>
+                    {% for market in markets %}
+                      <option value="{{ market }}" {% if values.get('market') == market %}selected{% endif %}>
+                        {{ market }}
+                      </option>
+                    {% endfor %}
+                  </select>
+                </div>
+              </label>
+              <label>
+                <span>SKU / Product Link</span>
+                <input
+                  name="sku_or_url"
+                  placeholder="e.g. SHEIN-329499 or https://..."
+                  value="{{ values.get('sku_or_url', '') }}"
+                  required
+                  type="text"
+                />
+              </label>
+            </div>
+            <button type="button" class="ghost-btn" title="Coming soon">Fetch product data</button>
+          </section>
+
+          <section class="card">
+            <div class="card-header">
+              <h2>Manual product assets</h2>
+              <p>Upload a clean product shot when the marketplace does not expose an API.</p>
+            </div>
+            <label class="dropzone">
+              <input type="file" name="product_image" accept="image/*" required />
+              <span class="dz-icon">⬆︎</span>
+              <p>Drag &amp; drop or click to upload a hero image (PNG, JPG, GIF, WEBP).</p>
+            </label>
+            <label>
+              <span>Product title</span>
+              <input
+                name="title"
+                placeholder="MagSafe-ready Luxury Phone Case"
+                value="{{ values.get('title', '') }}"
+                required
+                type="text"
+              />
+            </label>
+            <label>
+              <span>Short description</span>
+              <textarea
+                name="description"
+                placeholder="Add a quick summary or the highlights you love about this listing."
+                rows="3"
+              >{{ values.get('description', '') }}</textarea>
+            </label>
+            <label>
+              <span>Affiliate link</span>
+              <input
+                name="affiliate_link"
+                placeholder="https://yourstore.com/track?id=..."
+                value="{{ values.get('affiliate_link', '') }}"
+                required
+                type="url"
+              />
+            </label>
+          </section>
+
+          <section class="card">
+            <div class="card-header">
+              <h2>Pinterest prompt booster</h2>
+              <p>Drop any extra angles, seasonal hooks, or CTA copy.</p>
+            </div>
+            <label>
+              <span>Optimization text</span>
+              <textarea
+                name="pinterest_extra"
+                placeholder="Mention eco-friendly materials, Mother's Day bundles, etc."
+                rows="3"
+              >{{ values.get('pinterest_extra', '') }}</textarea>
+            </label>
+            <button class="primary" type="submit">Generating for Pinterest</button>
+          </section>
+        </form>
+
+        {% if result %}
+          <section class="card result">
+            <div class="card-header">
+              <h2>Pin ready ✅</h2>
+              <p>Gemini visual + Pinterest copy have been dispatched to your board.</p>
+            </div>
+            <dl>
+              <dt>Title</dt>
+              <dd>{{ result.title }}</dd>
+              <dt>Description</dt>
+              <dd>{{ result.description }}</dd>
+              {% if result.tags %}
+                <dt>Tags</dt>
+                <dd>
+                  {% for tag in result.tags %}
+                    <span class="tag">{{ tag }}</span>
+                  {% endfor %}
+                </dd>
+              {% endif %}
+              {% if result.pin_url %}
+                <dt>Pin URL</dt>
+                <dd><a href="{{ result.pin_url }}" target="_blank" rel="noopener">View on Pinterest</a></dd>
+              {% endif %}
+            </dl>
+          </section>
+        {% endif %}
+      </main>
+    </div>
+  </body>
+</html>
