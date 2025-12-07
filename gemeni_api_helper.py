@@ -7,11 +7,18 @@ import os
 from typing import Optional, Union
 
 logger = logging.getLogger(__name__)
+from dotenv import load_dotenv
+load_dotenv()
 
 try:  # Optional dependency
     from PIL import Image  # type: ignore
 except ImportError:  # pragma: no cover
     Image = None  # type: ignore
+
+try:  # Attempt to import Gemini SDK once at module import
+    import google.generativeai as genai  # type: ignore
+except ImportError:  # pragma: no cover
+    genai = None  # type: ignore
 
 
 def _coerce_image_bytes(base_image: Union[bytes, bytearray, str, "Image.Image"]) -> bytes:
@@ -62,10 +69,7 @@ def edit_image(
         logger.warning("GOOGLE_API_KEY/GEMINI_API_KEY is not configured; returning original image.")
         return original_bytes
 
-    try:
-        from google import genai
-        from google.genai import types
-    except ImportError:
+    if genai is None:
         logger.warning("google-generativeai package not installed; returning original image.")
         return original_bytes
 
@@ -83,37 +87,71 @@ def edit_image(
         "Enhance the uploaded photo with vibrant lighting, clean typography overlays, and platform-friendly framing."
     )
 
+    types_module = getattr(genai, "types", None)
     image_config = None
-    if aspect_ratio:
-        image_config = types.ImageConfig(aspect_ratio=aspect_ratio)
+    generation_config = None
 
-    config = types.GenerateContentConfig(
-        response_modalities=["IMAGE"],
-        image_config=image_config,
-    )
+    if types_module:
+        if aspect_ratio:
+            image_config_cls = getattr(types_module, "ImageConfig", None) or getattr(
+                types_module, "ImageGenerationConfig", None
+            )
+            if image_config_cls:
+                try:
+                    image_config = image_config_cls(aspect_ratio=aspect_ratio)
+                except Exception as exc:  # pragma: no cover - SDK mismatch handling
+                    logger.warning("Gemini SDK rejected aspect_ratio hint: %s", exc)
+            else:
+                logger.debug("Gemini SDK does not expose ImageConfig; skipping aspect_ratio hint.")
+
+        gen_config_cls = getattr(types_module, "GenerateContentConfig", None)
+        if gen_config_cls:
+            try:
+                generation_config = gen_config_cls(
+                    response_modalities=["IMAGE"],
+                    image_config=image_config,
+                )
+            except Exception:
+                try:
+                    generation_config = gen_config_cls()
+                except Exception:
+                    generation_config = None
+
+        if generation_config is None:
+            gen_config_cls = getattr(types_module, "GenerationConfig", None)
+            if gen_config_cls:
+                try:
+                    generation_config = gen_config_cls()
+                except Exception:
+                    generation_config = None
+    elif aspect_ratio:
+        logger.debug("Gemini types module unavailable; cannot pass aspect_ratio hints.")
 
     try:
+        generation_kwargs = {}
+        if generation_config is not None:
+            generation_kwargs["generation_config"] = generation_config
+
+        combined_prompt = f"{base_context}\n\nInstructions:\n{final_prompt}"
         response = model.generate_content(
             contents=[
-                {"role": "system", "parts": [{"text": base_context}]},
                 {
                     "role": "user",
                     "parts": [
-                        {"text": final_prompt},
+                        {"text": combined_prompt},
                         {"inline_data": {"mime_type": "image/png", "data": original_bytes}},
                     ],
-                },
+                }
             ],
-            generation_config=config,
+            **generation_kwargs,
         )
 
         edited_bytes: Optional[bytes] = None
         for part in getattr(response, "parts", []):
             inline_data = getattr(part, "inline_data", None)
-            if inline_data:
-                edited_bytes = inline_data.get("data")
-                if edited_bytes:
-                    break
+            if inline_data and getattr(inline_data, "data", None):
+                edited_bytes = inline_data.data
+                break
 
         if not edited_bytes and hasattr(response, "generated_images"):
             # Backwards compatibility for imagen-3 style responses

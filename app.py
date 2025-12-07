@@ -148,6 +148,7 @@ def generate_pinterest():
                 "and scroll-stopping composition."
             ),
             aspect_ratio="2:3",
+            output_path=f"template_images/pinterest_pin_{image_file.filename}"
         )
 
         pin_response = create_pinterest_pin(
