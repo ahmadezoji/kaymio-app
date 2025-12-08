@@ -80,7 +80,7 @@
                 />
               </label>
             </div>
-            <button type="button" class="ghost-btn" title="Coming soon">Fetch product data</button>
+            <button type="button" class="ghost-btn" title="Coming soon" disabled>Fetch product data</button>
           </section>
 
           <section class="card">
@@ -139,6 +139,60 @@
             <button class="primary" type="submit">Generating for Pinterest</button>
           </section>
         </form>
+
+        {% if preview %}
+          <section class="card result">
+            <div class="card-header">
+              <h2>Review your pin</h2>
+              <p>Confirm this visual + copy or regenerate another variation before publishing.</p>
+            </div>
+            <div class="preview-grid">
+              <div class="preview-image">
+                <img src="data:image/png;base64,{{ preview.image_data }}" alt="Generated Pinterest pin preview" />
+              </div>
+              <div class="preview-meta">
+                <dl>
+                  <dt>Title</dt>
+                  <dd>{{ preview.title }}</dd>
+                  <dt>Description</dt>
+                  <dd>{{ preview.description }}</dd>
+                  {% if preview.tags %}
+                    <dt>Tags</dt>
+                    <dd>
+                      {% for tag in preview.tags %}
+                        <span class="tag">{{ tag }}</span>
+                      {% endfor %}
+                    </dd>
+                  {% endif %}
+                </dl>
+                <div class="preview-actions">
+                  <form method="post" action="{{ url_for('generate_pinterest') }}">
+                    <input type="hidden" name="market" value="{{ values.get('market', '') }}" />
+                    <input type="hidden" name="sku_or_url" value="{{ values.get('sku_or_url', '') }}" />
+                    <input type="hidden" name="title" value="{{ values.get('title', '') }}" />
+                    <input type="hidden" name="description" value="{{ values.get('description', '') }}" />
+                    <input type="hidden" name="affiliate_link" value="{{ values.get('affiliate_link', '') }}" />
+                    <input type="hidden" name="pinterest_extra" value="{{ values.get('pinterest_extra', '') }}" />
+                    <input type="hidden" name="original_image_path" value="{{ preview.original_image_path }}" />
+                    <button type="submit" class="ghost-btn">Regenerate visual</button>
+                  </form>
+                  <form method="post" action="{{ url_for('confirm_pinterest') }}">
+                    <input type="hidden" name="market" value="{{ values.get('market', '') }}" />
+                    <input type="hidden" name="sku_or_url" value="{{ values.get('sku_or_url', '') }}" />
+                    <input type="hidden" name="pinterest_extra" value="{{ values.get('pinterest_extra', '') }}" />
+                    <input type="hidden" name="affiliate_link" value="{{ values.get('affiliate_link', '') }}" />
+                    <input type="hidden" name="title" value="{{ preview.title }}" />
+                    <input type="hidden" name="description" value="{{ preview.description }}" />
+                    <input type="hidden" name="tags" value='{{ preview.tags_payload }}' />
+                    <input type="hidden" name="generated_image_path" value="{{ preview.generated_image_path }}" />
+                    <input type="hidden" name="original_image_path" value="{{ preview.original_image_path }}" />
+                    <button type="submit" class="primary">Confirm &amp; publish to Pinterest</button>
+                  </form>
+                </div>
+              </div>
+            </div>
+          </section>
+        {% endif %}
 
         {% if result %}
           <section class="card result">

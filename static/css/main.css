@@ -171,7 +171,12 @@ button.ghost-btn {
   color: var(--muted);
   padding: 0.75rem 1rem;
   border-radius: 0.7rem;
+  cursor: pointer;
+}
+
+button.ghost-btn[disabled] {
   cursor: not-allowed;
+  opacity: 0.65;
 }
 
 .flash-stack {
@@ -220,6 +225,36 @@ button.ghost-btn {
   background: rgba(232, 121, 249, 0.1);
   border: 1px solid rgba(232, 121, 249, 0.3);
   font-size: 0.85rem;
+}
+
+.preview-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 1.5rem;
+  align-items: flex-start;
+}
+
+.preview-image img {
+  width: 100%;
+  border-radius: 1rem;
+  border: 1px solid var(--border);
+  box-shadow: 0 10px 35px rgba(5, 5, 26, 0.55);
+}
+
+.preview-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.preview-actions form {
+  margin: 0;
+  flex: 1 1 220px;
+}
+
+.preview-actions button {
+  width: 100%;
 }
 
 @media (max-width: 768px) {
