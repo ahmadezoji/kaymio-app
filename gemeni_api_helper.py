@@ -4,6 +4,7 @@ from __future__ import annotations
 import io
 import logging
 import os
+import time
 from typing import Optional, Union
 
 logger = logging.getLogger(__name__)
@@ -171,3 +172,95 @@ def edit_image(
     except Exception as exc:  # pragma: no cover - defensive fallback
         logger.exception("Gemini image edit failed: %s", exc)
         return original_bytes
+
+
+def generate_video_from_image(
+    prompt: str,
+    image: Union[bytes, Image.Image, str],
+    duration_seconds: int = 5,
+    aspect_ratio: str = "9:16",
+    resolution: str = "720p",
+    output_path: Optional[str] = None,
+    poll_interval: float = 5.0,
+) -> bytes:
+    """Generate a short-form video from an image + prompt using Gemini Veo."""
+
+    if genai is None:
+        raise RuntimeError("google-generativeai package not available")
+
+    api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise RuntimeError("GOOGLE_API_KEY or GEMINI_API_KEY is required for video generation")
+
+    types_module = getattr(genai, "types", None)
+    client_cls = getattr(genai, "Client", None)
+    if not types_module or not client_cls:
+        raise RuntimeError("Gemini SDK is missing required video helpers. Update google-generativeai.")
+
+    genai.configure(api_key=api_key)
+    client = client_cls(api_key=api_key)
+
+    image_cls = getattr(types_module, "Image", None)
+    if image_cls is None:
+        raise RuntimeError("Gemini SDK does not expose Image helper for video generation")
+
+    if Image is not None and isinstance(image, Image.Image):
+        buffer = io.BytesIO()
+        image.save(buffer, format="PNG")
+        image_bytes = buffer.getvalue()
+        image_obj = image_cls.from_bytes(image_bytes, mime_type="image/png")
+    elif isinstance(image, (bytes, bytearray)):
+        image_obj = image_cls.from_bytes(bytes(image), mime_type="image/png")
+    elif isinstance(image, str):
+        image_obj = image_cls.from_file(location=image)
+    else:
+        raise TypeError("image must be bytes, a path string, or PIL.Image.Image instance")
+
+    config_cls = getattr(types_module, "GenerateVideosConfig", None)
+    if config_cls is None:
+        raise RuntimeError("Gemini SDK missing GenerateVideosConfig. Update SDK to use Veo.")
+    config = config_cls(
+        aspect_ratio=aspect_ratio,
+        resolution=resolution,
+        duration_seconds=duration_seconds,
+    )
+
+    model_name = os.getenv("GEMINI_VIDEO_MODEL", "veo-3.1-fast-generate-001")
+    model_client = getattr(client, "models", None)
+    if model_client is None or not hasattr(model_client, "generate_videos"):
+        raise RuntimeError("Gemini client does not expose video generation endpoint")
+
+    operation = model_client.generate_videos(
+        model=model_name,
+        prompt=prompt,
+        image=image_obj,
+        config=config,
+    )
+
+    operations_client = getattr(client, "operations", None)
+    while hasattr(operation, "done") and not operation.done:
+        time.sleep(poll_interval)
+        if operations_client and hasattr(operations_client, "get"):
+            operation = operations_client.get(operation)
+        else:
+            break
+
+    result = getattr(operation, "result", None)
+    generated_videos = getattr(result, "generated_videos", None) if result else None
+    if not generated_videos:
+        raise RuntimeError("No videos returned from Veo video generation.")
+
+    video_info = generated_videos[0]
+    files_client = getattr(client, "files", None)
+    if files_client and hasattr(files_client, "download"):
+        files_client.download(file=video_info.video)
+
+    buffer = io.BytesIO()
+    video_info.video.save(buffer)
+    video_bytes = buffer.getvalue()
+
+    if output_path:
+        with open(output_path, "wb") as f_handle:
+            f_handle.write(video_bytes)
+
+    return video_bytes
