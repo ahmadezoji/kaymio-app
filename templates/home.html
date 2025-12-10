@@ -20,6 +20,10 @@
       <input type="hidden" name="description" value="{{ preview.description | e }}" />
       <input type="hidden" name="affiliate_link" value="{{ values.get('affiliate_link', '') | e }}" />
       <input type="hidden" name="pinterest_extra" value="{{ values.get('pinterest_extra', '') | e }}" />
+      <input type="hidden" name="category" value="{{ values.get('category', '') | e }}" />
+      <input type="hidden" name="price" value="{{ values.get('price', '') | e }}" />
+      <input type="hidden" name="website_boost_prompt_pref" value="{{ values.get('website_boost_prompt', '') | e }}" />
+      <input type="hidden" name="use_affiliate_link_pref" value="{{ values.get('use_affiliate_link', '1') | e }}" />
       <input type="hidden" name="tags" value="{{ preview.tags_payload | e }}" />
       <input type="hidden" name="generated_image_path" value="{{ preview.generated_image_path | e }}" />
       <input type="hidden" name="original_image_path" value="{{ preview.original_image_path | e }}" />
@@ -78,6 +82,8 @@
         {% set preview_data = preview or {} %}
         {% set has_preview = preview is not none %}
         {% set active_sku = values.get('sku_or_url', '') %}
+        {% set use_affiliate_pref = (values.get('use_affiliate_link', '1') or '1') %}
+        {% set use_affiliate_checked = use_affiliate_pref|lower in ['1', 'true', 'yes', 'on'] %}
         <form
           method="post"
           action="{{ url_for('generate_pinterest') }}"
@@ -148,6 +154,24 @@
               >{{ values.get('description', '') }}</textarea>
             </label>
             <label>
+              <span>Category</span>
+              <input
+                name="category"
+                placeholder="e.g. Accessories, Dresses, Gadgets"
+                value="{{ values.get('category', '') }}"
+                type="text"
+              />
+            </label>
+            <label>
+              <span>Price</span>
+              <input
+                name="price"
+                placeholder="$39.00"
+                value="{{ values.get('price', '') }}"
+                type="text"
+              />
+            </label>
+            <label>
               <span>Affiliate link</span>
               <input
                 name="affiliate_link"
@@ -213,10 +237,23 @@
                     <input type="hidden" name="affiliate_link" value="{{ values.get('affiliate_link', '') }}" />
                     <input type="hidden" name="pinterest_extra" value="{{ values.get('pinterest_extra', '') }}" />
                     <input type="hidden" name="original_image_path" value="{{ preview_data.original_image_path }}" />
+                    <input type="hidden" name="category" value="{{ values.get('category', '') }}" />
+                    <input type="hidden" name="price" value="{{ values.get('price', '') }}" />
+                    <input type="hidden" name="website_boost_prompt_pref" value="{{ values.get('website_boost_prompt', '') }}" />
+                    <input type="hidden" name="use_affiliate_link_pref" value="{{ values.get('use_affiliate_link', '1') }}" />
                     <button type="submit" class="ghost-btn">Regenerate visual</button>
                   </form>
-                  <form method="post" action="{{ url_for('confirm_pinterest') }}">
+                  <form method="post" action="{{ url_for('confirm_pinterest') }}" id="pinterest-publish-form">
                     {{ preview_hidden_inputs(preview_data, values) }}
+                    <label class="checkbox">
+                      <input
+                        type="checkbox"
+                        name="use_affiliate_link"
+                        value="1"
+                        {% if use_affiliate_checked %}checked{% endif %}
+                      />
+                      <span>Use affiliate link</span>
+                    </label>
                     <button type="submit" class="primary">Confirm &amp; publish to Pinterest</button>
                   </form>
                 </div>
@@ -224,8 +261,69 @@
             </div>
           {% else %}
             <p class="muted">Generate a product visual to unlock publishing on Pinterest, Instagram, TikTok, and YouTube.</p>
+            <label class="checkbox">
+              <input type="checkbox" disabled />
+              <span>Use affiliate link</span>
+            </label>
           {% endif %}
         </section>
+
+        <section class="card result">
+          <div class="card-header">
+            <div class="card-header-text">
+              <h2>Website content</h2>
+              <p>Ship the AI-polished assets to Kaymio.com and capture the canonical product URL.</p>
+            </div>
+          </div>
+          <div class="platform-grid">
+            <div>
+              <h3>Product snapshot</h3>
+              <dl>
+                <dt>Title</dt>
+                <dd>{{ preview_data.title if has_preview else values.get('title', 'Awaiting creative...') }}</dd>
+                <dt>Price</dt>
+                <dd>{{ values.get('price', '') or 'Add a price to sync with Kaymio' }}</dd>
+                <dt>Category</dt>
+                <dd>{{ values.get('category', '') or 'Add a category to improve mapping' }}</dd>
+                <dt>Affiliate link</dt>
+                <dd>{{ values.get('affiliate_link', '') or 'Add your affiliate link above' }}</dd>
+              </dl>
+              {% if website_result and website_result.product_url %}
+                <p class="muted">
+                  Live product URL:
+                  <a href="{{ website_result.product_url }}" target="_blank" rel="noopener">
+                    {{ website_result.product_url }}
+                  </a>
+                </p>
+              {% else %}
+                <p class="muted">Publish to generate a Kaymio-hosted product URL.</p>
+              {% endif %}
+            </div>
+            <div class="preview-actions">
+              {% if has_preview %}
+                <form method="post" action="{{ url_for('publish_website') }}">
+                  {{ preview_hidden_inputs(preview_data, values) }}
+                  <label>
+                    <span>Boost prompt</span>
+                    <textarea
+                      name="website_boost_prompt"
+                      placeholder="Add merchandising notes, shipping perks, bonus bundle ideas..."
+                      rows="3"
+                    >{{ values.get('website_boost_prompt', '') }}</textarea>
+                  </label>
+                  <button type="submit" class="primary">Publish to Kaymio website</button>
+                </form>
+              {% else %}
+                <label>
+                  <span>Boost prompt</span>
+                  <textarea placeholder="Generate a preview to unlock this field." rows="3" disabled></textarea>
+                </label>
+                <button type="button" class="primary" disabled>Publish to Kaymio website</button>
+              {% endif %}
+            </div>
+          </div>
+        </section>
+
         <section class="card result">
           <div class="card-header">
             <div class="card-header-text">
@@ -281,19 +379,29 @@
                 </form>
                 <form method="post" action="{{ url_for('publish_instagram') }}">
                   {{ preview_hidden_inputs(preview_data, values) }}
-                  <input type="hidden" name="target" value="feed" />
-                  <button type="submit" class="primary">Publish to Instagram feed</button>
-                </form>
-                <form method="post" action="{{ url_for('publish_instagram') }}">
-                  {{ preview_hidden_inputs(preview_data, values) }}
-                  <input type="hidden" name="target" value="story" />
-                  <button type="submit" class="ghost-btn">Share as story</button>
+                  <label class="checkbox">
+                    <input
+                      type="checkbox"
+                      name="use_affiliate_link"
+                      value="1"
+                      {% if use_affiliate_checked %}checked{% endif %}
+                    />
+                    <span>Use affiliate link</span>
+                  </label>
+                  <div class="button-row">
+                    <button type="submit" class="primary" name="target" value="feed">Publish to Instagram feed</button>
+                    <button type="submit" class="ghost-btn" name="target" value="story">Share as story</button>
+                  </div>
                 </form>
               {% else %}
                 <button type="button" class="ghost-btn" disabled>Generate feed visual</button>
                 <button type="button" class="ghost-btn" disabled>Generate story visual</button>
                 <button type="button" class="primary" disabled>Publish to Instagram feed</button>
                 <button type="button" class="ghost-btn" disabled>Share as story</button>
+                <label class="checkbox">
+                  <input type="checkbox" disabled />
+                  <span>Use affiliate link</span>
+                </label>
               {% endif %}
             </div>
           </div>
@@ -337,6 +445,15 @@
                 {% if preview_data.video_url %}
                   <form method="post" action="{{ url_for('publish_youtube') }}">
                     {{ preview_hidden_inputs(preview_data, values) }}
+                    <label class="checkbox">
+                      <input
+                        type="checkbox"
+                        name="use_affiliate_link"
+                        value="1"
+                        {% if use_affiliate_checked %}checked{% endif %}
+                      />
+                      <span>Use affiliate link</span>
+                    </label>
                     <label>
                       <span>Privacy</span>
                       <select name="privacy_status">
@@ -353,6 +470,10 @@
               {% else %}
                 <button type="button" class="ghost-btn" disabled>Generate YouTube Short</button>
                 <button type="button" class="primary" disabled>Publish to YouTube Shorts</button>
+                <label class="checkbox">
+                  <input type="checkbox" disabled />
+                  <span>Use affiliate link</span>
+                </label>
               {% endif %}
             </div>
           </div>
@@ -391,6 +512,15 @@
                 {% if preview_data.video_url %}
                   <form method="post" action="{{ url_for('publish_tiktok') }}">
                     {{ preview_hidden_inputs(preview_data, values) }}
+                    <label class="checkbox">
+                      <input
+                        type="checkbox"
+                        name="use_affiliate_link"
+                        value="1"
+                        {% if use_affiliate_checked %}checked{% endif %}
+                      />
+                      <span>Use affiliate link</span>
+                    </label>
                     <label>
                       <span>Privacy</span>
                       <select name="privacy_level">
@@ -407,6 +537,10 @@
               {% else %}
                 <button type="button" class="ghost-btn" disabled>Generate TikTok video</button>
                 <button type="button" class="primary" disabled>Publish to TikTok</button>
+                <label class="checkbox">
+                  <input type="checkbox" disabled />
+                  <span>Use affiliate link</span>
+                </label>
               {% endif %}
             </div>
           </div>

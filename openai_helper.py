@@ -328,3 +328,38 @@ def generate_youtube_metadata(title: str, description: str) -> Dict[str, str]:
             if str(item).strip()
         ][:12],
     }
+
+def find_nearest_category(title, categories):
+    try:
+        try:
+            client = _get_client()
+        except RuntimeError:
+            return None
+        if categories and isinstance(categories[0], dict):
+            category_pairs = [
+                f"{cat['name']} (id: {cat['id']})" for cat in categories]
+        else:
+            category_pairs = [
+                f"{name} (id: {cat_id})" for name, cat_id in categories]
+        prompt = (
+            f"Given the following product title: '{title}', "
+            f"determine the most relevant sub category from this list: {', '.join(category_pairs)}. "
+            f"Return only the related sub category id."
+        )
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant that matches product titles to categories."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=60,
+            temperature=0.7,
+            stop=["\n"]
+        )
+        category_id = response.choices[0].message.content.strip()
+        if not category_id.isdigit():
+            category_id = '14'  # Default to 'Health and beauty' if invalid
+        return category_id
+    except Exception as e:
+        print(f"Error finding nearest category: {e}")
+        return None

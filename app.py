@@ -22,6 +22,7 @@ from openai_helper import (
 from pintrest.pinterest_helper import create_pinterest_pin
 from tiktok.tiktok_api_helper import publish_tiktok_post
 from youtube.youtube_api_helper import publish_short_video
+from kaymio.kaymio import create_woocommerce_product, find_wordpress_nearest_category
 
 load_dotenv()
 
@@ -49,6 +50,7 @@ MARKET_OPTIONS = [
 ]
 RESETTABLE_PLATFORMS = {"pinterest", "instagram", "youtube", "tiktok"}
 PREVIEW_BINARY_FIELDS = {"image_data", "instagram_image_data"}
+TRUTHY_VALUES = {"1", "true", "yes", "on"}
 
 
 def _empty_app_state() -> Dict[str, Any]:
@@ -137,6 +139,25 @@ def get_last_product_state() -> Dict[str, Any]:
     return state.get("products", {}).get(last_id, {})
 
 
+def get_platform_result(product_id: str, platform: str) -> Optional[Dict[str, Any]]:
+    if not product_id:
+        return None
+    entry = get_product_state(product_id)
+    results = entry.get("results") or {}
+    return results.get(platform)
+
+
+def get_website_result(product_id: str) -> Optional[Dict[str, Any]]:
+    return get_platform_result(product_id, "website")
+
+
+def get_website_product_url(product_id: str) -> Optional[str]:
+    website_result = get_website_result(product_id)
+    if not website_result:
+        return None
+    return website_result.get("product_url")
+
+
 def update_product_state(
     product_id: str,
     *,
@@ -177,6 +198,26 @@ def update_product_state(
 
 def resolve_product_id(values: Dict[str, str]) -> str:
     return normalize_product_id(values.get("sku_or_url", ""))
+
+
+def render_home_view(
+    form_values: Optional[Dict[str, str]],
+    preview_payload: Optional[Dict[str, Any]] = None,
+    pinterest_result: Optional[Dict[str, Any]] = None,
+    *,
+    product_id: str = "",
+    website_result: Optional[Dict[str, Any]] = None,
+):
+    if website_result is None and product_id:
+        website_result = get_website_result(product_id)
+    return render_template(
+        "home.html",
+        markets=MARKET_OPTIONS,
+        form_values=form_values or {},
+        preview=preview_payload,
+        result=pinterest_result,
+        website_result=website_result,
+    )
 
 
 def has_unfinished_platforms(entry: Dict[str, Any]) -> bool:
@@ -272,6 +313,16 @@ def _store_image(bytes_data: bytes, directory: Path, suffix: str) -> str:
     return destination.relative_to(STORAGE_ROOT).as_posix()
 
 
+def resolve_storage_path(relative_path: str) -> Optional[str]:
+    if not relative_path:
+        return None
+    target = (STORAGE_ROOT / relative_path).resolve()
+    storage_root = STORAGE_ROOT.resolve()
+    if not str(target).startswith(str(storage_root)) or not target.exists():
+        return None
+    return str(target)
+
+
 def save_original_image(bytes_data: bytes, original_filename: str) -> str:
     suffix = Path(original_filename).suffix.lower() or ".png"
     return _store_image(bytes_data, ORIGINALS_DIR, suffix)
@@ -316,6 +367,13 @@ def parse_tags_payload(raw_tags: str) -> List[str]:
     return [segment.strip() for segment in raw_tags.split(",") if segment.strip()]
 
 
+def resolve_destination_url(product_id: str, affiliate_link: str, use_affiliate_link: bool) -> str:
+    if use_affiliate_link or not product_id:
+        return affiliate_link
+    product_url = get_website_product_url(product_id)
+    return product_url or affiliate_link
+
+
 def build_prompt_context(form_values: Dict[str, str]) -> str:
     context_bits = []
     for field in (
@@ -332,11 +390,50 @@ def build_prompt_context(form_values: Dict[str, str]) -> str:
     return " | ".join(context_bits)
 
 
+def build_website_description(title: str, base_description: str, boost_prompt: str) -> str:
+    if not boost_prompt:
+        return base_description
+    payload = (
+        f"Title: {title}\nExisting Description: {base_description}\n"
+        f"Boost Prompt: {boost_prompt}"
+    )
+    enhanced = generate_text(
+        payload,
+        context=(
+            "You are an e-commerce copywriter. Expand concise marketing copy into "
+            "a compelling store-ready product description in under 180 words."
+        ),
+        user_prompt=(
+            "Rewrite the e-commerce product description using the boost prompt guidance:\n{text}"
+        ),
+        max_tokens=220,
+        temperature=0.6,
+    )
+    return enhanced or base_description
+
+
 def extract_form_defaults(raw_form_values: Dict[str, str]) -> Dict[str, str]:
-    return {
+    defaults = {
         key: raw_form_values.get(key, "")
-        for key in ("market", "sku_or_url", "title", "description", "affiliate_link", "pinterest_extra")
+        for key in (
+            "market",
+            "sku_or_url",
+            "title",
+            "description",
+            "affiliate_link",
+            "pinterest_extra",
+            "category",
+            "price",
+            "website_boost_prompt",
+        )
     }
+    defaults["website_boost_prompt"] = raw_form_values.get(
+        "website_boost_prompt", raw_form_values.get("website_boost_prompt_pref", defaults.get("website_boost_prompt", ""))
+    )
+    defaults["use_affiliate_link"] = raw_form_values.get(
+        "use_affiliate_link", raw_form_values.get("use_affiliate_link_pref", defaults.get("use_affiliate_link", ""))
+    )
+    return defaults
 
 
 def rebuild_preview_payload(raw_form_values: Dict[str, str]):
@@ -379,6 +476,9 @@ def rebuild_preview_payload(raw_form_values: Dict[str, str]):
         "youtube_keywords_payload": youtube_payload,
         "video_prompt": raw_form_values.get("video_prompt", ""),
         "instagram_image_path": raw_form_values.get("instagram_image_path", ""),
+        "category": raw_form_values.get("category", ""),
+        "price": raw_form_values.get("price", ""),
+        "website_boost_prompt": raw_form_values.get("website_boost_prompt", ""),
     }
 
     image_relative = raw_form_values.get("generated_image_path", "")
@@ -430,12 +530,12 @@ def serve_media(filename: str):
 def home() -> str:
     saved_state = get_last_product_state()
     form_values, preview_payload, pinterest_result, _ = build_render_payload(saved_state)
-    return render_template(
-        "home.html",
-        markets=MARKET_OPTIONS,
-        form_values=form_values,
-        preview=preview_payload,
-        result=pinterest_result,
+    website_result = (saved_state.get("results") or {}).get("website") if saved_state else None
+    return render_home_view(
+        form_values,
+        preview_payload,
+        pinterest_result,
+        website_result=website_result,
     )
 
 
@@ -456,12 +556,12 @@ def reset_platform():
 
     saved_state = get_product_state(product_id) if product_id else {}
     form_values, preview_payload, pinterest_result, _ = build_render_payload(saved_state)
-    return render_template(
-        "home.html",
-        markets=MARKET_OPTIONS,
-        form_values=form_values,
-        preview=preview_payload,
-        result=pinterest_result,
+    website_result = (saved_state.get("results") or {}).get("website") if saved_state else None
+    return render_home_view(
+        form_values,
+        preview_payload,
+        pinterest_result,
+        website_result=website_result,
     )
 
 
@@ -494,32 +594,20 @@ def generate_pinterest():
     if errors:
         for message in errors:
             flash(message, "error")
-        return render_template(
-            "home.html",
-            markets=MARKET_OPTIONS,
-            form_values=form_values,
-        )
+        return render_home_view(form_values, product_id=product_id)
 
     if image_file is not None and image_file.filename:
         original_bytes = image_file.read()
         if not original_bytes:
             flash("The uploaded image appears to be empty.", "error")
-            return render_template(
-                "home.html",
-                markets=MARKET_OPTIONS,
-                form_values=form_values,
-            )
+            return render_home_view(form_values, product_id=product_id)
         original_image_path = save_original_image(original_bytes, image_file.filename)
     else:
         try:
             original_bytes = load_stored_image(original_image_path)
         except Exception:
             flash("Unable to load the previously uploaded image. Please upload again.", "error")
-            return render_template(
-                "home.html",
-                markets=MARKET_OPTIONS,
-                form_values=form_values,
-            )
+            return render_home_view(form_values, product_id=product_id)
 
     raw_title = form_values.get("title", "")
     raw_description = form_values.get("description", "")
@@ -629,16 +717,15 @@ def generate_pinterest():
                 f"Create a dynamic short-form video for {refined_title}. Include upbeat pacing, text overlays "
                 f"highlighting the benefits, and close with a CTA to tap the affiliate link."
             ),
+            "category": form_values.get("category", ""),
+            "price": form_values.get("price", ""),
+            "website_boost_prompt": form_values.get("website_boost_prompt", ""),
         }
 
     except Exception as exc:  # pragma: no cover - guard for runtime issues
         app.logger.exception("Pinterest generation failed")
         flash(f"Unable to generate Pinterest pin: {exc}", "error")
-        return render_template(
-            "home.html",
-            markets=MARKET_OPTIONS,
-            form_values=form_values,
-        )
+        return render_home_view(form_values, product_id=product_id)
     flash("Preview generated. Choose where to publish your content.", "info")
     update_product_state(
         product_id,
@@ -657,12 +744,7 @@ def generate_pinterest():
             "generated_image_path": generated_image_path,
         },
     )
-    return render_template(
-        "home.html",
-        markets=MARKET_OPTIONS,
-        form_values=form_values,
-        preview=preview_payload,
-    )
+    return render_home_view(form_values, preview_payload, product_id=product_id)
 
 
 @app.route("/confirm-pinterest", methods=["POST"])
@@ -674,34 +756,32 @@ def confirm_pinterest():
     product_id = resolve_product_id(form_values)
     tags = parse_tags_payload(raw_form_values.get("tags"))
     preview_payload = rebuild_preview_payload(raw_form_values)
+    use_affiliate_link = raw_form_values.get("use_affiliate_link", form_values.get("use_affiliate_link", ""))
+    use_affiliate_link_flag = str(use_affiliate_link).lower() in TRUTHY_VALUES
 
     try:
         image_bytes = load_stored_image(generated_image_path)
     except Exception:
         flash("Unable to load the generated image. Please regenerate it.", "error")
-        return render_template(
-            "home.html",
-            markets=MARKET_OPTIONS,
-            form_values=form_values,
-        )
+        return render_home_view(form_values, product_id=product_id)
 
+    destination_link = resolve_destination_url(
+        product_id,
+        raw_form_values.get("affiliate_link", form_values.get("affiliate_link", "")),
+        use_affiliate_link_flag,
+    )
     try:
         pin_response = create_pinterest_pin(
             image_bytes,
             raw_form_values.get("title", ""),
             raw_form_values.get("description", ""),
-            raw_form_values.get("affiliate_link"),
+            destination_link,
             tags,
         )
     except Exception as exc:
         app.logger.exception("Confirm Pinterest pin failed")
         flash(f"Unable to publish Pinterest pin: {exc}", "error")
-        return render_template(
-            "home.html",
-            markets=MARKET_OPTIONS,
-            form_values=form_values,
-            preview=preview_payload,
-        )
+        return render_home_view(form_values, preview_payload, product_id=product_id)
 
     flash("Pinterest pin published successfully!", "success")
     result = {
@@ -730,12 +810,7 @@ def confirm_pinterest():
             "generated_image_path": generated_image_path,
         },
     )
-    return render_template(
-        "home.html",
-        markets=MARKET_OPTIONS,
-        form_values=form_values,
-        result=result,
-    )
+    return render_home_view(form_values, pinterest_result=result, product_id=product_id)
 
 
 @app.route("/generate-instagram-image", methods=["POST"])
@@ -750,23 +825,13 @@ def generate_instagram_image():
 
     if not base_image_path:
         flash("Upload a product image before generating Instagram visuals.", "error")
-        return render_template(
-            "home.html",
-            markets=MARKET_OPTIONS,
-            form_values=form_values,
-            preview=preview_payload,
-        )
+        return render_home_view(form_values, preview_payload, product_id=product_id)
 
     try:
         base_bytes = load_stored_media(base_image_path)
     except Exception:
         flash("Unable to load the base image. Please regenerate your creative first.", "error")
-        return render_template(
-            "home.html",
-            markets=MARKET_OPTIONS,
-            form_values=form_values,
-            preview=preview_payload,
-        )
+        return render_home_view(form_values, preview_payload, product_id=product_id)
 
     variant = raw_form_values.get("instagram_variant", "feed").lower()
     aspect_ratio = "4:5" if variant == "feed" else "9:16"
@@ -786,12 +851,7 @@ def generate_instagram_image():
         )
     except Exception as exc:
         flash(f"Unable to generate the Instagram visual: {exc}", "error")
-        return render_template(
-            "home.html",
-            markets=MARKET_OPTIONS,
-            form_values=form_values,
-            preview=preview_payload,
-        )
+        return render_home_view(form_values, preview_payload, product_id=product_id)
 
     instagram_image_path = save_generated_image(instagram_image)
     preview_payload = preview_payload or {}
@@ -817,12 +877,7 @@ def generate_instagram_image():
         },
         assets={"instagram_image_path": instagram_image_path},
     )
-    return render_template(
-        "home.html",
-        markets=MARKET_OPTIONS,
-        form_values=form_values,
-        preview=preview_payload,
-    )
+    return render_home_view(form_values, preview_payload, product_id=product_id)
 
 
 @app.route("/publish-instagram", methods=["POST"])
@@ -837,12 +892,7 @@ def publish_instagram():
 
     if not generated_image_path:
         flash("Missing generated creative. Please run the generator first.", "error")
-        return render_template(
-            "home.html",
-            markets=MARKET_OPTIONS,
-            form_values=form_values,
-            preview=preview_payload,
-        )
+        return render_home_view(form_values, preview_payload, product_id=product_id)
 
     caption = raw_form_values.get("instagram_caption", "")
     hashtags = parse_tags_payload(raw_form_values.get("instagram_hashtags_payload", "[]"))
@@ -875,11 +925,98 @@ def publish_instagram():
         app.logger.exception("Instagram publish failed")
         flash(f"Unable to publish to Instagram: {exc}", "error")
 
-    return render_template(
-        "home.html",
-        markets=MARKET_OPTIONS,
+    return render_home_view(form_values, preview_payload, product_id=product_id)
+
+
+@app.route("/publish-website", methods=["POST"])
+def publish_website():
+    raw_form_values = {key: value.strip() for key, value in request.form.items()}
+    form_values = extract_form_defaults(raw_form_values)
+    product_id = resolve_product_id(form_values)
+    preview_payload = rebuild_preview_payload(raw_form_values)
+
+    if not product_id:
+        flash("Provide a SKU or product link before publishing to Kaymio.", "error")
+        return render_home_view(form_values, preview_payload)
+
+    if not preview_payload:
+        flash("Generate a preview first so we can grab the AI copy and media.", "error")
+        return render_home_view(form_values, preview_payload, product_id=product_id)
+
+    affiliate_link = form_values.get("affiliate_link") or raw_form_values.get("affiliate_link")
+    price = form_values.get("price") or raw_form_values.get("price")
+    category_name = form_values.get("category") or raw_form_values.get("category")
+    boost_prompt = form_values.get("website_boost_prompt") or raw_form_values.get("website_boost_prompt", "")
+    if not affiliate_link:
+        flash("Affiliate link is required for WooCommerce external products.", "error")
+        return render_home_view(form_values, preview_payload, product_id=product_id)
+    if not price:
+        flash("Add a price before publishing to Kaymio.", "error")
+        return render_home_view(form_values, preview_payload, product_id=product_id)
+
+    image_relative = preview_payload.get("original_image_path") or preview_payload.get("generated_image_path")
+    resolved_image_path = resolve_storage_path(image_relative) if image_relative else None
+    if not resolved_image_path:
+        flash("Upload an original product image before publishing to Kaymio.", "error")
+        return render_home_view(form_values, preview_payload, product_id=product_id)
+
+    title = preview_payload.get("title") or form_values.get("title")
+    description = preview_payload.get("description") or form_values.get("description", "")
+    if not title or not description:
+        flash("Missing product title or description. Please regenerate your preview.", "error")
+        return render_home_view(form_values, preview_payload, product_id=product_id)
+
+    enriched_description = build_website_description(title, description, boost_prompt or "")
+    tags = preview_payload.get("tags") or []
+    category_id = None
+    if category_name:
+        try:
+            category_id = find_wordpress_nearest_category(category_name)
+        except Exception as exc:
+            app.logger.warning("Failed to resolve WordPress category '%s': %s", category_name, exc)
+            category_id = None
+
+    try:
+        product_url = create_woocommerce_product(
+            name=title,
+            description=enriched_description,
+            price=price,
+            image_path=resolved_image_path,
+            tags=tags,
+            affiliate_link=affiliate_link,
+            category_id=category_id,
+        )
+    except Exception as exc:
+        app.logger.exception("WooCommerce publish failed")
+        flash(f"Unable to publish to Kaymio: {exc}", "error")
+        return render_home_view(form_values, preview_payload, product_id=product_id)
+
+    if not product_url:
+        flash("Failed to publish product to Kaymio. Check WooCommerce credentials.", "error")
+        return render_home_view(form_values, preview_payload, product_id=product_id)
+
+    flash("Product published to Kaymio successfully!", "success")
+    website_result = {
+        "product_url": product_url,
+        "title": title,
+        "description": enriched_description,
+        "price": price,
+        "category": category_name or "",
+    }
+    update_product_state(
+        product_id,
         form_values=form_values,
         preview=preview_payload,
+        platforms={"website": {"status": "published", "product_url": product_url}},
+        results={"website": website_result},
+    )
+    pinterest_result = get_platform_result(product_id, "pinterest")
+    return render_home_view(
+        form_values,
+        preview_payload,
+        pinterest_result=pinterest_result,
+        product_id=product_id,
+        website_result=website_result,
     )
 
 
@@ -900,23 +1037,13 @@ def generate_platform_video(platform: str):
 
     if not base_image_path:
         flash("Generate an image first to feed the video workflow.", "error")
-        return render_template(
-            "home.html",
-            markets=MARKET_OPTIONS,
-            form_values=form_values,
-            preview=preview_payload,
-        )
+        return render_home_view(form_values, preview_payload, product_id=product_id)
 
     try:
         base_bytes = load_stored_media(base_image_path)
     except Exception:
         flash("Unable to load the base visual. Please regenerate it.", "error")
-        return render_template(
-            "home.html",
-            markets=MARKET_OPTIONS,
-            form_values=form_values,
-            preview=preview_payload,
-        )
+        return render_home_view(form_values, preview_payload, product_id=product_id)
 
     title = raw_form_values.get("title") or form_values.get("title") or "this product"
     prompt_templates = {
@@ -941,12 +1068,7 @@ def generate_platform_video(platform: str):
         )
     except Exception as exc:
         flash(f"Unable to generate the {target} video: {exc}", "error")
-        return render_template(
-            "home.html",
-            markets=MARKET_OPTIONS,
-            form_values=form_values,
-            preview=preview_payload,
-        )
+        return render_home_view(form_values, preview_payload, product_id=product_id)
 
     video_path = save_generated_video(video_bytes)
     preview_payload = preview_payload or {}
@@ -970,12 +1092,7 @@ def generate_platform_video(platform: str):
         },
         assets={"generated_video_path": video_path},
     )
-    return render_template(
-        "home.html",
-        markets=MARKET_OPTIONS,
-        form_values=form_values,
-        preview=preview_payload,
-    )
+    return render_home_view(form_values, preview_payload, product_id=product_id)
 
 
 @app.route("/publish-youtube", methods=["POST"])
@@ -988,23 +1105,13 @@ def publish_youtube():
 
     if not video_path:
         flash("Generate the YouTube Short first, then publish.", "error")
-        return render_template(
-            "home.html",
-            markets=MARKET_OPTIONS,
-            form_values=form_values,
-            preview=preview_payload,
-        )
+        return render_home_view(form_values, preview_payload, product_id=product_id)
 
     try:
         video_bytes = load_stored_media(video_path)
     except Exception:
         flash("Unable to load the generated video. Please regenerate it.", "error")
-        return render_template(
-            "home.html",
-            markets=MARKET_OPTIONS,
-            form_values=form_values,
-            preview=preview_payload,
-        )
+        return render_home_view(form_values, preview_payload, product_id=product_id)
 
     title = raw_form_values.get("youtube_title", raw_form_values.get("title", ""))
     description = raw_form_values.get("youtube_description", raw_form_values.get("description", ""))
@@ -1039,12 +1146,7 @@ def publish_youtube():
         app.logger.exception("YouTube publish failed")
         flash(f"Unable to publish to YouTube: {exc}", "error")
 
-    return render_template(
-        "home.html",
-        markets=MARKET_OPTIONS,
-        form_values=form_values,
-        preview=preview_payload,
-    )
+    return render_home_view(form_values, preview_payload, product_id=product_id)
 
 
 @app.route("/publish-tiktok", methods=["POST"])
@@ -1057,23 +1159,13 @@ def publish_tiktok():
 
     if not video_path:
         flash("Generate the TikTok video first, then publish.", "error")
-        return render_template(
-            "home.html",
-            markets=MARKET_OPTIONS,
-            form_values=form_values,
-            preview=preview_payload,
-        )
+        return render_home_view(form_values, preview_payload, product_id=product_id)
 
     try:
         video_bytes = load_stored_media(video_path)
     except Exception:
         flash("Unable to load the generated video. Please regenerate it.", "error")
-        return render_template(
-            "home.html",
-            markets=MARKET_OPTIONS,
-            form_values=form_values,
-            preview=preview_payload,
-        )
+        return render_home_view(form_values, preview_payload, product_id=product_id)
 
     caption = raw_form_values.get("tiktok_caption", "")
     hashtags = parse_tags_payload(raw_form_values.get("tiktok_hashtags_payload", "[]"))
@@ -1109,12 +1201,7 @@ def publish_tiktok():
         app.logger.exception("TikTok publish failed")
         flash(f"Unable to publish to TikTok: {exc}", "error")
 
-    return render_template(
-        "home.html",
-        markets=MARKET_OPTIONS,
-        form_values=form_values,
-        preview=preview_payload,
-    )
+    return render_home_view(form_values, preview_payload, product_id=product_id)
 
 
 if __name__ == "__main__":
