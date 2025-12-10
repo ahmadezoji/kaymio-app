@@ -13,6 +13,39 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}" />
   </head>
   <body>
+    {% macro preview_hidden_inputs(preview, values) -%}
+      <input type="hidden" name="market" value="{{ values.get('market', '') | e }}" />
+      <input type="hidden" name="sku_or_url" value="{{ values.get('sku_or_url', '') | e }}" />
+      <input type="hidden" name="title" value="{{ preview.title | e }}" />
+      <input type="hidden" name="description" value="{{ preview.description | e }}" />
+      <input type="hidden" name="affiliate_link" value="{{ values.get('affiliate_link', '') | e }}" />
+      <input type="hidden" name="pinterest_extra" value="{{ values.get('pinterest_extra', '') | e }}" />
+      <input type="hidden" name="tags" value="{{ preview.tags_payload | e }}" />
+      <input type="hidden" name="generated_image_path" value="{{ preview.generated_image_path | e }}" />
+      <input type="hidden" name="original_image_path" value="{{ preview.original_image_path | e }}" />
+      <input type="hidden" name="instagram_caption" value="{{ preview.instagram_caption | e }}" />
+      <input type="hidden" name="instagram_hashtags_payload" value="{{ preview.instagram_hashtags_payload | e }}" />
+      <input type="hidden" name="tiktok_caption" value="{{ preview.tiktok_caption | e }}" />
+      <input type="hidden" name="tiktok_hashtags_payload" value="{{ preview.tiktok_hashtags_payload | e }}" />
+      <input type="hidden" name="youtube_title" value="{{ preview.youtube_title | e }}" />
+      <input type="hidden" name="youtube_description" value="{{ preview.youtube_description | e }}" />
+      <input type="hidden" name="youtube_keywords_payload" value="{{ preview.youtube_keywords_payload | e }}" />
+      <input type="hidden" name="generated_video_path" value="{{ preview.generated_video_path | e }}" />
+      <input type="hidden" name="video_prompt" value="{{ preview.video_prompt | e }}" />
+      <input type="hidden" name="instagram_image_path" value="{{ preview.instagram_image_path | e }}" />
+    {%- endmacro %}
+    {% macro platform_reset_button(platform, label, sku) -%}
+      <div class="card-header-actions">
+        <form method="post" action="{{ url_for('reset_platform') }}" class="platform-reset">
+          <input type="hidden" name="platform" value="{{ platform }}" />
+          <input type="hidden" name="sku_or_url" value="{{ sku or '' }}" />
+          <button type="submit" class="icon-btn" title="Restart {{ label }}" {% if not sku %}disabled{% endif %}>
+            <span aria-hidden="true">+</span>
+            <span class="sr-only">Restart {{ label }}</span>
+          </button>
+        </form>
+      </div>
+    {%- endmacro %}
     <div class="page-shell">
       <header class="hero">
         <div>
@@ -42,6 +75,9 @@
 
       <main class="layout">
         {% set values = form_values or {} %}
+        {% set preview_data = preview or {} %}
+        {% set has_preview = preview is not none %}
+        {% set active_sku = values.get('sku_or_url', '') %}
         <form
           method="post"
           action="{{ url_for('generate_pinterest') }}"
@@ -140,26 +176,29 @@
           </section>
         </form>
 
-        {% if preview %}
-          <section class="card result">
-            <div class="card-header">
-              <h2>Review your pin</h2>
-              <p>Confirm this visual + copy or regenerate another variation before publishing.</p>
+        <section class="card result">
+          <div class="card-header">
+            <div class="card-header-text">
+              <h2>Review your creative</h2>
+              <p>Confirm this hero visual + copy or regenerate another variation before publishing across channels.</p>
             </div>
+            {{ platform_reset_button('pinterest', 'Pinterest workflow', active_sku) }}
+          </div>
+          {% if has_preview %}
             <div class="preview-grid">
               <div class="preview-image">
-                <img src="data:image/png;base64,{{ preview.image_data }}" alt="Generated Pinterest pin preview" />
+                <img src="data:image/png;base64,{{ preview_data.image_data }}" alt="Generated Pinterest pin preview" />
               </div>
               <div class="preview-meta">
                 <dl>
                   <dt>Title</dt>
-                  <dd>{{ preview.title }}</dd>
+                  <dd>{{ preview_data.title }}</dd>
                   <dt>Description</dt>
-                  <dd>{{ preview.description }}</dd>
-                  {% if preview.tags %}
+                  <dd>{{ preview_data.description }}</dd>
+                  {% if preview_data.tags %}
                     <dt>Tags</dt>
                     <dd>
-                      {% for tag in preview.tags %}
+                      {% for tag in preview_data.tags %}
                         <span class="tag">{{ tag }}</span>
                       {% endfor %}
                     </dd>
@@ -173,26 +212,205 @@
                     <input type="hidden" name="description" value="{{ values.get('description', '') }}" />
                     <input type="hidden" name="affiliate_link" value="{{ values.get('affiliate_link', '') }}" />
                     <input type="hidden" name="pinterest_extra" value="{{ values.get('pinterest_extra', '') }}" />
-                    <input type="hidden" name="original_image_path" value="{{ preview.original_image_path }}" />
+                    <input type="hidden" name="original_image_path" value="{{ preview_data.original_image_path }}" />
                     <button type="submit" class="ghost-btn">Regenerate visual</button>
                   </form>
                   <form method="post" action="{{ url_for('confirm_pinterest') }}">
-                    <input type="hidden" name="market" value="{{ values.get('market', '') }}" />
-                    <input type="hidden" name="sku_or_url" value="{{ values.get('sku_or_url', '') }}" />
-                    <input type="hidden" name="pinterest_extra" value="{{ values.get('pinterest_extra', '') }}" />
-                    <input type="hidden" name="affiliate_link" value="{{ values.get('affiliate_link', '') }}" />
-                    <input type="hidden" name="title" value="{{ preview.title }}" />
-                    <input type="hidden" name="description" value="{{ preview.description }}" />
-                    <input type="hidden" name="tags" value='{{ preview.tags_payload }}' />
-                    <input type="hidden" name="generated_image_path" value="{{ preview.generated_image_path }}" />
-                    <input type="hidden" name="original_image_path" value="{{ preview.original_image_path }}" />
+                    {{ preview_hidden_inputs(preview_data, values) }}
                     <button type="submit" class="primary">Confirm &amp; publish to Pinterest</button>
                   </form>
                 </div>
               </div>
             </div>
-          </section>
-        {% endif %}
+          {% else %}
+            <p class="muted">Generate a product visual to unlock publishing on Pinterest, Instagram, TikTok, and YouTube.</p>
+          {% endif %}
+        </section>
+        <section class="card result">
+          <div class="card-header">
+            <div class="card-header-text">
+              <h2>Instagram content</h2>
+              <p>Share the same creative on Stories or the feed with platform-ready captions and tags.</p>
+            </div>
+            {{ platform_reset_button('instagram', 'Instagram content', active_sku) }}
+          </div>
+          <div class="platform-grid">
+            <div>
+              <h3>Visual</h3>
+              {% if has_preview and preview_data.instagram_image_url %}
+                <img
+                  class="platform-preview"
+                  src="{{ preview_data.instagram_image_url }}"
+                  alt="Instagram visual preview"
+                />
+              {% elif has_preview and preview_data.generated_image_url %}
+                <img
+                  class="platform-preview"
+                  src="{{ preview_data.generated_image_url }}"
+                  alt="Instagram visual preview"
+                />
+              {% else %}
+                <p class="muted">Generate your first creative to unlock Instagram visuals.</p>
+              {% endif %}
+              <h3>Caption</h3>
+              {% if has_preview %}
+                <p class="copy-block">{{ preview_data.instagram_caption | replace('\n', '<br />') | safe }}</p>
+              {% else %}
+                <p class="copy-block muted">Generate your first creative to see an Instagram-ready caption.</p>
+              {% endif %}
+              {% if has_preview and preview_data.instagram_hashtags %}
+                <h3>Hashtags</h3>
+                <div class="tag-tray">
+                  {% for tag in preview_data.instagram_hashtags %}
+                    <span class="tag">#{{ tag }}</span>
+                  {% endfor %}
+                </div>
+              {% endif %}
+            </div>
+            <div class="preview-actions">
+              {% if has_preview %}
+                <form method="post" action="{{ url_for('generate_instagram_image') }}">
+                  {{ preview_hidden_inputs(preview_data, values) }}
+                  <input type="hidden" name="instagram_variant" value="feed" />
+                  <button type="submit" class="ghost-btn">Generate feed visual</button>
+                </form>
+                <form method="post" action="{{ url_for('generate_instagram_image') }}">
+                  {{ preview_hidden_inputs(preview_data, values) }}
+                  <input type="hidden" name="instagram_variant" value="story" />
+                  <button type="submit" class="ghost-btn">Generate story visual</button>
+                </form>
+                <form method="post" action="{{ url_for('publish_instagram') }}">
+                  {{ preview_hidden_inputs(preview_data, values) }}
+                  <input type="hidden" name="target" value="feed" />
+                  <button type="submit" class="primary">Publish to Instagram feed</button>
+                </form>
+                <form method="post" action="{{ url_for('publish_instagram') }}">
+                  {{ preview_hidden_inputs(preview_data, values) }}
+                  <input type="hidden" name="target" value="story" />
+                  <button type="submit" class="ghost-btn">Share as story</button>
+                </form>
+              {% else %}
+                <button type="button" class="ghost-btn" disabled>Generate feed visual</button>
+                <button type="button" class="ghost-btn" disabled>Generate story visual</button>
+                <button type="button" class="primary" disabled>Publish to Instagram feed</button>
+                <button type="button" class="ghost-btn" disabled>Share as story</button>
+              {% endif %}
+            </div>
+          </div>
+        </section>
+        <section class="card result">
+          <div class="card-header">
+            <div class="card-header-text">
+              <h2>YouTube Shorts</h2>
+              <p>Auto-generate a short-form video, review metadata, and push it straight to YouTube.</p>
+            </div>
+            {{ platform_reset_button('youtube', 'YouTube workflow', active_sku) }}
+          </div>
+          <div class="platform-grid">
+            <div>
+              {% if has_preview and preview_data.video_url %}
+                <video controls class="video-preview" src="{{ preview_data.video_url }}"></video>
+              {% else %}
+                <p class="muted">Use the generate button to create a Short before publishing.</p>
+              {% endif %}
+              <dl>
+                <dt>Title</dt>
+                <dd>{{ preview_data.youtube_title if has_preview else 'Awaiting creative...' }}</dd>
+                <dt>Description</dt>
+                <dd>{{ preview_data.youtube_description if has_preview else 'Generate a product story to see suggested copy.' }}</dd>
+                {% if has_preview and preview_data.youtube_keywords %}
+                  <dt>Keywords</dt>
+                  <dd>
+                    {% for keyword in preview_data.youtube_keywords %}
+                      <span class="tag">{{ keyword }}</span>
+                    {% endfor %}
+                  </dd>
+                {% endif %}
+              </dl>
+            </div>
+            <div class="preview-actions">
+              {% if has_preview %}
+                <form method="post" action="{{ url_for('generate_platform_video', platform='youtube') }}">
+                  {{ preview_hidden_inputs(preview_data, values) }}
+                  <button type="submit" class="ghost-btn">Generate YouTube Short</button>
+                </form>
+                {% if preview_data.video_url %}
+                  <form method="post" action="{{ url_for('publish_youtube') }}">
+                    {{ preview_hidden_inputs(preview_data, values) }}
+                    <label>
+                      <span>Privacy</span>
+                      <select name="privacy_status">
+                        <option value="public">Public</option>
+                        <option value="unlisted" selected>Unlisted</option>
+                        <option value="private">Private</option>
+                      </select>
+                    </label>
+                    <button type="submit" class="primary">Publish to YouTube Shorts</button>
+                  </form>
+                {% else %}
+                  <button type="button" class="primary" disabled>Publish to YouTube Shorts</button>
+                {% endif %}
+              {% else %}
+                <button type="button" class="ghost-btn" disabled>Generate YouTube Short</button>
+                <button type="button" class="primary" disabled>Publish to YouTube Shorts</button>
+              {% endif %}
+            </div>
+          </div>
+        </section>
+        <section class="card result">
+          <div class="card-header">
+            <div class="card-header-text">
+              <h2>TikTok drop</h2>
+              <p>Leverage the same motion asset and caption to reach TikTok shoppers.</p>
+            </div>
+            {{ platform_reset_button('tiktok', 'TikTok workflow', active_sku) }}
+          </div>
+          <div class="platform-grid">
+            <div>
+              <h3>Caption</h3>
+                {% if has_preview %}
+                <p class="copy-block">{{ preview_data.tiktok_caption | replace('\n', '<br />') | safe }}</p>
+              {% else %}
+                <p class="copy-block muted">Generate content to unlock TikTok-ready copy and hashtags.</p>
+              {% endif %}
+              {% if has_preview and preview_data.tiktok_hashtags %}
+                <h3>Hashtags</h3>
+                <div class="tag-tray">
+                  {% for tag in preview_data.tiktok_hashtags %}
+                    <span class="tag">#{{ tag }}</span>
+                  {% endfor %}
+                </div>
+              {% endif %}
+            </div>
+            <div class="preview-actions">
+              {% if has_preview %}
+                <form method="post" action="{{ url_for('generate_platform_video', platform='tiktok') }}">
+                  {{ preview_hidden_inputs(preview_data, values) }}
+                  <button type="submit" class="ghost-btn">Generate TikTok video</button>
+                </form>
+                {% if preview_data.video_url %}
+                  <form method="post" action="{{ url_for('publish_tiktok') }}">
+                    {{ preview_hidden_inputs(preview_data, values) }}
+                    <label>
+                      <span>Privacy</span>
+                      <select name="privacy_level">
+                        <option value="PUBLIC" selected>Public</option>
+                        <option value="FRIENDS">Friends</option>
+                        <option value="PRIVATE">Private</option>
+                      </select>
+                    </label>
+                    <button type="submit" class="primary">Publish to TikTok</button>
+                  </form>
+                {% else %}
+                  <button type="button" class="primary" disabled>Publish to TikTok</button>
+                {% endif %}
+              {% else %}
+                <button type="button" class="ghost-btn" disabled>Generate TikTok video</button>
+                <button type="button" class="primary" disabled>Publish to TikTok</button>
+              {% endif %}
+            </div>
+          </div>
+        </section>
 
         {% if result %}
           <section class="card result">

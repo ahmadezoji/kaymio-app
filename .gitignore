@@ -1,1 +1,3 @@
 template_images/*
+*.pyc
+*cpython-*.pyc
