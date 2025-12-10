@@ -60,7 +60,7 @@
           "Suit"
         ],
         "tags_payload": "[\"GLOURI\", \"Hot\", \"Pink\", \"Floral\", \"Jacquard\", \"Suit\"]",
-        "image_data" :"",
+        "image_data": "",
         "generated_image_path": "generated/6fc305e8d0d142a6ab4f766408183cf7.png",
         "original_image_path": "originals/16e699a641bd43f1ace7843b7d519088.png",
         "affiliate_link": "https://onelink.shein.com/22/59rv9x7j3vaj",
@@ -117,7 +117,122 @@
         "instagram_image_public_url": "http://127.0.0.1:8000/media/generated/6fc305e8d0d142a6ab4f766408183cf7.png",
         "instagram_image_data": ""
       }
+    },
+    "sz25040741991908005": {
+      "platforms": {
+        "pinterest": {
+          "status": "published",
+          "title": "Vintage Green Womens Bomber Jacket - Stylish Spring Outerwear",
+          "description": "Elevate your spring style with our Vintage Green Womens Bomber Jacket\u2014perfect for sipping lattes at Starbucks or strolling through the park! Dont miss out on this chic outerwear essential that combines comfort and trendiness; grab yours before they fly off the shelves!",
+          "tags": [
+            "Vintage",
+            "Green",
+            "Womens",
+            "Bomber",
+            "Jacket",
+            "-"
+          ],
+          "pin_id": "903323637788295088",
+          "pin_url": "https://onelink.shein.com/22/59svwtfa1t79",
+          "published": true
+        }
+      },
+      "assets": {
+        "original_image_path": "originals/54a4532d580d42c7a6f06d60e096fc7d.png",
+        "generated_image_path": "generated/073bf572c3e740ad87774a0605c1992b.png"
+      },
+      "results": {
+        "pinterest": {
+          "title": "Vintage Green Womens Bomber Jacket - Stylish Spring Outerwear",
+          "description": "Elevate your spring style with our Vintage Green Womens Bomber Jacket\u2014perfect for sipping lattes at Starbucks or strolling through the park! Dont miss out on this chic outerwear essential that combines comfort and trendiness; grab yours before they fly off the shelves!",
+          "tags": [
+            "Vintage",
+            "Green",
+            "Womens",
+            "Bomber",
+            "Jacket",
+            "-"
+          ],
+          "pin_id": "903323637788295088",
+          "pin_url": "https://onelink.shein.com/22/59svwtfa1t79",
+          "status": "created"
+        }
+      },
+      "form_values": {
+        "market": "Shein",
+        "sku_or_url": "sz25040741991908005",
+        "title": "Vintage Green Womens Bomber Jacket - Stylish Spring Outerwear",
+        "description": "Elevate your spring style with our Vintage Green Womens Bomber Jacket\u2014perfect for sipping lattes at Starbucks or strolling through the park! Dont miss out on this chic outerwear essential that combines comfort and trendiness; grab yours before they fly off the shelves!",
+        "affiliate_link": "https://onelink.shein.com/22/59svwtfa1t79",
+        "pinterest_extra": "SOme wemen or girl wearing this jacket and set down  in starbucks"
+      },
+      "preview": {
+        "title": "Vintage Green Womens Bomber Jacket - Stylish Spring Outerwear",
+        "description": "Elevate your spring style with our Vintage Green Womens Bomber Jacket\u2014perfect for sipping lattes at Starbucks or strolling through the park! Dont miss out on this chic outerwear essential that combines comfort and trendiness; grab yours before they fly off the shelves!",
+        "tags": [
+          "Vintage",
+          "Green",
+          "Womens",
+          "Bomber",
+          "Jacket",
+          "-"
+        ],
+        "tags_payload": "[\"Vintage\", \"Green\", \"Womens\", \"Bomber\", \"Jacket\", \"-\"]",
+        "generated_image_path": "generated/073bf572c3e740ad87774a0605c1992b.png",
+        "original_image_path": "originals/54a4532d580d42c7a6f06d60e096fc7d.png",
+        "affiliate_link": "https://onelink.shein.com/22/59svwtfa1t79",
+        "market": "Shein",
+        "sku_or_url": "sz25040741991908005",
+        "pinterest_extra": "SOme wemen or girl wearing this jacket and set down  in starbucks",
+        "title_input": "Vintage Green Womens Bomber Jacket - Stylish Spring Outerwear",
+        "description_input": "Elevate your spring style with our Vintage Green Womens Bomber Jacket\u2014perfect for sipping lattes at Starbucks or strolling through the park! Dont miss out on this chic outerwear essential that combines comfort and trendiness; grab yours before they fly off the shelves!",
+        "instagram_caption": "Elevate your spring style with our Vintage Green Womens Bomber Jacket\u2014perfect for sipping lattes at Starbucks or strolling through the park! Dont miss out on this chic outerwear essential that combines comfort and trendiness; grab yours before they fly off the shelves!",
+        "instagram_hashtags": [
+          "vintage",
+          "green",
+          "womens",
+          "bomber",
+          "jacket",
+          "-",
+          "stylish",
+          "spring",
+          "outerwear"
+        ],
+        "instagram_hashtags_payload": "[\"vintage\", \"green\", \"womens\", \"bomber\", \"jacket\", \"-\", \"stylish\", \"spring\", \"outerwear\"]",
+        "tiktok_caption": "Elevate your spring style with our Vintage Green Womens Bomber Jacket\u2014perfect for sipping lattes at Starbucks or strolling through the park! Dont miss out on this chic outerwear essential that combines comfort and trendiness; grab yours before they fly off the shelves!",
+        "tiktok_hashtags": [
+          "vintage",
+          "green",
+          "womens",
+          "bomber",
+          "jacket",
+          "-"
+        ],
+        "tiktok_hashtags_payload": "[\"vintage\", \"green\", \"womens\", \"bomber\", \"jacket\", \"-\"]",
+        "youtube_title": "Vintage Green Womens Bomber Jacket - Stylish Spring Outerwear",
+        "youtube_description": "Elevate your spring style with our Vintage Green Womens Bomber Jacket\u2014perfect for sipping lattes at Starbucks or strolling through the park! Dont miss out on this chic outerwear essential that combines comfort and trendiness; grab yours before they fly off the shelves!",
+        "youtube_keywords": [
+          "Vintage",
+          "Green",
+          "Womens",
+          "Bomber",
+          "Jacket",
+          "-",
+          "Stylish",
+          "Spring"
+        ],
+        "youtube_keywords_payload": "[\"Vintage\", \"Green\", \"Womens\", \"Bomber\", \"Jacket\", \"-\", \"Stylish\", \"Spring\"]",
+        "video_prompt": "Create a dynamic short-form video for Vintage Green Womens Bomber Jacket - Stylish Spring Outerwear. Include upbeat pacing, text overlays highlighting the benefits, and close with a CTA to tap the affiliate link.",
+        "instagram_image_path": "generated/073bf572c3e740ad87774a0605c1992b.png",
+        "generated_image_url": "/media/generated/073bf572c3e740ad87774a0605c1992b.png",
+        "image_public_url": "http://127.0.0.1:8000/media/generated/073bf572c3e740ad87774a0605c1992b.png",
+        "generated_video_path": "",
+        "video_url": "",
+        "video_public_url": "",
+        "instagram_image_url": "/media/generated/073bf572c3e740ad87774a0605c1992b.png",
+        "instagram_image_public_url": "http://127.0.0.1:8000/media/generated/073bf572c3e740ad87774a0605c1992b.png"
+      }
     }
   },
-  "last_product_id": "sz25082109054064569"
+  "last_product_id": "sz25040741991908005"
 }
