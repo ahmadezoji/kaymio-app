@@ -159,6 +159,10 @@ body {
   gap: 1rem;
 }
 
+.inline-booster {
+  padding: 0;
+}
+
 label {
   display: flex;
   flex-direction: column;

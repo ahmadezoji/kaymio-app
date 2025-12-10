@@ -176,9 +176,13 @@
                 type="url"
               />
             </label>
+             <div class="form-actions">
+              <button class="ghost-btn" type="submit" formaction="{{ url_for('save_product') }}">Save product setup</button>
+              <button class="primary" type="submit">Generate for Pinterest</button>
+            </div>
           </section>
 
-          <section class="card">
+          <!-- <section class="card">
             <div class="card-header">
               <h2>Pinterest prompt booster</h2>
               <p>Drop any extra angles, seasonal hooks, or CTA copy.</p>
@@ -187,7 +191,7 @@
               <button class="ghost-btn" type="submit" formaction="{{ url_for('save_product') }}">Save product setup</button>
               <button class="primary" type="submit">Generate for Pinterest</button>
             </div>
-          </section>
+          </section> -->
         </form>
 
         <section class="card result">
@@ -198,31 +202,26 @@
             </div>
             {{ platform_reset_button('pinterest', 'Pinterest workflow', active_sku) }}
           </div>
-          <form method="post" action="{{ url_for('generate_pinterest') }}" class="booster-form">
-            <label>
-              <span>Pinterest prompt booster</span>
-              <textarea
-                name="pinterest_extra"
-                placeholder="Mention eco-friendly materials, Mother's Day bundles, etc."
-                rows="3"
-              >{{ values.get('pinterest_extra', '') }}</textarea>
-            </label>
-            <input type="hidden" name="market" value="{{ values.get('market', '') }}" />
-            <input type="hidden" name="sku_or_url" value="{{ values.get('sku_or_url', '') }}" />
-            <input type="hidden" name="title" value="{{ values.get('title', '') }}" />
-            <input type="hidden" name="description" value="{{ values.get('description', '') }}" />
-            <input type="hidden" name="affiliate_link" value="{{ values.get('affiliate_link', '') }}" />
-            <input type="hidden" name="original_image_path" value="{{ preview_data.original_image_path or saved_assets.get('original_image_path', '') }}" />
-            <div class="form-actions">
-              <button class="ghost-btn" type="submit" name="regen" value="1">Regenerate Pinterest visual</button>
-            </div>
-          </form>
           {% if has_preview %}
             <div class="preview-grid">
               <div class="preview-image">
                 <img src="data:image/png;base64,{{ preview_data.image_data }}" alt="Generated Pinterest pin preview" />
               </div>
               <div class="preview-meta">
+                <form method="post" action="{{ url_for('generate_pinterest') }}" class="stacked-platform-form inline-booster">
+                  {{ preview_hidden_inputs(preview_data, values, saved_assets) }}
+                  <label class="card-subsection">
+                    <span>Pinterest prompt booster</span>
+                    <textarea
+                      name="pinterest_extra"
+                      placeholder="Mention eco-friendly materials, Mother's Day bundles, etc."
+                      rows="3"
+                    >{{ preview_data.pinterest_extra if preview_data.pinterest_extra else values.get('pinterest_extra', '') }}</textarea>
+                  </label>
+                  <div class="form-actions">
+                    <button class="ghost-btn" type="submit">Regenerate Pinterest visual</button>
+                  </div>
+                </form>
                 <dl>
                   <dt>Title</dt>
                   <dd>{{ preview_data.title }}</dd>
