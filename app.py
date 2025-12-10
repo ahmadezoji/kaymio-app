@@ -366,6 +366,7 @@ def build_prompt_context(form_values: Dict[str, str]) -> str:
         "description",
         "affiliate_link",
         "pinterest_extra",
+        "instagram_extra",
     ):
         value = form_values.get(field)
         if value:
@@ -376,7 +377,17 @@ def build_prompt_context(form_values: Dict[str, str]) -> str:
 def extract_form_defaults(raw_form_values: Dict[str, str]) -> Dict[str, str]:
     return {
         key: raw_form_values.get(key, "")
-        for key in ("market", "sku_or_url", "title", "description", "affiliate_link", "pinterest_extra")
+        for key in (
+            "market",
+            "sku_or_url",
+            "title",
+            "description",
+            "affiliate_link",
+            "pinterest_extra",
+            "instagram_extra",
+            "youtube_extra",
+            "tiktok_extra",
+        )
     }
 
 
@@ -406,6 +417,9 @@ def rebuild_preview_payload(raw_form_values: Dict[str, str]):
         "market": raw_form_values.get("market"),
         "sku_or_url": raw_form_values.get("sku_or_url"),
         "pinterest_extra": raw_form_values.get("pinterest_extra"),
+        "instagram_extra": raw_form_values.get("instagram_extra", ""),
+        "youtube_extra": raw_form_values.get("youtube_extra", ""),
+        "tiktok_extra": raw_form_values.get("tiktok_extra", ""),
         "title_input": raw_form_values.get("title", ""),
         "description_input": raw_form_values.get("description", ""),
         "instagram_caption": raw_form_values.get("instagram_caption", ""),
@@ -672,6 +686,10 @@ def generate_pinterest():
             "market": form_values.get("market"),
             "sku_or_url": form_values.get("sku_or_url"),
             "pinterest_extra": form_values.get("pinterest_extra"),
+            "instagram_extra": form_values.get("instagram_extra"),
+            "youtube_extra": form_values.get("youtube_extra"),
+            "tiktok_extra": form_values.get("tiktok_extra"),
+            "instagram_extra": form_values.get("instagram_extra"),
             "title_input": form_values.get("title"),
             "description_input": form_values.get("description"),
             "tags_payload": json.dumps(tags or []),
@@ -837,10 +855,13 @@ def generate_instagram_image():
     aspect_ratio = "4:5" if variant == "feed" else "9:16"
     variant_label = "story" if variant == "story" else "feed"
     context_prompt = build_prompt_context({**form_values, "title": raw_form_values.get("title", "")})
+    instagram_extra = form_values.get("instagram_extra") or raw_form_values.get("instagram_extra", "")
     inst_prompt = (
         "Design a high-performing Instagram {variant} visual with bold typography, trending color grading, "
         "and a magnetic focus on the hero product."
     ).format(variant=variant_label)
+    if instagram_extra:
+        inst_prompt = f"{inst_prompt} Incorporate these creative cues: {instagram_extra}"
 
     try:
         instagram_image = edit_image(
@@ -999,6 +1020,9 @@ def generate_platform_video(platform: str):
         ),
     }
     prompt = prompt_templates[target].format(title=title)
+    platform_extra = raw_form_values.get(f"{target}_extra") or form_values.get(f"{target}_extra")
+    if platform_extra:
+        prompt = f"{prompt} Emphasize: {platform_extra}"
 
     try:
         video_bytes = generate_video_from_image(

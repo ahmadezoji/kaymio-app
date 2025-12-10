@@ -1,1 +1,10 @@
 template_images/*
+*.pyc
+__pycache__/
+*cpython*.pyc
+*.cpython-*.pyc
+__pycache__/app.cpython-312.pyc
+__pycache__/app.cpython-312.pyc
+__pycache__/gemeni_api_helper.cpython-312.pyc
+__pycache__/gemeni_api_helper.cpython-313.pyc
+__pycache__/openai_helper.cpython-313.pyc
