@@ -38,6 +38,12 @@ def create_pinterest_pin(
             "url": None,
         }
 
+    tags = list(tags or [])
+    if tags:
+        hashtag_block = " ".join(f"#{kw.replace(' ', '')}" for kw in tags if kw)
+        if hashtag_block:
+            description = f"{description} {hashtag_block}".strip()
+
     encoded_image = base64.b64encode(image_bytes).decode("utf-8")
     payload = {
         "board_id": board_id,
@@ -52,7 +58,7 @@ def create_pinterest_pin(
         "alt_text": description[:500],
     }
     if tags:
-        payload["note"] = ", ".join(list(tags))[:250]
+        payload["note"] = ", ".join(tags)[:250]
 
     headers = {
         "Authorization": f"Bearer {access_token}",

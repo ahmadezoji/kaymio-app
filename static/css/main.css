@@ -72,6 +72,12 @@ body {
   color: var(--accent);
 }
 
+.layout {
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+}
+
 .layout .grid {
   display: flex;
   flex-direction: column;
