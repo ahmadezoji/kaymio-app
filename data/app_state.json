@@ -60,7 +60,7 @@
           "Suit"
         ],
         "tags_payload": "[\"GLOURI\", \"Hot\", \"Pink\", \"Floral\", \"Jacquard\", \"Suit\"]",
-        "image_data" :"",
+        "image_data": "",
         "generated_image_path": "generated/6fc305e8d0d142a6ab4f766408183cf7.png",
         "original_image_path": "originals/16e699a641bd43f1ace7843b7d519088.png",
         "affiliate_link": "https://onelink.shein.com/22/59rv9x7j3vaj",
@@ -117,7 +117,34 @@
         "instagram_image_public_url": "http://127.0.0.1:8000/media/generated/6fc305e8d0d142a6ab4f766408183cf7.png",
         "instagram_image_data": ""
       }
+    },
+    "sz25062937517782355": {
+      "platforms": {
+        "instagram_feed": {
+          "status": "pending",
+          "image_path": "generated/ef5356262521439ea2a91f01985b40b5.png",
+          "variant": "feed"
+        }
+      },
+      "assets": {
+        "original_image_path": "originals/0c8634d44cae46299b7c1077f126e7a0.png",
+        "instagram_image_path": "generated/ef5356262521439ea2a91f01985b40b5.png"
+      },
+      "results": {},
+      "form_values": {
+        "market": "Shein",
+        "sku_or_url": "sz25062937517782355",
+        "title": "Long-Sleeved Floral Pattern Single-Breasted Suit Jacket",
+        "description": "Long-Sleeved Floral Pattern Single-Breasted Suit Jacket",
+        "affiliate_link": "https://onelink.shein.com/22/59rybr9gt4kj",
+        "pinterest_extra": ""
+      },
+      "preview": {
+        "instagram_image_path": "generated/ef5356262521439ea2a91f01985b40b5.png",
+        "instagram_image_url": "/media/generated/ef5356262521439ea2a91f01985b40b5.png",
+        "instagram_image_public_url": "http://127.0.0.1:8000/media/generated/ef5356262521439ea2a91f01985b40b5.png"
+      }
     }
   },
-  "last_product_id": "sz25082109054064569"
+  "last_product_id": "sz25062937517782355"
 }

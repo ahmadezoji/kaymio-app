@@ -2,7 +2,7 @@ import base64
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from uuid import uuid4
 
 from dotenv import load_dotenv
@@ -99,6 +99,47 @@ def _hydrate_preview(preview: Optional[Dict[str, Any]]) -> Optional[Dict[str, An
             "video_public_url", url_for("serve_media", filename=video_path, _external=True)
         )
     return hydrated
+
+
+def merge_form_with_state(form_values: Dict[str, str], saved_state: Dict[str, Any]) -> Dict[str, str]:
+    merged = dict(form_values)
+    saved_form = saved_state.get("form_values") or {}
+    for key, value in saved_form.items():
+        if not merged.get(key):
+            merged[key] = value
+    return merged
+
+
+def load_runtime_product_state(raw_form_values: Dict[str, str]) -> Tuple[str, Dict[str, str], Optional[Dict[str, Any]], Dict[str, Any], Dict[str, Any]]:
+    form_values = extract_form_defaults(raw_form_values)
+    product_id = resolve_product_id(form_values)
+    saved_state = get_product_state(product_id) if product_id else {}
+    form_values = merge_form_with_state(form_values, saved_state)
+    preview_payload = rebuild_preview_payload(raw_form_values)
+    if not preview_payload and saved_state.get("preview"):
+        preview_payload = _hydrate_preview(saved_state.get("preview"))
+    assets = saved_state.get("assets") or {}
+    return product_id, form_values, preview_payload, assets, saved_state
+
+
+def render_home_response(
+    form_values: Dict[str, str],
+    *,
+    preview: Optional[Dict[str, Any]] = None,
+    result: Optional[Dict[str, Any]] = None,
+    product_id: Optional[str] = None,
+    product_state: Optional[Dict[str, Any]] = None,
+):
+    if product_state is None:
+        product_state = get_product_state(product_id) if product_id else {}
+    return render_template(
+        "home.html",
+        markets=MARKET_OPTIONS,
+        form_values=form_values,
+        preview=preview,
+        result=result,
+        product_state=product_state,
+    )
 
 
 def load_app_state() -> Dict[str, Any]:
@@ -430,13 +471,54 @@ def serve_media(filename: str):
 def home() -> str:
     saved_state = get_last_product_state()
     form_values, preview_payload, pinterest_result, _ = build_render_payload(saved_state)
-    return render_template(
-        "home.html",
-        markets=MARKET_OPTIONS,
-        form_values=form_values,
+    return render_home_response(
+        form_values,
         preview=preview_payload,
         result=pinterest_result,
+        product_state=saved_state,
     )
+
+
+@app.route("/save-product", methods=["POST"])
+def save_product() -> str:
+    raw_form_values = {key: value.strip() for key, value in request.form.items()}
+    form_values = dict(raw_form_values)
+    product_id = resolve_product_id(form_values)
+    image_file = request.files.get("product_image")
+    errors = []
+
+    if not form_values.get("market"):
+        errors.append("Please choose a marketplace before continuing.")
+    if not form_values.get("sku_or_url"):
+        errors.append("Please provide a SKU, ASIN, or product link.")
+    if not form_values.get("title"):
+        errors.append("Please provide a product title.")
+    if not form_values.get("affiliate_link"):
+        errors.append("Affiliate link is required so shoppers can reach the product.")
+
+    if image_file is None or image_file.filename == "":
+        errors.append("Upload at least one product image so we can craft creatives.")
+    elif not allowed_file(image_file.filename):
+        errors.append("Unsupported image type. Use PNG, JPG, JPEG, GIF, or WEBP.")
+
+    if errors:
+        for message in errors:
+            flash(message, "error")
+        return render_home_response(form_values)
+
+    original_bytes = image_file.read()
+    if not original_bytes:
+        flash("The uploaded image appears to be empty.", "error")
+        return render_home_response(form_values)
+
+    original_image_path = save_original_image(original_bytes, image_file.filename)
+    update_product_state(
+        product_id,
+        form_values=form_values,
+        assets={"original_image_path": original_image_path},
+    )
+    flash("Product data saved. You can now generate creatives for any platform.", "info")
+    return render_home_response(form_values, product_id=product_id)
 
 
 @app.route("/reset-platform", methods=["POST"])
@@ -456,12 +538,11 @@ def reset_platform():
 
     saved_state = get_product_state(product_id) if product_id else {}
     form_values, preview_payload, pinterest_result, _ = build_render_payload(saved_state)
-    return render_template(
-        "home.html",
-        markets=MARKET_OPTIONS,
-        form_values=form_values,
+    return render_home_response(
+        form_values,
         preview=preview_payload,
         result=pinterest_result,
+        product_state=saved_state,
     )
 
 
@@ -494,32 +575,20 @@ def generate_pinterest():
     if errors:
         for message in errors:
             flash(message, "error")
-        return render_template(
-            "home.html",
-            markets=MARKET_OPTIONS,
-            form_values=form_values,
-        )
+        return render_home_response(form_values)
 
     if image_file is not None and image_file.filename:
         original_bytes = image_file.read()
         if not original_bytes:
             flash("The uploaded image appears to be empty.", "error")
-            return render_template(
-                "home.html",
-                markets=MARKET_OPTIONS,
-                form_values=form_values,
-            )
+            return render_home_response(form_values)
         original_image_path = save_original_image(original_bytes, image_file.filename)
     else:
         try:
             original_bytes = load_stored_image(original_image_path)
         except Exception:
             flash("Unable to load the previously uploaded image. Please upload again.", "error")
-            return render_template(
-                "home.html",
-                markets=MARKET_OPTIONS,
-                form_values=form_values,
-            )
+            return render_home_response(form_values)
 
     raw_title = form_values.get("title", "")
     raw_description = form_values.get("description", "")
@@ -634,11 +703,7 @@ def generate_pinterest():
     except Exception as exc:  # pragma: no cover - guard for runtime issues
         app.logger.exception("Pinterest generation failed")
         flash(f"Unable to generate Pinterest pin: {exc}", "error")
-        return render_template(
-            "home.html",
-            markets=MARKET_OPTIONS,
-            form_values=form_values,
-        )
+        return render_home_response(form_values, product_id=product_id)
     flash("Preview generated. Choose where to publish your content.", "info")
     update_product_state(
         product_id,
@@ -657,33 +722,30 @@ def generate_pinterest():
             "generated_image_path": generated_image_path,
         },
     )
-    return render_template(
-        "home.html",
-        markets=MARKET_OPTIONS,
-        form_values=form_values,
+    return render_home_response(
+        form_values,
         preview=preview_payload,
+        product_id=product_id,
     )
 
 
 @app.route("/confirm-pinterest", methods=["POST"])
 def confirm_pinterest():
     raw_form_values = {key: value.strip() for key, value in request.form.items()}
-    generated_image_path = raw_form_values.get("generated_image_path")
-    original_image_path = raw_form_values.get("original_image_path")
-    form_values = extract_form_defaults(raw_form_values)
-    product_id = resolve_product_id(form_values)
+    product_id, form_values, preview_payload, assets, _ = load_runtime_product_state(raw_form_values)
+    generated_image_path = (
+        raw_form_values.get("generated_image_path") or assets.get("generated_image_path")
+    )
+    original_image_path = (
+        raw_form_values.get("original_image_path") or assets.get("original_image_path")
+    )
     tags = parse_tags_payload(raw_form_values.get("tags"))
-    preview_payload = rebuild_preview_payload(raw_form_values)
 
     try:
         image_bytes = load_stored_image(generated_image_path)
     except Exception:
         flash("Unable to load the generated image. Please regenerate it.", "error")
-        return render_template(
-            "home.html",
-            markets=MARKET_OPTIONS,
-            form_values=form_values,
-        )
+        return render_home_response(form_values, product_id=product_id, preview=preview_payload)
 
     try:
         pin_response = create_pinterest_pin(
@@ -696,11 +758,10 @@ def confirm_pinterest():
     except Exception as exc:
         app.logger.exception("Confirm Pinterest pin failed")
         flash(f"Unable to publish Pinterest pin: {exc}", "error")
-        return render_template(
-            "home.html",
-            markets=MARKET_OPTIONS,
-            form_values=form_values,
+        return render_home_response(
+            form_values,
             preview=preview_payload,
+            product_id=product_id,
         )
 
     flash("Pinterest pin published successfully!", "success")
@@ -730,42 +791,46 @@ def confirm_pinterest():
             "generated_image_path": generated_image_path,
         },
     )
-    return render_template(
-        "home.html",
-        markets=MARKET_OPTIONS,
-        form_values=form_values,
+    return render_home_response(
+        form_values,
         result=result,
+        product_id=product_id,
     )
 
 
 @app.route("/generate-instagram-image", methods=["POST"])
 def generate_instagram_image():
     raw_form_values = {key: value.strip() for key, value in request.form.items()}
-    form_values = extract_form_defaults(raw_form_values)
-    product_id = resolve_product_id(form_values)
-    preview_payload = rebuild_preview_payload(raw_form_values)
-    base_image_path = raw_form_values.get("original_image_path") or raw_form_values.get(
-        "generated_image_path"
+    product_id, form_values, preview_payload, assets, saved_state = load_runtime_product_state(
+        raw_form_values
+    )
+    base_image_path = (
+        raw_form_values.get("instagram_image_path")
+        or raw_form_values.get("generated_image_path")
+        or raw_form_values.get("original_image_path")
+        or assets.get("instagram_image_path")
+        or assets.get("generated_image_path")
+        or assets.get("original_image_path")
     )
 
     if not base_image_path:
         flash("Upload a product image before generating Instagram visuals.", "error")
-        return render_template(
-            "home.html",
-            markets=MARKET_OPTIONS,
-            form_values=form_values,
+        return render_home_response(
+            form_values,
             preview=preview_payload,
+            product_id=product_id,
+            product_state=saved_state,
         )
 
     try:
         base_bytes = load_stored_media(base_image_path)
     except Exception:
         flash("Unable to load the base image. Please regenerate your creative first.", "error")
-        return render_template(
-            "home.html",
-            markets=MARKET_OPTIONS,
-            form_values=form_values,
+        return render_home_response(
+            form_values,
             preview=preview_payload,
+            product_id=product_id,
+            product_state=saved_state,
         )
 
     variant = raw_form_values.get("instagram_variant", "feed").lower()
@@ -817,31 +882,33 @@ def generate_instagram_image():
         },
         assets={"instagram_image_path": instagram_image_path},
     )
-    return render_template(
-        "home.html",
-        markets=MARKET_OPTIONS,
-        form_values=form_values,
+    return render_home_response(
+        form_values,
         preview=preview_payload,
+        product_id=product_id,
     )
 
 
 @app.route("/publish-instagram", methods=["POST"])
 def publish_instagram():
     raw_form_values = {key: value.strip() for key, value in request.form.items()}
-    form_values = extract_form_defaults(raw_form_values)
-    product_id = resolve_product_id(form_values)
-    preview_payload = rebuild_preview_payload(raw_form_values)
-    generated_image_path = raw_form_values.get("instagram_image_path") or raw_form_values.get(
-        "generated_image_path"
+    product_id, form_values, preview_payload, assets, saved_state = load_runtime_product_state(
+        raw_form_values
+    )
+    generated_image_path = (
+        raw_form_values.get("instagram_image_path")
+        or assets.get("instagram_image_path")
+        or raw_form_values.get("generated_image_path")
+        or assets.get("generated_image_path")
     )
 
     if not generated_image_path:
         flash("Missing generated creative. Please run the generator first.", "error")
-        return render_template(
-            "home.html",
-            markets=MARKET_OPTIONS,
-            form_values=form_values,
+        return render_home_response(
+            form_values,
             preview=preview_payload,
+            product_id=product_id,
+            product_state=saved_state,
         )
 
     caption = raw_form_values.get("instagram_caption", "")
@@ -875,11 +942,10 @@ def publish_instagram():
         app.logger.exception("Instagram publish failed")
         flash(f"Unable to publish to Instagram: {exc}", "error")
 
-    return render_template(
-        "home.html",
-        markets=MARKET_OPTIONS,
-        form_values=form_values,
+    return render_home_response(
+        form_values,
         preview=preview_payload,
+        product_id=product_id,
     )
 
 
@@ -891,31 +957,34 @@ def generate_platform_video(platform: str):
         abort(404)
 
     raw_form_values = {key: value.strip() for key, value in request.form.items()}
-    form_values = extract_form_defaults(raw_form_values)
-    product_id = resolve_product_id(form_values)
-    preview_payload = rebuild_preview_payload(raw_form_values)
-    base_image_path = raw_form_values.get("instagram_image_path") or raw_form_values.get(
-        "generated_image_path"
+    product_id, form_values, preview_payload, assets, saved_state = load_runtime_product_state(
+        raw_form_values
+    )
+    base_image_path = (
+        raw_form_values.get("instagram_image_path")
+        or assets.get("instagram_image_path")
+        or raw_form_values.get("generated_image_path")
+        or assets.get("generated_image_path")
     )
 
     if not base_image_path:
         flash("Generate an image first to feed the video workflow.", "error")
-        return render_template(
-            "home.html",
-            markets=MARKET_OPTIONS,
-            form_values=form_values,
+        return render_home_response(
+            form_values,
             preview=preview_payload,
+            product_id=product_id,
+            product_state=saved_state,
         )
 
     try:
         base_bytes = load_stored_media(base_image_path)
     except Exception:
         flash("Unable to load the base visual. Please regenerate it.", "error")
-        return render_template(
-            "home.html",
-            markets=MARKET_OPTIONS,
-            form_values=form_values,
+        return render_home_response(
+            form_values,
             preview=preview_payload,
+            product_id=product_id,
+            product_state=saved_state,
         )
 
     title = raw_form_values.get("title") or form_values.get("title") or "this product"
@@ -970,40 +1039,39 @@ def generate_platform_video(platform: str):
         },
         assets={"generated_video_path": video_path},
     )
-    return render_template(
-        "home.html",
-        markets=MARKET_OPTIONS,
-        form_values=form_values,
+    return render_home_response(
+        form_values,
         preview=preview_payload,
+        product_id=product_id,
     )
 
 
 @app.route("/publish-youtube", methods=["POST"])
 def publish_youtube():
     raw_form_values = {key: value.strip() for key, value in request.form.items()}
-    form_values = extract_form_defaults(raw_form_values)
-    product_id = resolve_product_id(form_values)
-    preview_payload = rebuild_preview_payload(raw_form_values)
-    video_path = raw_form_values.get("generated_video_path")
+    product_id, form_values, preview_payload, assets, saved_state = load_runtime_product_state(
+        raw_form_values
+    )
+    video_path = raw_form_values.get("generated_video_path") or assets.get("generated_video_path")
 
     if not video_path:
         flash("Generate the YouTube Short first, then publish.", "error")
-        return render_template(
-            "home.html",
-            markets=MARKET_OPTIONS,
-            form_values=form_values,
+        return render_home_response(
+            form_values,
             preview=preview_payload,
+            product_id=product_id,
+            product_state=saved_state,
         )
 
     try:
         video_bytes = load_stored_media(video_path)
     except Exception:
         flash("Unable to load the generated video. Please regenerate it.", "error")
-        return render_template(
-            "home.html",
-            markets=MARKET_OPTIONS,
-            form_values=form_values,
+        return render_home_response(
+            form_values,
             preview=preview_payload,
+            product_id=product_id,
+            product_state=saved_state,
         )
 
     title = raw_form_values.get("youtube_title", raw_form_values.get("title", ""))
@@ -1039,40 +1107,39 @@ def publish_youtube():
         app.logger.exception("YouTube publish failed")
         flash(f"Unable to publish to YouTube: {exc}", "error")
 
-    return render_template(
-        "home.html",
-        markets=MARKET_OPTIONS,
-        form_values=form_values,
+    return render_home_response(
+        form_values,
         preview=preview_payload,
+        product_id=product_id,
     )
 
 
 @app.route("/publish-tiktok", methods=["POST"])
 def publish_tiktok():
     raw_form_values = {key: value.strip() for key, value in request.form.items()}
-    form_values = extract_form_defaults(raw_form_values)
-    product_id = resolve_product_id(form_values)
-    preview_payload = rebuild_preview_payload(raw_form_values)
-    video_path = raw_form_values.get("generated_video_path")
+    product_id, form_values, preview_payload, assets, saved_state = load_runtime_product_state(
+        raw_form_values
+    )
+    video_path = raw_form_values.get("generated_video_path") or assets.get("generated_video_path")
 
     if not video_path:
         flash("Generate the TikTok video first, then publish.", "error")
-        return render_template(
-            "home.html",
-            markets=MARKET_OPTIONS,
-            form_values=form_values,
+        return render_home_response(
+            form_values,
             preview=preview_payload,
+            product_id=product_id,
+            product_state=saved_state,
         )
 
     try:
         video_bytes = load_stored_media(video_path)
     except Exception:
         flash("Unable to load the generated video. Please regenerate it.", "error")
-        return render_template(
-            "home.html",
-            markets=MARKET_OPTIONS,
-            form_values=form_values,
+        return render_home_response(
+            form_values,
             preview=preview_payload,
+            product_id=product_id,
+            product_state=saved_state,
         )
 
     caption = raw_form_values.get("tiktok_caption", "")
@@ -1109,11 +1176,10 @@ def publish_tiktok():
         app.logger.exception("TikTok publish failed")
         flash(f"Unable to publish to TikTok: {exc}", "error")
 
-    return render_template(
-        "home.html",
-        markets=MARKET_OPTIONS,
-        form_values=form_values,
+    return render_home_response(
+        form_values,
         preview=preview_payload,
+        product_id=product_id,
     )
 
 

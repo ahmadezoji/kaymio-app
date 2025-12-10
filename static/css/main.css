@@ -131,6 +131,13 @@ body {
   gap: 1rem;
 }
 
+.form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  justify-content: flex-end;
+}
+
 label {
   display: flex;
   flex-direction: column;
