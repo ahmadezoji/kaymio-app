@@ -604,6 +604,52 @@ def reset_platform():
     )
 
 
+@app.route("/save-draft", methods=["POST"])
+def save_draft():
+    raw_form_values = collect_form_values(request.form)
+    form_values = extract_form_defaults(raw_form_values)
+    product_id = resolve_product_id(form_values)
+
+    if not product_id:
+        flash("Provide a SKU or product link before saving your progress.", "error")
+        return render_home_view(form_values, product_id=product_id)
+
+    image_file = request.files.get("product_image")
+    assets = {}
+    if image_file and image_file.filename:
+        if not allowed_file(image_file.filename):
+            flash("Unsupported image type. Use PNG, JPG, JPEG, GIF, or WEBP.", "error")
+            return render_home_view(form_values, product_id=product_id)
+        original_bytes = image_file.read()
+        if not original_bytes:
+            flash("The uploaded image appears to be empty.", "error")
+            return render_home_view(form_values, product_id=product_id)
+        original_image_path = save_original_image(original_bytes, image_file.filename)
+        form_values["original_image_path"] = original_image_path
+        raw_form_values["original_image_path"] = original_image_path
+        assets["original_image_path"] = original_image_path
+
+    preview_payload = rebuild_preview_payload(raw_form_values)
+    update_product_state(
+        product_id,
+        form_values=form_values,
+        preview=preview_payload,
+        assets=assets,
+    )
+    flash("Draft saved. You can return later to continue.", "success")
+    saved_state = get_product_state(product_id)
+    form_values, preview_payload, pinterest_result = build_render_payload(saved_state)
+    website_result = (saved_state.get("results") or {}).get("website") if saved_state else None
+    return render_home_view(
+        form_values,
+        preview_payload,
+        pinterest_result,
+        product_id=product_id,
+        website_result=website_result,
+        platform_states=(saved_state.get("platforms") or {}),
+    )
+
+
 @app.route("/generate-pinterest", methods=["POST"])
 def generate_pinterest():
     raw_form_values = collect_form_values(request.form)
@@ -981,14 +1027,14 @@ def publish_website():
     form_values = extract_form_defaults(raw_form_values)
     product_id = resolve_product_id(form_values)
     preview_payload = rebuild_preview_payload(raw_form_values)
+    saved_state = get_product_state(product_id) if product_id else {}
+
+    if not preview_payload and saved_state.get("preview"):
+        preview_payload = _hydrate_preview(saved_state.get("preview"))
 
     if not product_id:
         flash("Provide a SKU or product link before publishing to Kaymio.", "error")
         return render_home_view(form_values, preview_payload)
-
-    if not preview_payload:
-        flash("Generate a preview first so we can grab the AI copy and media.", "error")
-        return render_home_view(form_values, preview_payload, product_id=product_id)
 
     affiliate_link = form_values.get("affiliate_link") or raw_form_values.get("affiliate_link")
     price = form_values.get("price") or raw_form_values.get("price")
@@ -1001,16 +1047,39 @@ def publish_website():
         flash("Add a price before publishing to Kaymio.", "error")
         return render_home_view(form_values, preview_payload, product_id=product_id)
 
-    image_relative = preview_payload.get("original_image_path") or preview_payload.get("generated_image_path")
+    def _resolve_image_path():
+        if preview_payload:
+            path = preview_payload.get("original_image_path") or preview_payload.get("generated_image_path")
+            if path:
+                return path
+        direct = raw_form_values.get("original_image_path") or form_values.get("original_image_path")
+        if direct:
+            return direct
+        assets = (saved_state.get("assets") or {}) if saved_state else {}
+        return assets.get("original_image_path") or assets.get("generated_image_path")
+
+    image_relative = _resolve_image_path()
     resolved_image_path = resolve_storage_path(image_relative) if image_relative else None
     if not resolved_image_path:
         flash("Upload an original product image before publishing to Kaymio.", "error")
         return render_home_view(form_values, preview_payload, product_id=product_id)
 
+    if not preview_payload:
+        preview_payload = {
+            "title": form_values.get("title", ""),
+            "description": form_values.get("description", ""),
+            "tags": parse_tags_payload(form_values.get("tags", "[]")),
+            "original_image_path": image_relative,
+            "generated_image_path": "",
+            "category": form_values.get("category", ""),
+            "price": form_values.get("price", ""),
+            "website_boost_prompt": form_values.get("website_boost_prompt", ""),
+        }
+
     title = preview_payload.get("title") or form_values.get("title")
     description = preview_payload.get("description") or form_values.get("description", "")
     if not title or not description:
-        flash("Missing product title or description. Please regenerate your preview.", "error")
+        flash("Missing product title or description. Please provide them before publishing.", "error")
         return render_home_view(form_values, preview_payload, product_id=product_id)
 
     enriched_description = build_website_description(title, description, boost_prompt or "")

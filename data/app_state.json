@@ -232,7 +232,49 @@
         "instagram_image_url": "/media/generated/073bf572c3e740ad87774a0605c1992b.png",
         "instagram_image_public_url": "http://127.0.0.1:8000/media/generated/073bf572c3e740ad87774a0605c1992b.png"
       }
+    },
+    "sz251126336121018260": {
+      "platforms": {
+        "website": {
+          "status": "published",
+          "product_url": "https://kaymio.com/product/mistrie-womens-sexy-spaghetti-strap-chain-decor-backless-long-dress/"
+        }
+      },
+      "assets": {
+        "original_image_path": "originals/a73cae6f1c7d43ad9ee6c33fa444a56d.png"
+      },
+      "results": {
+        "website": {
+          "product_url": "https://kaymio.com/product/mistrie-womens-sexy-spaghetti-strap-chain-decor-backless-long-dress/",
+          "title": "Mistrie Women's Sexy Spaghetti Strap Chain Decor Backless Long Dress",
+          "description": "Mistrie Women's Sexy Spaghetti Strap Chain Decor Backless Long Dress",
+          "price": "7.39",
+          "category": "Women Clothing"
+        }
+      },
+      "form_values": {
+        "market": "Shein",
+        "sku_or_url": "sz251126336121018260",
+        "title": "Mistrie Women's Sexy Spaghetti Strap Chain Decor Backless Long Dress",
+        "description": "Mistrie Women's Sexy Spaghetti Strap Chain Decor Backless Long Dress",
+        "affiliate_link": "https://onelink.shein.com/23/5a3gynsv1l3v",
+        "pinterest_extra": "",
+        "category": "Women Clothing",
+        "price": "7.39",
+        "website_boost_prompt": "",
+        "use_affiliate_link": "0"
+      },
+      "preview": {
+        "title": "Mistrie Women's Sexy Spaghetti Strap Chain Decor Backless Long Dress",
+        "description": "Mistrie Women's Sexy Spaghetti Strap Chain Decor Backless Long Dress",
+        "tags": [],
+        "original_image_path": "originals/a73cae6f1c7d43ad9ee6c33fa444a56d.png",
+        "generated_image_path": "",
+        "category": "Women Clothing",
+        "price": "7.39",
+        "website_boost_prompt": ""
+      }
     }
   },
-  "last_product_id": ""
+  "last_product_id": "sz251126336121018260"
 }
