@@ -233,142 +233,142 @@
         "instagram_image_public_url": "http://127.0.0.1:8000/media/generated/073bf572c3e740ad87774a0605c1992b.png"
       }
     },
-    "sz251126336121018260": {
+    "sm2411131640176376": {
       "platforms": {
         "website": {
           "status": "published",
-          "product_url": "https://kaymio.com/product/mistrie-womens-sexy-spaghetti-strap-chain-decor-backless-long-dress/"
+          "product_url": "https://kaymio.com/product/manfinity-homme-mens-simple-front-drawstring-pocket-cargo-pants-casual-daily-wear-fall/"
         },
         "pinterest": {
           "status": "published",
-          "title": "Backless Long Dress with Chain Detail - Beyonc\u00e9 Inspired Style",
-          "description": "Unleash your inner diva with our Beyonc\u00e9 Inspired Backless Long Dress, featuring stunning chain details that will turn heads wherever you go! Perfect for your next event, this sexy spaghetti strap design will have you feeling like a superstar\u2014grab yours now and step into the spotlight! \u2728\ud83d\udc57",
+          "title": "Mens Cargo Pants with Drawstring - Casual Fall Fashion Must-Have",
+          "description": "Elevate your fall wardrobe with our Mens Cargo Pants featuring a trendy drawstring\u2014perfect for effortless style and comfort on casual outings! Dont miss out on this essential fashion staple; grab yours today and step out in confidence this season!",
           "tags": [
-            "Backless",
-            "Long",
-            "Dress",
+            "Mens",
+            "Cargo",
+            "Pants",
             "with",
-            "Chain",
-            "Detail"
+            "Drawstring",
+            "-"
           ],
-          "use_affiliate_link": false,
-          "pin_id": "903323637788415772",
-          "pin_url": "https://kaymio.com/product/mistrie-womens-sexy-spaghetti-strap-chain-decor-backless-long-dress/",
+          "use_affiliate_link": true,
+          "pin_id": null,
+          "pin_url": null,
           "published": true
         }
       },
       "assets": {
-        "original_image_path": "originals/a73cae6f1c7d43ad9ee6c33fa444a56d.png",
-        "generated_image_path": "generated/5f943206081b41f39c84506f2514527c.png"
+        "original_image_path": "originals/e66cf2c528ed4eecbc3e791e05a96fb3.png",
+        "generated_image_path": "generated/ab094d5d4be7444881543f163811266e.png"
       },
       "results": {
         "website": {
-          "product_url": "https://kaymio.com/product/mistrie-womens-sexy-spaghetti-strap-chain-decor-backless-long-dress/",
-          "title": "Mistrie Women's Sexy Spaghetti Strap Chain Decor Backless Long Dress",
-          "description": "Mistrie Women's Sexy Spaghetti Strap Chain Decor Backless Long Dress",
-          "price": "7.39",
-          "category": "Women Clothing"
+          "product_url": "https://kaymio.com/product/manfinity-homme-mens-simple-front-drawstring-pocket-cargo-pants-casual-daily-wear-fall/",
+          "title": "Manfinity Homme Men's Simple Front Drawstring Pocket Cargo Pants, Casual Daily Wear, Fall",
+          "description": "Manfinity Homme Men's Simple Front Drawstring Pocket Cargo Pants, Casual Daily Wear, Fall",
+          "price": "13.59",
+          "category": "Men Clothing"
         },
         "pinterest": {
-          "title": "Backless Long Dress with Chain Detail - Beyonc\u00e9 Inspired Style",
-          "description": "Unleash your inner diva with our Beyonc\u00e9 Inspired Backless Long Dress, featuring stunning chain details that will turn heads wherever you go! Perfect for your next event, this sexy spaghetti strap design will have you feeling like a superstar\u2014grab yours now and step into the spotlight! \u2728\ud83d\udc57",
+          "title": "Mens Cargo Pants with Drawstring - Casual Fall Fashion Must-Have",
+          "description": "Elevate your fall wardrobe with our Mens Cargo Pants featuring a trendy drawstring\u2014perfect for effortless style and comfort on casual outings! Dont miss out on this essential fashion staple; grab yours today and step out in confidence this season!",
           "tags": [
-            "Backless",
-            "Long",
-            "Dress",
+            "Mens",
+            "Cargo",
+            "Pants",
             "with",
-            "Chain",
-            "Detail"
+            "Drawstring",
+            "-"
           ],
-          "pin_id": "903323637788415772",
-          "pin_url": "https://kaymio.com/product/mistrie-womens-sexy-spaghetti-strap-chain-decor-backless-long-dress/",
+          "pin_id": null,
+          "pin_url": null,
           "status": "created"
         }
       },
       "form_values": {
         "market": "Shein",
-        "sku_or_url": "sz251126336121018260",
-        "title": "Backless Long Dress with Chain Detail - Beyonc\u00e9 Inspired Style",
-        "description": "Unleash your inner diva with our Beyonc\u00e9 Inspired Backless Long Dress, featuring stunning chain details that will turn heads wherever you go! Perfect for your next event, this sexy spaghetti strap design will have you feeling like a superstar\u2014grab yours now and step into the spotlight! \u2728\ud83d\udc57",
-        "affiliate_link": "https://onelink.shein.com/23/5a3gynsv1l3v",
-        "pinterest_extra": "wear this cloth on Beyonc\u00e9 American singer  body on stage",
-        "category": "Women Clothing",
-        "price": "7.39",
+        "sku_or_url": "sm2411131640176376",
+        "title": "Mens Cargo Pants with Drawstring - Casual Fall Fashion Must-Have",
+        "description": "Elevate your fall wardrobe with our Mens Cargo Pants featuring a trendy drawstring\u2014perfect for effortless style and comfort on casual outings! Dont miss out on this essential fashion staple; grab yours today and step out in confidence this season!",
+        "affiliate_link": "https://onelink.shein.com/23/5a3wzej3a9z7",
+        "pinterest_extra": "",
+        "category": "Men Clothing",
+        "price": "13.59",
         "website_boost_prompt": "",
-        "use_affiliate_link": "0"
+        "use_affiliate_link": "1"
       },
       "preview": {
-        "title": "Backless Long Dress with Chain Detail - Beyonc\u00e9 Inspired Style",
-        "description": "Unleash your inner diva with our Beyonc\u00e9 Inspired Backless Long Dress, featuring stunning chain details that will turn heads wherever you go! Perfect for your next event, this sexy spaghetti strap design will have you feeling like a superstar\u2014grab yours now and step into the spotlight! \u2728\ud83d\udc57",
+        "title": "Mens Cargo Pants with Drawstring - Casual Fall Fashion Must-Have",
+        "description": "Elevate your fall wardrobe with our Mens Cargo Pants featuring a trendy drawstring\u2014perfect for effortless style and comfort on casual outings! Dont miss out on this essential fashion staple; grab yours today and step out in confidence this season!",
         "tags": [
-          "Backless",
-          "Long",
-          "Dress",
+          "Mens",
+          "Cargo",
+          "Pants",
           "with",
-          "Chain",
-          "Detail"
+          "Drawstring",
+          "-"
         ],
-        "tags_payload": "[\"Backless\", \"Long\", \"Dress\", \"with\", \"Chain\", \"Detail\"]",
-        "generated_image_path": "generated/5f943206081b41f39c84506f2514527c.png",
-        "original_image_path": "originals/a73cae6f1c7d43ad9ee6c33fa444a56d.png",
-        "affiliate_link": "https://onelink.shein.com/23/5a3gynsv1l3v",
+        "tags_payload": "[\"Mens\", \"Cargo\", \"Pants\", \"with\", \"Drawstring\", \"-\"]",
+        "generated_image_path": "generated/ab094d5d4be7444881543f163811266e.png",
+        "original_image_path": "originals/e66cf2c528ed4eecbc3e791e05a96fb3.png",
+        "affiliate_link": "https://onelink.shein.com/23/5a3wzej3a9z7",
         "market": "Shein",
-        "sku_or_url": "sz251126336121018260",
-        "pinterest_extra": "wear this cloth on Beyonc\u00e9 American singer  body on stage",
-        "title_input": "Backless Long Dress with Chain Detail - Beyonc\u00e9 Inspired Style",
-        "description_input": "Unleash your inner diva with our Beyonc\u00e9 Inspired Backless Long Dress, featuring stunning chain details that will turn heads wherever you go! Perfect for your next event, this sexy spaghetti strap design will have you feeling like a superstar\u2014grab yours now and step into the spotlight! \u2728\ud83d\udc57",
-        "instagram_caption": "Unleash your inner diva with our Beyonc\u00e9 Inspired Backless Long Dress, featuring stunning chain details that will turn heads wherever you go! Perfect for your next event, this sexy spaghetti strap design will have you feeling like a superstar\u2014grab yours now and step into the spotlight! \u2728\ud83d\udc57",
+        "sku_or_url": "sm2411131640176376",
+        "pinterest_extra": "",
+        "title_input": "Mens Cargo Pants with Drawstring - Casual Fall Fashion Must-Have",
+        "description_input": "Elevate your fall wardrobe with our Mens Cargo Pants featuring a trendy drawstring\u2014perfect for effortless style and comfort on casual outings! Dont miss out on this essential fashion staple; grab yours today and step out in confidence this season!",
+        "instagram_caption": "Elevate your fall wardrobe with our Mens Cargo Pants featuring a trendy drawstring\u2014perfect for effortless style and comfort on casual outings! Dont miss out on this essential fashion staple; grab yours today and step out in confidence this season!",
         "instagram_hashtags": [
-          "backless",
-          "long",
-          "dress",
+          "mens",
+          "cargo",
+          "pants",
           "with",
-          "chain",
-          "detail",
+          "drawstring",
           "-",
-          "beyonc\u00e9",
-          "inspired",
-          "style"
+          "casual",
+          "fall",
+          "fashion",
+          "must-have"
         ],
-        "instagram_hashtags_payload": "[\"backless\", \"long\", \"dress\", \"with\", \"chain\", \"detail\", \"-\", \"beyonc\\u00e9\", \"inspired\", \"style\"]",
-        "tiktok_caption": "Unleash your inner diva with our Beyonc\u00e9 Inspired Backless Long Dress, featuring stunning chain details that will turn heads wherever you go! Perfect for your next event, this sexy spaghetti strap design will have you feeling like a superstar\u2014grab yours now and step into the spotlight! \u2728\ud83d\udc57",
+        "instagram_hashtags_payload": "[\"mens\", \"cargo\", \"pants\", \"with\", \"drawstring\", \"-\", \"casual\", \"fall\", \"fashion\", \"must-have\"]",
+        "tiktok_caption": "Elevate your fall wardrobe with our Mens Cargo Pants featuring a trendy drawstring\u2014perfect for effortless style and comfort on casual outings! Dont miss out on this essential fashion staple; grab yours today and step out in confidence this season!",
         "tiktok_hashtags": [
-          "backless",
-          "long",
-          "dress",
+          "mens",
+          "cargo",
+          "pants",
           "with",
-          "chain",
-          "detail"
+          "drawstring",
+          "-"
         ],
-        "tiktok_hashtags_payload": "[\"backless\", \"long\", \"dress\", \"with\", \"chain\", \"detail\"]",
-        "youtube_title": "Backless Long Dress with Chain Detail - Beyonc\u00e9 Inspired Style",
-        "youtube_description": "Unleash your inner diva with our Beyonc\u00e9 Inspired Backless Long Dress, featuring stunning chain details that will turn heads wherever you go! Perfect for your next event, this sexy spaghetti strap design will have you feeling like a superstar\u2014grab yours now and step into the spotlight! \u2728\ud83d\udc57",
+        "tiktok_hashtags_payload": "[\"mens\", \"cargo\", \"pants\", \"with\", \"drawstring\", \"-\"]",
+        "youtube_title": "Mens Cargo Pants with Drawstring - Casual Fall Fashion Must-Have",
+        "youtube_description": "Elevate your fall wardrobe with our Mens Cargo Pants featuring a trendy drawstring\u2014perfect for effortless style and comfort on casual outings! Dont miss out on this essential fashion staple; grab yours today and step out in confidence this season!",
         "youtube_keywords": [
-          "Backless",
-          "Long",
-          "Dress",
+          "Mens",
+          "Cargo",
+          "Pants",
           "with",
-          "Chain",
-          "Detail",
+          "Drawstring",
           "-",
-          "Beyonc\u00e9"
+          "Casual",
+          "Fall"
         ],
-        "youtube_keywords_payload": "[\"Backless\", \"Long\", \"Dress\", \"with\", \"Chain\", \"Detail\", \"-\", \"Beyonc\\u00e9\"]",
-        "video_prompt": "Create a dynamic short-form video for Backless Long Dress with Chain Detail - Beyonc\u00e9 Inspired Style. Include upbeat pacing, text overlays highlighting the benefits, and close with a CTA to tap the affiliate link.",
-        "instagram_image_path": "generated/5f943206081b41f39c84506f2514527c.png",
-        "category": "Women Clothing",
-        "price": "7.39",
+        "youtube_keywords_payload": "[\"Mens\", \"Cargo\", \"Pants\", \"with\", \"Drawstring\", \"-\", \"Casual\", \"Fall\"]",
+        "video_prompt": "Create a dynamic short-form video for Mens Cargo Pants with Drawstring - Casual Fall Fashion Must-Have. Include upbeat pacing, text overlays highlighting the benefits, and close with a CTA to tap the affiliate link.",
+        "instagram_image_path": "generated/ab094d5d4be7444881543f163811266e.png",
+        "category": "Men Clothing",
+        "price": "13.59",
         "website_boost_prompt": "",
-        "use_affiliate_link": "0",
-        "generated_image_url": "/media/generated/5f943206081b41f39c84506f2514527c.png",
-        "image_public_url": "http://127.0.0.1:8000/media/generated/5f943206081b41f39c84506f2514527c.png",
+        "use_affiliate_link": "1",
+        "generated_image_url": "/media/generated/ab094d5d4be7444881543f163811266e.png",
+        "image_public_url": "http://127.0.0.1:8000/media/generated/ab094d5d4be7444881543f163811266e.png",
         "generated_video_path": "",
         "video_url": "",
         "video_public_url": "",
-        "instagram_image_url": "/media/generated/5f943206081b41f39c84506f2514527c.png",
-        "instagram_image_public_url": "http://127.0.0.1:8000/media/generated/5f943206081b41f39c84506f2514527c.png"
+        "instagram_image_url": "/media/generated/ab094d5d4be7444881543f163811266e.png",
+        "instagram_image_public_url": "http://127.0.0.1:8000/media/generated/ab094d5d4be7444881543f163811266e.png"
       }
     }
   },
-  "last_product_id": "sz251126336121018260"
+  "last_product_id": "sm2411131640176376"
 }
