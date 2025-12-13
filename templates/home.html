@@ -99,6 +99,7 @@
           action="{{ url_for('generate_pinterest') }}"
           enctype="multipart/form-data"
           class="grid"
+          id="pinterest-input-form"
         >
           <section class="card">
             <div class="card-header">
@@ -194,23 +195,6 @@
             </label>
           </section>
 
-          <section class="card">
-            <div class="card-header">
-              <h2>Pinterest prompt booster</h2>
-              <p>Drop any extra angles, seasonal hooks, or CTA copy.</p>
-            </div>
-            <label>
-              <span>Optimization text</span>
-              <textarea
-                name="pinterest_extra"
-                placeholder="Mention eco-friendly materials, Mother's Day bundles, etc."
-                rows="3"
-              >{{ values.get('pinterest_extra', '') }}</textarea>
-            </label>
-            <button class="primary" type="submit" {% if pinterest_published %}disabled{% endif %}>
-              Generating for Pinterest
-            </button>
-          </section>
         </form>
 
         <section class="card result">
@@ -385,6 +369,27 @@
               <span>Use affiliate link</span>
             </label>
           {% endif %}
+          <div class="prompt-booster">
+            <h3>Pinterest prompt booster</h3>
+            <p>Drop any extra angles, seasonal hooks, or CTA copy.</p>
+            <label>
+              <span>Optimization text</span>
+              <textarea
+                name="pinterest_extra"
+                placeholder="Mention eco-friendly materials, Mother's Day bundles, etc."
+                rows="3"
+                form="pinterest-input-form"
+              >{{ values.get('pinterest_extra', '') }}</textarea>
+            </label>
+            <button
+              class="primary"
+              type="submit"
+              form="pinterest-input-form"
+              {% if pinterest_published %}disabled{% endif %}
+            >
+              Generating for Pinterest
+            </button>
+          </div>
         </section>
 
         <section class="card result">
