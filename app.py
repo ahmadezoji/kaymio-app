@@ -200,6 +200,16 @@ def resolve_product_id(values: Dict[str, str]) -> str:
     return normalize_product_id(values.get("sku_or_url", ""))
 
 
+def collect_form_values(form_data) -> Dict[str, str]:
+    raw: Dict[str, str] = {}
+    for key in form_data.keys():
+        values = form_data.getlist(key)
+        if not values:
+            continue
+        raw[key] = values[-1].strip()
+    return raw
+
+
 def render_home_view(
     form_values: Optional[Dict[str, str]],
     preview_payload: Optional[Dict[str, Any]] = None,
@@ -207,9 +217,21 @@ def render_home_view(
     *,
     product_id: str = "",
     website_result: Optional[Dict[str, Any]] = None,
+    platform_states: Optional[Dict[str, Any]] = None,
 ):
-    if website_result is None and product_id:
-        website_result = get_website_result(product_id)
+    state_entry: Optional[Dict[str, Any]] = None
+    if product_id and (website_result is None or platform_states is None):
+        state_entry = get_product_state(product_id)
+    if website_result is None:
+        if state_entry:
+            website_result = (state_entry.get("results") or {}).get("website")
+        elif product_id:
+            website_result = get_website_result(product_id)
+    if platform_states is None:
+        if state_entry:
+            platform_states = state_entry.get("platforms") or {}
+        else:
+            platform_states = {}
     return render_template(
         "home.html",
         markets=MARKET_OPTIONS,
@@ -217,25 +239,19 @@ def render_home_view(
         preview=preview_payload,
         result=pinterest_result,
         website_result=website_result,
+        platform_states=platform_states or {},
     )
 
 
-def has_unfinished_platforms(entry: Dict[str, Any]) -> bool:
-    platforms = entry.get("platforms") or {}
-    for platform_meta in platforms.values():
-        if not platform_meta or platform_meta.get("status") != "published":
-            return True
-    return False
-
-
 def build_render_payload(entry: Dict[str, Any]):
-    unfinished = has_unfinished_platforms(entry)
-    form_values = entry.get("form_values") or {} if unfinished else {}
-    preview_payload = entry.get("preview") if unfinished else None
+    if not entry:
+        return {}, None, None
+    form_values = entry.get("form_values") or {}
+    preview_payload = entry.get("preview")
     if preview_payload:
         preview_payload = _hydrate_preview(preview_payload)
     results = entry.get("results") or {}
-    return form_values, preview_payload, results.get("pinterest"), unfinished
+    return form_values, preview_payload, results.get("pinterest")
 
 
 def reset_product_platform(product_id: str, platform: str) -> None:
@@ -425,13 +441,24 @@ def extract_form_defaults(raw_form_values: Dict[str, str]) -> Dict[str, str]:
             "category",
             "price",
             "website_boost_prompt",
+            "use_affiliate_link",
         )
     }
-    defaults["website_boost_prompt"] = raw_form_values.get(
-        "website_boost_prompt", raw_form_values.get("website_boost_prompt_pref", defaults.get("website_boost_prompt", ""))
+    defaults["website_boost_prompt"] = (
+        raw_form_values.get("website_boost_prompt")
+        or raw_form_values.get("website_boost_prompt_pref")
+        or defaults.get("website_boost_prompt")
+        or ""
     )
-    defaults["use_affiliate_link"] = raw_form_values.get(
-        "use_affiliate_link", raw_form_values.get("use_affiliate_link_pref", defaults.get("use_affiliate_link", ""))
+    prefer_order = [
+        raw_form_values.get("use_affiliate_link"),
+        raw_form_values.get("use_affiliate_link_pref"),
+        defaults.get("use_affiliate_link"),
+        "0",
+    ]
+    defaults["use_affiliate_link"] = next(
+        (val for val in prefer_order if val not in (None, "")),
+        "0",
     )
     return defaults
 
@@ -479,6 +506,11 @@ def rebuild_preview_payload(raw_form_values: Dict[str, str]):
         "category": raw_form_values.get("category", ""),
         "price": raw_form_values.get("price", ""),
         "website_boost_prompt": raw_form_values.get("website_boost_prompt", ""),
+        "use_affiliate_link": (
+            raw_form_values.get("use_affiliate_link")
+            or raw_form_values.get("use_affiliate_link_pref")
+            or "0"
+        ),
     }
 
     image_relative = raw_form_values.get("generated_image_path", "")
@@ -528,20 +560,25 @@ def serve_media(filename: str):
 
 @app.route("/", methods=["GET"])
 def home() -> str:
-    saved_state = get_last_product_state()
-    form_values, preview_payload, pinterest_result, _ = build_render_payload(saved_state)
+    state = load_app_state()
+    last_product_id = state.get("last_product_id") or ""
+    saved_state = state.get("products", {}).get(last_product_id, {})
+    form_values, preview_payload, pinterest_result = build_render_payload(saved_state)
     website_result = (saved_state.get("results") or {}).get("website") if saved_state else None
+    platform_states = saved_state.get("platforms") or {}
     return render_home_view(
         form_values,
         preview_payload,
         pinterest_result,
+        product_id=last_product_id,
         website_result=website_result,
+        platform_states=platform_states,
     )
 
 
 @app.route("/reset-platform", methods=["POST"])
 def reset_platform():
-    raw_form_values = {key: value.strip() for key, value in request.form.items()}
+    raw_form_values = collect_form_values(request.form)
     platform = (raw_form_values.get("platform") or "").lower()
     form_values = extract_form_defaults(raw_form_values)
     product_id = resolve_product_id(form_values)
@@ -555,21 +592,25 @@ def reset_platform():
         flash(f"{platform.title()} state reset.", "info")
 
     saved_state = get_product_state(product_id) if product_id else {}
-    form_values, preview_payload, pinterest_result, _ = build_render_payload(saved_state)
+    form_values, preview_payload, pinterest_result = build_render_payload(saved_state)
     website_result = (saved_state.get("results") or {}).get("website") if saved_state else None
     return render_home_view(
         form_values,
         preview_payload,
         pinterest_result,
+        product_id=product_id,
         website_result=website_result,
+        platform_states=(saved_state.get("platforms") or {}),
     )
 
 
 @app.route("/generate-pinterest", methods=["POST"])
 def generate_pinterest():
-    raw_form_values = {key: value.strip() for key, value in request.form.items()}
+    raw_form_values = collect_form_values(request.form)
     original_image_path = raw_form_values.pop("original_image_path", "")
     form_values = dict(raw_form_values)
+    form_values.setdefault("use_affiliate_link", "0")
+    use_affiliate_link_flag = str(form_values.get("use_affiliate_link", "0")).lower() in TRUTHY_VALUES
     product_id = resolve_product_id(form_values)
     image_file = request.files.get("product_image")
     errors = []
@@ -720,6 +761,7 @@ def generate_pinterest():
             "category": form_values.get("category", ""),
             "price": form_values.get("price", ""),
             "website_boost_prompt": form_values.get("website_boost_prompt", ""),
+            "use_affiliate_link": form_values.get("use_affiliate_link", "0") or "0",
         }
 
     except Exception as exc:  # pragma: no cover - guard for runtime issues
@@ -737,6 +779,7 @@ def generate_pinterest():
                 "title": refined_title,
                 "description": generated_description,
                 "tags": tags,
+                "use_affiliate_link": use_affiliate_link_flag,
             }
         },
         assets={
@@ -749,15 +792,15 @@ def generate_pinterest():
 
 @app.route("/confirm-pinterest", methods=["POST"])
 def confirm_pinterest():
-    raw_form_values = {key: value.strip() for key, value in request.form.items()}
+    raw_form_values = collect_form_values(request.form)
     generated_image_path = raw_form_values.get("generated_image_path")
     original_image_path = raw_form_values.get("original_image_path")
     form_values = extract_form_defaults(raw_form_values)
     product_id = resolve_product_id(form_values)
     tags = parse_tags_payload(raw_form_values.get("tags"))
     preview_payload = rebuild_preview_payload(raw_form_values)
-    use_affiliate_link = raw_form_values.get("use_affiliate_link", form_values.get("use_affiliate_link", ""))
-    use_affiliate_link_flag = str(use_affiliate_link).lower() in TRUTHY_VALUES
+    use_affiliate_link = raw_form_values.get("use_affiliate_link", form_values.get("use_affiliate_link", "0"))
+    use_affiliate_link_flag = str(use_affiliate_link or "0").lower() in TRUTHY_VALUES
 
     try:
         image_bytes = load_stored_image(generated_image_path)
@@ -803,6 +846,7 @@ def confirm_pinterest():
                 "pin_id": pin_response.get("id"),
                 "pin_url": pin_response.get("url"),
                 "published": True,
+                "use_affiliate_link": use_affiliate_link_flag,
             }
         },
         assets={
@@ -815,8 +859,9 @@ def confirm_pinterest():
 
 @app.route("/generate-instagram-image", methods=["POST"])
 def generate_instagram_image():
-    raw_form_values = {key: value.strip() for key, value in request.form.items()}
+    raw_form_values = collect_form_values(request.form)
     form_values = extract_form_defaults(raw_form_values)
+    use_affiliate_link_flag = str(form_values.get("use_affiliate_link", "0")).lower() in TRUTHY_VALUES
     product_id = resolve_product_id(form_values)
     preview_payload = rebuild_preview_payload(raw_form_values)
     base_image_path = raw_form_values.get("original_image_path") or raw_form_values.get(
@@ -873,6 +918,7 @@ def generate_instagram_image():
                 "status": "pending",
                 "image_path": instagram_image_path,
                 "variant": variant_label,
+                "use_affiliate_link": use_affiliate_link_flag,
             }
         },
         assets={"instagram_image_path": instagram_image_path},
@@ -882,8 +928,9 @@ def generate_instagram_image():
 
 @app.route("/publish-instagram", methods=["POST"])
 def publish_instagram():
-    raw_form_values = {key: value.strip() for key, value in request.form.items()}
+    raw_form_values = collect_form_values(request.form)
     form_values = extract_form_defaults(raw_form_values)
+    use_affiliate_link_flag = str(form_values.get("use_affiliate_link", "0")).lower() in TRUTHY_VALUES
     product_id = resolve_product_id(form_values)
     preview_payload = rebuild_preview_payload(raw_form_values)
     generated_image_path = raw_form_values.get("instagram_image_path") or raw_form_values.get(
@@ -919,7 +966,7 @@ def publish_instagram():
             product_id,
             form_values=form_values,
             preview=preview_payload,
-            platforms={platform_name: {"status": "published"}},
+            platforms={platform_name: {"status": "published", "use_affiliate_link": use_affiliate_link_flag}},
         )
     except Exception as exc:
         app.logger.exception("Instagram publish failed")
@@ -930,7 +977,7 @@ def publish_instagram():
 
 @app.route("/publish-website", methods=["POST"])
 def publish_website():
-    raw_form_values = {key: value.strip() for key, value in request.form.items()}
+    raw_form_values = collect_form_values(request.form)
     form_values = extract_form_defaults(raw_form_values)
     product_id = resolve_product_id(form_values)
     preview_payload = rebuild_preview_payload(raw_form_values)
@@ -1007,7 +1054,12 @@ def publish_website():
         product_id,
         form_values=form_values,
         preview=preview_payload,
-        platforms={"website": {"status": "published", "product_url": product_url}},
+        platforms={
+            "website": {
+                "status": "published",
+                "product_url": product_url,
+            }
+        },
         results={"website": website_result},
     )
     pinterest_result = get_platform_result(product_id, "pinterest")
@@ -1027,8 +1079,9 @@ def generate_platform_video(platform: str):
     if target not in supported:
         abort(404)
 
-    raw_form_values = {key: value.strip() for key, value in request.form.items()}
+    raw_form_values = collect_form_values(request.form)
     form_values = extract_form_defaults(raw_form_values)
+    use_affiliate_link_flag = str(form_values.get("use_affiliate_link", "0")).lower() in TRUTHY_VALUES
     product_id = resolve_product_id(form_values)
     preview_payload = rebuild_preview_payload(raw_form_values)
     base_image_path = raw_form_values.get("instagram_image_path") or raw_form_values.get(
@@ -1088,6 +1141,7 @@ def generate_platform_video(platform: str):
                 "status": "pending",
                 "video_path": video_path,
                 "base_image_path": base_image_path,
+                "use_affiliate_link": use_affiliate_link_flag,
             }
         },
         assets={"generated_video_path": video_path},
@@ -1097,8 +1151,9 @@ def generate_platform_video(platform: str):
 
 @app.route("/publish-youtube", methods=["POST"])
 def publish_youtube():
-    raw_form_values = {key: value.strip() for key, value in request.form.items()}
+    raw_form_values = collect_form_values(request.form)
     form_values = extract_form_defaults(raw_form_values)
+    use_affiliate_link_flag = str(form_values.get("use_affiliate_link", "0")).lower() in TRUTHY_VALUES
     product_id = resolve_product_id(form_values)
     preview_payload = rebuild_preview_payload(raw_form_values)
     video_path = raw_form_values.get("generated_video_path")
@@ -1133,7 +1188,13 @@ def publish_youtube():
             product_id,
             form_values=form_values,
             preview=preview_payload,
-            platforms={"youtube": {"status": "published", "video_id": response.get("video_id")}},
+            platforms={
+                "youtube": {
+                    "status": "published",
+                    "video_id": response.get("video_id"),
+                    "use_affiliate_link": use_affiliate_link_flag,
+                }
+            },
             results={
                 "youtube": {
                     "title": title,
@@ -1151,8 +1212,9 @@ def publish_youtube():
 
 @app.route("/publish-tiktok", methods=["POST"])
 def publish_tiktok():
-    raw_form_values = {key: value.strip() for key, value in request.form.items()}
+    raw_form_values = collect_form_values(request.form)
     form_values = extract_form_defaults(raw_form_values)
+    use_affiliate_link_flag = str(form_values.get("use_affiliate_link", "0")).lower() in TRUTHY_VALUES
     product_id = resolve_product_id(form_values)
     preview_payload = rebuild_preview_payload(raw_form_values)
     video_path = raw_form_values.get("generated_video_path")
@@ -1189,7 +1251,7 @@ def publish_tiktok():
             product_id,
             form_values=form_values,
             preview=preview_payload,
-            platforms={"tiktok": {"status": "published"}},
+            platforms={"tiktok": {"status": "published", "use_affiliate_link": use_affiliate_link_flag}},
             results={
                 "tiktok": {
                     "caption": caption_to_publish,
