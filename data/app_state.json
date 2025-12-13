@@ -238,10 +238,28 @@
         "website": {
           "status": "published",
           "product_url": "https://kaymio.com/product/mistrie-womens-sexy-spaghetti-strap-chain-decor-backless-long-dress/"
+        },
+        "pinterest": {
+          "status": "published",
+          "title": "Backless Long Dress with Chain Detail - Beyonc\u00e9 Inspired Style",
+          "description": "Unleash your inner diva with our Beyonc\u00e9 Inspired Backless Long Dress, featuring stunning chain details that will turn heads wherever you go! Perfect for your next event, this sexy spaghetti strap design will have you feeling like a superstar\u2014grab yours now and step into the spotlight! \u2728\ud83d\udc57",
+          "tags": [
+            "Backless",
+            "Long",
+            "Dress",
+            "with",
+            "Chain",
+            "Detail"
+          ],
+          "use_affiliate_link": false,
+          "pin_id": "903323637788415772",
+          "pin_url": "https://kaymio.com/product/mistrie-womens-sexy-spaghetti-strap-chain-decor-backless-long-dress/",
+          "published": true
         }
       },
       "assets": {
-        "original_image_path": "originals/a73cae6f1c7d43ad9ee6c33fa444a56d.png"
+        "original_image_path": "originals/a73cae6f1c7d43ad9ee6c33fa444a56d.png",
+        "generated_image_path": "generated/5f943206081b41f39c84506f2514527c.png"
       },
       "results": {
         "website": {
@@ -250,29 +268,105 @@
           "description": "Mistrie Women's Sexy Spaghetti Strap Chain Decor Backless Long Dress",
           "price": "7.39",
           "category": "Women Clothing"
+        },
+        "pinterest": {
+          "title": "Backless Long Dress with Chain Detail - Beyonc\u00e9 Inspired Style",
+          "description": "Unleash your inner diva with our Beyonc\u00e9 Inspired Backless Long Dress, featuring stunning chain details that will turn heads wherever you go! Perfect for your next event, this sexy spaghetti strap design will have you feeling like a superstar\u2014grab yours now and step into the spotlight! \u2728\ud83d\udc57",
+          "tags": [
+            "Backless",
+            "Long",
+            "Dress",
+            "with",
+            "Chain",
+            "Detail"
+          ],
+          "pin_id": "903323637788415772",
+          "pin_url": "https://kaymio.com/product/mistrie-womens-sexy-spaghetti-strap-chain-decor-backless-long-dress/",
+          "status": "created"
         }
       },
       "form_values": {
         "market": "Shein",
         "sku_or_url": "sz251126336121018260",
-        "title": "Mistrie Women's Sexy Spaghetti Strap Chain Decor Backless Long Dress",
-        "description": "Mistrie Women's Sexy Spaghetti Strap Chain Decor Backless Long Dress",
+        "title": "Backless Long Dress with Chain Detail - Beyonc\u00e9 Inspired Style",
+        "description": "Unleash your inner diva with our Beyonc\u00e9 Inspired Backless Long Dress, featuring stunning chain details that will turn heads wherever you go! Perfect for your next event, this sexy spaghetti strap design will have you feeling like a superstar\u2014grab yours now and step into the spotlight! \u2728\ud83d\udc57",
         "affiliate_link": "https://onelink.shein.com/23/5a3gynsv1l3v",
-        "pinterest_extra": "",
+        "pinterest_extra": "wear this cloth on Beyonc\u00e9 American singer  body on stage",
         "category": "Women Clothing",
         "price": "7.39",
         "website_boost_prompt": "",
         "use_affiliate_link": "0"
       },
       "preview": {
-        "title": "Mistrie Women's Sexy Spaghetti Strap Chain Decor Backless Long Dress",
-        "description": "Mistrie Women's Sexy Spaghetti Strap Chain Decor Backless Long Dress",
-        "tags": [],
+        "title": "Backless Long Dress with Chain Detail - Beyonc\u00e9 Inspired Style",
+        "description": "Unleash your inner diva with our Beyonc\u00e9 Inspired Backless Long Dress, featuring stunning chain details that will turn heads wherever you go! Perfect for your next event, this sexy spaghetti strap design will have you feeling like a superstar\u2014grab yours now and step into the spotlight! \u2728\ud83d\udc57",
+        "tags": [
+          "Backless",
+          "Long",
+          "Dress",
+          "with",
+          "Chain",
+          "Detail"
+        ],
+        "tags_payload": "[\"Backless\", \"Long\", \"Dress\", \"with\", \"Chain\", \"Detail\"]",
+        "generated_image_path": "generated/5f943206081b41f39c84506f2514527c.png",
         "original_image_path": "originals/a73cae6f1c7d43ad9ee6c33fa444a56d.png",
-        "generated_image_path": "",
+        "affiliate_link": "https://onelink.shein.com/23/5a3gynsv1l3v",
+        "market": "Shein",
+        "sku_or_url": "sz251126336121018260",
+        "pinterest_extra": "wear this cloth on Beyonc\u00e9 American singer  body on stage",
+        "title_input": "Backless Long Dress with Chain Detail - Beyonc\u00e9 Inspired Style",
+        "description_input": "Unleash your inner diva with our Beyonc\u00e9 Inspired Backless Long Dress, featuring stunning chain details that will turn heads wherever you go! Perfect for your next event, this sexy spaghetti strap design will have you feeling like a superstar\u2014grab yours now and step into the spotlight! \u2728\ud83d\udc57",
+        "instagram_caption": "Unleash your inner diva with our Beyonc\u00e9 Inspired Backless Long Dress, featuring stunning chain details that will turn heads wherever you go! Perfect for your next event, this sexy spaghetti strap design will have you feeling like a superstar\u2014grab yours now and step into the spotlight! \u2728\ud83d\udc57",
+        "instagram_hashtags": [
+          "backless",
+          "long",
+          "dress",
+          "with",
+          "chain",
+          "detail",
+          "-",
+          "beyonc\u00e9",
+          "inspired",
+          "style"
+        ],
+        "instagram_hashtags_payload": "[\"backless\", \"long\", \"dress\", \"with\", \"chain\", \"detail\", \"-\", \"beyonc\\u00e9\", \"inspired\", \"style\"]",
+        "tiktok_caption": "Unleash your inner diva with our Beyonc\u00e9 Inspired Backless Long Dress, featuring stunning chain details that will turn heads wherever you go! Perfect for your next event, this sexy spaghetti strap design will have you feeling like a superstar\u2014grab yours now and step into the spotlight! \u2728\ud83d\udc57",
+        "tiktok_hashtags": [
+          "backless",
+          "long",
+          "dress",
+          "with",
+          "chain",
+          "detail"
+        ],
+        "tiktok_hashtags_payload": "[\"backless\", \"long\", \"dress\", \"with\", \"chain\", \"detail\"]",
+        "youtube_title": "Backless Long Dress with Chain Detail - Beyonc\u00e9 Inspired Style",
+        "youtube_description": "Unleash your inner diva with our Beyonc\u00e9 Inspired Backless Long Dress, featuring stunning chain details that will turn heads wherever you go! Perfect for your next event, this sexy spaghetti strap design will have you feeling like a superstar\u2014grab yours now and step into the spotlight! \u2728\ud83d\udc57",
+        "youtube_keywords": [
+          "Backless",
+          "Long",
+          "Dress",
+          "with",
+          "Chain",
+          "Detail",
+          "-",
+          "Beyonc\u00e9"
+        ],
+        "youtube_keywords_payload": "[\"Backless\", \"Long\", \"Dress\", \"with\", \"Chain\", \"Detail\", \"-\", \"Beyonc\\u00e9\"]",
+        "video_prompt": "Create a dynamic short-form video for Backless Long Dress with Chain Detail - Beyonc\u00e9 Inspired Style. Include upbeat pacing, text overlays highlighting the benefits, and close with a CTA to tap the affiliate link.",
+        "instagram_image_path": "generated/5f943206081b41f39c84506f2514527c.png",
         "category": "Women Clothing",
         "price": "7.39",
-        "website_boost_prompt": ""
+        "website_boost_prompt": "",
+        "use_affiliate_link": "0",
+        "generated_image_url": "/media/generated/5f943206081b41f39c84506f2514527c.png",
+        "image_public_url": "http://127.0.0.1:8000/media/generated/5f943206081b41f39c84506f2514527c.png",
+        "generated_video_path": "",
+        "video_url": "",
+        "video_public_url": "",
+        "instagram_image_url": "/media/generated/5f943206081b41f39c84506f2514527c.png",
+        "instagram_image_public_url": "http://127.0.0.1:8000/media/generated/5f943206081b41f39c84506f2514527c.png"
       }
     }
   },

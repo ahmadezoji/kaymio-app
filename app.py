@@ -1,6 +1,7 @@
 import base64
 import json
 import os
+from io import BytesIO
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
@@ -23,6 +24,7 @@ from pintrest.pinterest_helper import create_pinterest_pin
 from tiktok.tiktok_api_helper import publish_tiktok_post
 from youtube.youtube_api_helper import publish_short_video
 from kaymio.kaymio import create_woocommerce_product, find_wordpress_nearest_category
+from PIL import Image
 
 load_dotenv()
 
@@ -655,6 +657,10 @@ def generate_pinterest():
     raw_form_values = collect_form_values(request.form)
     original_image_path = raw_form_values.pop("original_image_path", "")
     form_values = dict(raw_form_values)
+    saved_state = get_product_state(resolve_product_id(form_values))
+    if not original_image_path and saved_state:
+        assets = saved_state.get("assets") or {}
+        original_image_path = assets.get("original_image_path", "")
     form_values.setdefault("use_affiliate_link", "0")
     use_affiliate_link_flag = str(form_values.get("use_affiliate_link", "0")).lower() in TRUTHY_VALUES
     product_id = resolve_product_id(form_values)
@@ -763,6 +769,7 @@ def generate_pinterest():
             ),
             aspect_ratio="2:3",
         )
+        generated_image = ensure_dimensions(generated_image, (1000, 1500))
         generated_image_path = save_generated_image(generated_image)
         generated_image_url = url_for("serve_media", filename=generated_image_path)
         image_public_url = url_for("serve_media", filename=generated_image_path, _external=True)
@@ -815,6 +822,7 @@ def generate_pinterest():
         flash(f"Unable to generate Pinterest pin: {exc}", "error")
         return render_home_view(form_values, product_id=product_id)
     flash("Preview generated. Choose where to publish your content.", "info")
+
     update_product_state(
         product_id,
         form_values=form_values,
@@ -835,7 +843,19 @@ def generate_pinterest():
     )
     return render_home_view(form_values, preview_payload, product_id=product_id)
 
-
+def ensure_dimensions(image_bytes: bytes, size: tuple[int, int]) -> bytes:
+    """Resize image bytes to the requested size while preserving format."""
+    try:
+        image = Image.open(BytesIO(image_bytes))
+        if image.size == size:
+            return image_bytes
+        resized = image.resize(size, Image.LANCZOS)
+        output = BytesIO()
+        resized.save(output, format="PNG")
+        return output.getvalue()
+    except Exception:
+        return image_bytes
+    
 @app.route("/confirm-pinterest", methods=["POST"])
 def confirm_pinterest():
     raw_form_values = collect_form_values(request.form)
@@ -940,6 +960,8 @@ def generate_instagram_image():
             prompt=inst_prompt,
             aspect_ratio=aspect_ratio,
         )
+        target_dimensions = (1080, 1350) if variant_label == "feed" else (1080, 1920)
+        instagram_image = ensure_dimensions(instagram_image, target_dimensions)
     except Exception as exc:
         flash(f"Unable to generate the Instagram visual: {exc}", "error")
         return render_home_view(form_values, preview_payload, product_id=product_id)
@@ -1337,3 +1359,4 @@ def publish_tiktok():
 
 if __name__ == "__main__":
     app.run(debug=True, host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
+

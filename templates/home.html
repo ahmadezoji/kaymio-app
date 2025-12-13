@@ -91,6 +91,7 @@
         {% set website_state = platform_states.get('website', {}) %}
         {% set website_published = website_state.get('status') == 'published' %}
         {% set platforms_locked = not website_published %}
+        {% set has_saved_image = preview_data.original_image_path or values.get('original_image_path') %}
         {% set instagram_feed_published = platform_states.get('instagram_feed', {}).get('status') == 'published' %}
         {% set instagram_story_published = platform_states.get('instagram_story', {}).get('status') == 'published' %}
         {% set youtube_published = platform_states.get('youtube', {}).get('status') == 'published' %}
@@ -144,7 +145,12 @@
               <p>Upload a clean product shot when the marketplace does not expose an API.</p>
             </div>
             <label class="dropzone">
-              <input type="file" name="product_image" accept="image/*" required />
+              <input
+                type="file"
+                name="product_image"
+                accept="image/*"
+                {% if not has_saved_image %}required{% endif %}
+              />
               <span class="dz-icon">⬆︎</span>
               <p>Drag &amp; drop or click to upload a hero image (PNG, JPG, GIF, WEBP).</p>
             </label>
@@ -290,6 +296,34 @@
             </div>
             {{ platform_reset_button('pinterest', 'Pinterest workflow', active_sku) }}
           </div>
+           <div class="prompt-booster">
+            <h3>Pinterest prompt booster</h3>
+            <p>Drop any extra angles, seasonal hooks, or CTA copy.</p>
+            <label>
+              <span>Optimization text</span>
+              <textarea
+                name="pinterest_extra"
+                placeholder="Mention eco-friendly materials, Mother's Day bundles, etc."
+                rows="3"
+                form="pinterest-input-form"
+              >{{ values.get('pinterest_extra', '') }}</textarea>
+            </label>
+
+            
+            <div class="button-row">
+              <button
+              class="primary"
+              type="submit"
+              form="pinterest-input-form"
+              formaction="{{ url_for('generate_pinterest') }}"
+              formmethod="post"
+              {% if platforms_locked or pinterest_published %}disabled{% endif %}
+              >
+              Generating for Pinterest
+              </button>
+            </div>
+          
+          </div>
           {% if has_preview %}
             <div class="preview-grid">
               <div class="preview-image">
@@ -322,7 +356,7 @@
                         <a href="{{ pinterest_live_url }}" target="_blank" rel="noopener">View published pin</a>
                       </p>
                     {% endif %}
-                    <button type="button" class="primary">Published to Pinterest</button>
+                    <button type="button" class="primary" {% if pinterest_published %}disabled{% endif %}>Published to Pinterest</button>
                   {% else %}
                     <form method="post" action="{{ url_for('generate_pinterest') }}">
                       <input type="hidden" name="market" value="{{ values.get('market', '') }}" />
@@ -391,27 +425,7 @@
               <span>Use affiliate link</span>
             </label>
           {% endif %}
-          <div class="prompt-booster">
-            <h3>Pinterest prompt booster</h3>
-            <p>Drop any extra angles, seasonal hooks, or CTA copy.</p>
-            <label>
-              <span>Optimization text</span>
-              <textarea
-                name="pinterest_extra"
-                placeholder="Mention eco-friendly materials, Mother's Day bundles, etc."
-                rows="3"
-                form="pinterest-input-form"
-              >{{ values.get('pinterest_extra', '') }}</textarea>
-            </label>
-            <button
-              class="primary"
-              type="submit"
-              form="pinterest-input-form"
-              {% if platforms_locked or pinterest_published %}disabled{% endif %}
-            >
-              Generating for Pinterest
-            </button>
-          </div>
+         
         </section>
 
         <section class="card result">
