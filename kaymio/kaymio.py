@@ -9,6 +9,8 @@ import datetime
 import shutil
 import uuid
 
+from openai_helper import find_nearest_category
+
 
 
 
@@ -129,12 +131,12 @@ def create_woocommerce_product(name, description, price, image_path=None, tags=N
     auth = (consumer_key, consumer_secret)
 
     # Upload image if provided
-    image_urls = []
+    image_payloads = list(images or [])
     if image_path and os.path.exists(image_path):
         image_url = upload_wordpress_media(
             image_path, wp_url, wp_username, wp_password)
         if image_url:
-            image_urls.append({"src": image_url})
+            image_payloads.append({"src": image_url})
     # category_id = get_category_id_by_name(category_name)
     # tag_ids = []
 
@@ -149,7 +151,7 @@ def create_woocommerce_product(name, description, price, image_path=None, tags=N
         "type": "external",  # Set product type to external/affiliate
         "regular_price": str(price),
         "description": description,
-        "images": images or [],
+        "images": image_payloads,
         "tags": [{"name": tag} for tag in tags] if tags else [],
         # Use category ID instead of name
         "categories": [{"id": category_id}] if category_id else [],
@@ -297,7 +299,6 @@ def get_all_categories():
 
 def find_wordpress_nearest_category(category_name):
     try:
-        from gpt_api.open_ai import find_nearest_category
 
         all_categories = get_all_categories()
         real_categories = [{"name": cat["name"], "id": cat["id"]}
@@ -335,4 +336,3 @@ if __name__ == "__main__":
     print(f"Category ID for '🧒 Kids & Baby':")
 
    
-

@@ -20,6 +20,10 @@
       <input type="hidden" name="description" value="{{ preview.description | e }}" />
       <input type="hidden" name="affiliate_link" value="{{ values.get('affiliate_link', '') | e }}" />
       <input type="hidden" name="pinterest_extra" value="{{ values.get('pinterest_extra', '') | e }}" />
+      <input type="hidden" name="category" value="{{ values.get('category', '') | e }}" />
+      <input type="hidden" name="price" value="{{ values.get('price', '') | e }}" />
+      <input type="hidden" name="website_boost_prompt_pref" value="{{ values.get('website_boost_prompt', '') | e }}" />
+      <input type="hidden" name="use_affiliate_link_pref" value="{{ values.get('use_affiliate_link', '0') | e }}" />
       <input type="hidden" name="tags" value="{{ preview.tags_payload | e }}" />
       <input type="hidden" name="generated_image_path" value="{{ preview.generated_image_path | e }}" />
       <input type="hidden" name="original_image_path" value="{{ preview.original_image_path | e }}" />
@@ -78,11 +82,36 @@
         {% set preview_data = preview or {} %}
         {% set has_preview = preview is not none %}
         {% set active_sku = values.get('sku_or_url', '') %}
+        {% set use_affiliate_pref = (values.get('use_affiliate_link', '0') or '0') %}
+        {% set use_affiliate_checked = use_affiliate_pref|lower in ['1', 'true', 'yes', 'on'] %}
+        {% set platform_states = platform_states or {} %}
+        {% set pinterest_state = platform_states.get('pinterest', {}) %}
+        {% set pinterest_published = pinterest_state.get('status') == 'published' %}
+        {% set pinterest_live_url = pinterest_state.get('pin_url') or (result.pin_url if result else '') %}
+        {% set website_state = platform_states.get('website', {}) %}
+        {% set website_published = website_state.get('status') == 'published' %}
+        {% set platforms_locked = not website_published %}
+        {% set has_saved_image = preview_data.original_image_path or values.get('original_image_path') %}
+        {% set instagram_feed_published = platform_states.get('instagram_feed', {}).get('status') == 'published' %}
+        {% set instagram_story_published = platform_states.get('instagram_story', {}).get('status') == 'published' %}
+        {% set youtube_published = platform_states.get('youtube', {}).get('status') == 'published' %}
+        {% set tiktok_published = platform_states.get('tiktok', {}).get('status') == 'published' %}
+        <form method="post" action="{{ url_for('reset_platform') }}" class="card add-card">
+          <input type="hidden" name="platform" value="pinterest" />
+          <input type="hidden" name="sku_or_url" value="{{ values.get('sku_or_url', '') }}" />
+          <div class="card-header add-header">
+            <button type="submit" class="ghost-btn add-btn">
+              Add +
+            </button>
+            <span>Start a fresh product workflow.</span>
+          </div>
+        </form>
         <form
           method="post"
           action="{{ url_for('generate_pinterest') }}"
           enctype="multipart/form-data"
           class="grid"
+          id="pinterest-input-form"
         >
           <section class="card">
             <div class="card-header">
@@ -118,6 +147,7 @@
             </div>
             <button type="button" class="ghost-btn" title="Coming soon" disabled>Fetch product data</button>
           </section>
+          <input type="hidden" name="use_affiliate_link" value="{{ values.get('use_affiliate_link', '0') }}" />
 
           <section class="card">
             <div class="card-header">
@@ -125,7 +155,12 @@
               <p>Upload a clean product shot when the marketplace does not expose an API.</p>
             </div>
             <label class="dropzone">
-              <input type="file" name="product_image" accept="image/*" required />
+              <input
+                type="file"
+                name="product_image"
+                accept="image/*"
+                {% if not has_saved_image %}required{% endif %}
+              />
               <span class="dz-icon">⬆︎</span>
               <p>Drag &amp; drop or click to upload a hero image (PNG, JPG, GIF, WEBP).</p>
             </label>
@@ -148,6 +183,24 @@
               >{{ values.get('description', '') }}</textarea>
             </label>
             <label>
+              <span>Category</span>
+              <input
+                name="category"
+                placeholder="e.g. Accessories, Dresses, Gadgets"
+                value="{{ values.get('category', '') }}"
+                type="text"
+              />
+            </label>
+            <label>
+              <span>Price</span>
+              <input
+                name="price"
+                placeholder="$39.00"
+                value="{{ values.get('price', '') }}"
+                type="text"
+              />
+            </label>
+            <label>
               <span>Affiliate link</span>
               <input
                 name="affiliate_link"
@@ -157,32 +210,129 @@
                 type="url"
               />
             </label>
+            <div class="button-row">
+              <button
+                type="submit"
+                class="ghost-btn"
+                formaction="{{ url_for('save_draft') }}"
+                formnovalidate
+              >
+                Save
+              </button>
+            </div>
           </section>
 
-          <section class="card">
-            <div class="card-header">
-              <h2>Pinterest prompt booster</h2>
-              <p>Drop any extra angles, seasonal hooks, or CTA copy.</p>
+        </form>
+
+        <section class="card result">
+          <div class="card-header">
+            <div class="card-header-text">
+              <h2>Website content</h2>
+              <p>Ship the AI-polished assets to Kaymio.com and capture the canonical product URL.</p>
             </div>
+          </div>
+          <div class="platform-grid">
+            <div>
+              <h3>Product snapshot</h3>
+              <dl>
+                <dt>Title</dt>
+                <dd>{{ preview_data.title if has_preview else values.get('title', 'Awaiting creative...') }}</dd>
+                <dt>Price</dt>
+                <dd>{{ values.get('price', '') or 'Add a price to sync with Kaymio' }}</dd>
+                <dt>Category</dt>
+                <dd>{{ values.get('category', '') or 'Add a category to improve mapping' }}</dd>
+                <dt>Affiliate link</dt>
+                <dd>{{ values.get('affiliate_link', '') or 'Add your affiliate link above' }}</dd>
+              </dl>
+              {% if website_result and website_result.product_url %}
+                <p class="muted">
+                  Live product URL:
+                  <a href="{{ website_result.product_url }}" target="_blank" rel="noopener">
+                    {{ website_result.product_url }}
+                  </a>
+                </p>
+              {% elif website_published %}
+                <p class="muted">Product URL ready. Reset the workflow if you need to republish.</p>
+              {% else %}
+                <p class="muted">Publish to generate a Kaymio-hosted product URL.</p>
+              {% endif %}
+            </div>
+            <div class="preview-actions">
+              {% if website_published %}
+                <p class="muted">Product already live on Kaymio. Reset the product if you need to update details.</p>
+                <label>
+                  <span>Boost prompt</span>
+                  <textarea rows="3" disabled>{{ values.get('website_boost_prompt', '') }}</textarea>
+                </label>
+                <button type="button" class="primary" disabled>Published</button>
+              {% else %}
+                <form method="post" action="{{ url_for('publish_website') }}" class="publish-website-form">
+                  {% if has_preview %}
+                    {{ preview_hidden_inputs(preview_data, values) }}
+                  {% else %}
+                    <input type="hidden" name="market" value="{{ values.get('market', '') }}" />
+                    <input type="hidden" name="sku_or_url" value="{{ values.get('sku_or_url', '') }}" />
+                    <input type="hidden" name="title" value="{{ values.get('title', '') }}" />
+                    <input type="hidden" name="description" value="{{ values.get('description', '') }}" />
+                    <input type="hidden" name="affiliate_link" value="{{ values.get('affiliate_link', '') }}" />
+                    <input type="hidden" name="category" value="{{ values.get('category', '') }}" />
+                    <input type="hidden" name="price" value="{{ values.get('price', '') }}" />
+                    <input type="hidden" name="original_image_path" value="" />
+                    <input type="hidden" name="generated_image_path" value="" />
+                  {% endif %}
+                  <label>
+                    <span>Boost prompt</span>
+                    <textarea
+                      name="website_boost_prompt"
+                      placeholder="Add merchandising notes, shipping perks, bonus bundle ideas..."
+                      rows="3"
+                    >{{ values.get('website_boost_prompt', '') }}</textarea>
+                  </label>
+                  <button type="submit" class="primary">Publish to Kaymio website</button>
+                </form>
+                {% if not has_preview %}
+                  <p class="muted">Tip: the publish action is available right away—running the generator simply gives you richer copy and media.</p>
+                {% endif %}
+              {% endif %}
+            </div>
+          </div>
+        </section>
+
+        <section class="card result">
+          <div class="card-header">
+            <div class="card-header-text">
+              <h2>Pinterest content</h2>
+              <p>Review your creative, publish to Pinterest, and track the live pin in one place.</p>
+            </div>
+            {{ platform_reset_button('pinterest', 'Pinterest workflow', active_sku) }}
+          </div>
+           <div class="prompt-booster">
+            <h3>Pinterest prompt booster</h3>
+            <p>Drop any extra angles, seasonal hooks, or CTA copy.</p>
             <label>
               <span>Optimization text</span>
               <textarea
                 name="pinterest_extra"
                 placeholder="Mention eco-friendly materials, Mother's Day bundles, etc."
                 rows="3"
+                form="pinterest-input-form"
               >{{ values.get('pinterest_extra', '') }}</textarea>
             </label>
-            <button class="primary" type="submit">Generating for Pinterest</button>
-          </section>
-        </form>
 
-        <section class="card result">
-          <div class="card-header">
-            <div class="card-header-text">
-              <h2>Review your creative</h2>
-              <p>Confirm this hero visual + copy or regenerate another variation before publishing across channels.</p>
+            
+            <div class="button-row">
+              <button
+              class="primary"
+              type="submit"
+              form="pinterest-input-form"
+              formaction="{{ url_for('generate_pinterest') }}"
+              formmethod="post"
+              {% if platforms_locked or pinterest_published %}disabled{% endif %}
+              >
+              Generating for Pinterest
+              </button>
             </div>
-            {{ platform_reset_button('pinterest', 'Pinterest workflow', active_sku) }}
+          
           </div>
           {% if has_preview %}
             <div class="preview-grid">
@@ -204,28 +354,90 @@
                     </dd>
                   {% endif %}
                 </dl>
-                <div class="preview-actions">
-                  <form method="post" action="{{ url_for('generate_pinterest') }}">
-                    <input type="hidden" name="market" value="{{ values.get('market', '') }}" />
-                    <input type="hidden" name="sku_or_url" value="{{ values.get('sku_or_url', '') }}" />
-                    <input type="hidden" name="title" value="{{ values.get('title', '') }}" />
-                    <input type="hidden" name="description" value="{{ values.get('description', '') }}" />
-                    <input type="hidden" name="affiliate_link" value="{{ values.get('affiliate_link', '') }}" />
-                    <input type="hidden" name="pinterest_extra" value="{{ values.get('pinterest_extra', '') }}" />
-                    <input type="hidden" name="original_image_path" value="{{ preview_data.original_image_path }}" />
-                    <button type="submit" class="ghost-btn">Regenerate visual</button>
-                  </form>
-                  <form method="post" action="{{ url_for('confirm_pinterest') }}">
-                    {{ preview_hidden_inputs(preview_data, values) }}
-                    <button type="submit" class="primary">Confirm &amp; publish to Pinterest</button>
-                  </form>
-                </div>
+              <div class="preview-actions">
+                {% if platforms_locked %}
+                  <p class="muted">Publish to Kaymio website first to unlock Pinterest automation.</p>
+                  <button type="button" class="ghost-btn" disabled>Regenerate visual</button>
+                  <button type="button" class="primary" disabled>Confirm &amp; publish to Pinterest</button>
+                {% elif pinterest_published %}
+                  <p class="muted">This SKU is already live on Pinterest. Reset the workflow to create another pin.</p>
+                  {% if pinterest_live_url %}
+                    <p>
+                        <a href="{{ pinterest_live_url }}" target="_blank" rel="noopener">View published pin</a>
+                      </p>
+                    {% endif %}
+                    <button type="button" class="primary" {% if pinterest_published %}disabled{% endif %}>Published to Pinterest</button>
+                  {% else %}
+                    <form method="post" action="{{ url_for('generate_pinterest') }}">
+                      <input type="hidden" name="market" value="{{ values.get('market', '') }}" />
+                      <input type="hidden" name="sku_or_url" value="{{ values.get('sku_or_url', '') }}" />
+                      <input type="hidden" name="title" value="{{ values.get('title', '') }}" />
+                      <input type="hidden" name="description" value="{{ values.get('description', '') }}" />
+                      <input type="hidden" name="affiliate_link" value="{{ values.get('affiliate_link', '') }}" />
+                      <input type="hidden" name="pinterest_extra" value="{{ values.get('pinterest_extra', '') }}" />
+                      <input type="hidden" name="original_image_path" value="{{ preview_data.original_image_path }}" />
+                      <input type="hidden" name="category" value="{{ values.get('category', '') }}" />
+                      <input type="hidden" name="price" value="{{ values.get('price', '') }}" />
+                      <input type="hidden" name="website_boost_prompt_pref" value="{{ values.get('website_boost_prompt', '') }}" />
+                      <input type="hidden" name="use_affiliate_link_pref" value="{{ values.get('use_affiliate_link', '1') }}" />
+                      <button type="submit" class="ghost-btn">Regenerate visual</button>
+                    </form>
+                    <form method="post" action="{{ url_for('confirm_pinterest') }}" id="pinterest-publish-form">
+                      {{ preview_hidden_inputs(preview_data, values) }}
+                      <input type="hidden" name="use_affiliate_link" value="0" />
+                      <label class="checkbox">
+                        <input
+                          type="checkbox"
+                          name="use_affiliate_link"
+                          value="1"
+                          {% if use_affiliate_checked %}checked{% endif %}
+                        />
+                        <span>Use affiliate link</span>
+                      </label>
+                      <button type="submit" class="primary">Confirm &amp; publish to Pinterest</button>
+                    </form>
+                {% endif %}
               </div>
             </div>
+          </div>
+            {% if result %}
+              <div class="pin-result">
+                <h3>Pin details</h3>
+                <dl>
+                  <dt>Title</dt>
+                  <dd>{{ result.title }}</dd>
+                  <dt>Description</dt>
+                  <dd>{{ result.description }}</dd>
+                  {% if result.tags %}
+                    <dt>Tags</dt>
+                    <dd>
+                      {% for tag in result.tags %}
+                        <span class="tag">{{ tag }}</span>
+                      {% endfor %}
+                    </dd>
+                  {% endif %}
+                  {% if pinterest_live_url %}
+                    <dt>Pin URL</dt>
+                    <dd><a href="{{ pinterest_live_url }}" target="_blank" rel="noopener">View on Pinterest</a></dd>
+                  {% endif %}
+                </dl>
+              </div>
+            {% endif %}
           {% else %}
             <p class="muted">Generate a product visual to unlock publishing on Pinterest, Instagram, TikTok, and YouTube.</p>
+            {% if pinterest_published and pinterest_live_url %}
+              <p>
+                <a href="{{ pinterest_live_url }}" target="_blank" rel="noopener">View published pin</a>
+              </p>
+            {% endif %}
+            <label class="checkbox">
+              <input type="checkbox" disabled />
+              <span>Use affiliate link</span>
+            </label>
           {% endif %}
+         
         </section>
+
         <section class="card result">
           <div class="card-header">
             <div class="card-header-text">
@@ -268,33 +480,85 @@
               {% endif %}
             </div>
             <div class="preview-actions">
+              {% if platforms_locked %}
+                <p class="muted">Publish to Kaymio website first to unlock Instagram workflows.</p>
+              {% endif %}
               {% if has_preview %}
                 <form method="post" action="{{ url_for('generate_instagram_image') }}">
                   {{ preview_hidden_inputs(preview_data, values) }}
                   <input type="hidden" name="instagram_variant" value="feed" />
-                  <button type="submit" class="ghost-btn">Generate feed visual</button>
+                  <button
+                    type="submit"
+                    class="ghost-btn"
+                    {% if instagram_feed_published or platforms_locked %}disabled{% endif %}
+                  >
+                    Generate feed visual
+                  </button>
                 </form>
                 <form method="post" action="{{ url_for('generate_instagram_image') }}">
                   {{ preview_hidden_inputs(preview_data, values) }}
                   <input type="hidden" name="instagram_variant" value="story" />
-                  <button type="submit" class="ghost-btn">Generate story visual</button>
-                </form>
-                <form method="post" action="{{ url_for('publish_instagram') }}">
-                  {{ preview_hidden_inputs(preview_data, values) }}
-                  <input type="hidden" name="target" value="feed" />
-                  <button type="submit" class="primary">Publish to Instagram feed</button>
-                </form>
-                <form method="post" action="{{ url_for('publish_instagram') }}">
-                  {{ preview_hidden_inputs(preview_data, values) }}
-                  <input type="hidden" name="target" value="story" />
-                  <button type="submit" class="ghost-btn">Share as story</button>
+                  <button
+                    type="submit"
+                    class="ghost-btn"
+                    {% if instagram_story_published or platforms_locked %}disabled{% endif %}
+                  >
+                    Generate story visual
+                  </button>
                 </form>
               {% else %}
-                <button type="button" class="ghost-btn" disabled>Generate feed visual</button>
-                <button type="button" class="ghost-btn" disabled>Generate story visual</button>
-                <button type="button" class="primary" disabled>Publish to Instagram feed</button>
-                <button type="button" class="ghost-btn" disabled>Share as story</button>
+                <p class="muted">Generate visuals to unlock Instagram-specific formats.</p>
               {% endif %}
+              <form method="post" action="{{ url_for('publish_instagram') }}">
+                {{ preview_hidden_inputs(preview_data, values) }}
+                <input type="hidden" name="use_affiliate_link" value="0" />
+                <label class="checkbox">
+                  <input
+                    type="checkbox"
+                    name="use_affiliate_link"
+                    value="1"
+                    {% if use_affiliate_checked %}checked{% endif %}
+                    {% if platforms_locked %}disabled{% endif %}
+                  />
+                  <span>Use affiliate link</span>
+                </label>
+                <div class="button-row">
+                  <button
+                    type="submit"
+                    class="primary"
+                    name="target"
+                    value="feed"
+                    {% if instagram_feed_published or platforms_locked %}disabled{% endif %}
+                  >
+                    Publish to Instagram feed
+                  </button>
+                  <button
+                    type="submit"
+                    class="ghost-btn"
+                    name="target"
+                    value="story"
+                    {% if instagram_story_published or platforms_locked %}disabled{% endif %}
+                  >
+                    Share as story
+                  </button>
+                </div>
+                {% if instagram_feed_published or instagram_story_published %}
+                  <p class="muted">
+                    {% if instagram_feed_published and instagram_story_published %}
+                      Instagram feed and story already published.
+                    {% elif instagram_feed_published %}
+                      Instagram feed already published.
+                    {% else %}
+                      Instagram story already published.
+                    {% endif %}
+                  </p>
+                {% endif %}
+                {% if not has_preview %}
+                  <p class="muted">Publishing without a generated creative may fail until assets exist.</p>
+                {% elif platforms_locked %}
+                  <p class="muted">Finish publishing to Kaymio website before posting on Instagram.</p>
+                {% endif %}
+              </form>
             </div>
           </div>
         </section>
@@ -329,30 +593,57 @@
               </dl>
             </div>
             <div class="preview-actions">
+              {% if platforms_locked %}
+                <p class="muted">Publish to Kaymio website first to unlock YouTube automation.</p>
+              {% endif %}
               {% if has_preview %}
                 <form method="post" action="{{ url_for('generate_platform_video', platform='youtube') }}">
                   {{ preview_hidden_inputs(preview_data, values) }}
-                  <button type="submit" class="ghost-btn">Generate YouTube Short</button>
+                  <button type="submit" class="ghost-btn" {% if youtube_published or platforms_locked %}disabled{% endif %}>
+                    Generate YouTube Short
+                  </button>
                 </form>
-                {% if preview_data.video_url %}
-                  <form method="post" action="{{ url_for('publish_youtube') }}">
-                    {{ preview_hidden_inputs(preview_data, values) }}
-                    <label>
-                      <span>Privacy</span>
-                      <select name="privacy_status">
-                        <option value="public">Public</option>
-                        <option value="unlisted" selected>Unlisted</option>
-                        <option value="private">Private</option>
-                      </select>
-                    </label>
-                    <button type="submit" class="primary">Publish to YouTube Shorts</button>
-                  </form>
-                {% else %}
-                  <button type="button" class="primary" disabled>Publish to YouTube Shorts</button>
+              {% else %}
+                <p class="muted">Generate a Short to get AI-crafted video assets before publishing.</p>
+              {% endif %}
+              {% if preview_data.video_url %}
+                <form method="post" action="{{ url_for('publish_youtube') }}">
+                  {{ preview_hidden_inputs(preview_data, values) }}
+                  <input type="hidden" name="use_affiliate_link" value="0" />
+                  <label class="checkbox">
+                    <input
+                      type="checkbox"
+                      name="use_affiliate_link"
+                      value="1"
+                      {% if use_affiliate_checked %}checked{% endif %}
+                      {% if platforms_locked %}disabled{% endif %}
+                    />
+                    <span>Use affiliate link</span>
+                  </label>
+                  <label>
+                    <span>Privacy</span>
+                    <select name="privacy_status">
+                      <option value="public">Public</option>
+                      <option value="unlisted" selected>Unlisted</option>
+                      <option value="private">Private</option>
+                    </select>
+                  </label>
+                  <button type="submit" class="primary" {% if youtube_published or platforms_locked %}disabled{% endif %}>
+                    Publish to YouTube Shorts
+                  </button>
+                </form>
+                {% if youtube_published %}
+                  <p class="muted">YouTube Short already published.</p>
+                {% elif platforms_locked %}
+                  <p class="muted">Finish publishing to Kaymio website before posting on YouTube.</p>
                 {% endif %}
               {% else %}
-                <button type="button" class="ghost-btn" disabled>Generate YouTube Short</button>
                 <button type="button" class="primary" disabled>Publish to YouTube Shorts</button>
+                <label class="checkbox">
+                  <input type="checkbox" disabled />
+                  <span>Use affiliate link</span>
+                </label>
+                <p class="muted">Generate and store a video before publishing.</p>
               {% endif %}
             </div>
           </div>
@@ -383,61 +674,62 @@
               {% endif %}
             </div>
             <div class="preview-actions">
+              {% if platforms_locked %}
+                <p class="muted">Publish to Kaymio website first to unlock TikTok automation.</p>
+              {% endif %}
               {% if has_preview %}
                 <form method="post" action="{{ url_for('generate_platform_video', platform='tiktok') }}">
                   {{ preview_hidden_inputs(preview_data, values) }}
-                  <button type="submit" class="ghost-btn">Generate TikTok video</button>
+                  <button type="submit" class="ghost-btn" {% if tiktok_published or platforms_locked %}disabled{% endif %}>
+                    Generate TikTok video
+                  </button>
                 </form>
-                {% if preview_data.video_url %}
-                  <form method="post" action="{{ url_for('publish_tiktok') }}">
-                    {{ preview_hidden_inputs(preview_data, values) }}
-                    <label>
-                      <span>Privacy</span>
-                      <select name="privacy_level">
-                        <option value="PUBLIC" selected>Public</option>
-                        <option value="FRIENDS">Friends</option>
-                        <option value="PRIVATE">Private</option>
-                      </select>
-                    </label>
-                    <button type="submit" class="primary">Publish to TikTok</button>
-                  </form>
-                {% else %}
-                  <button type="button" class="primary" disabled>Publish to TikTok</button>
+              {% else %}
+                <p class="muted">Generate a Shorts-style video before sending it to TikTok.</p>
+              {% endif %}
+              {% if preview_data.video_url %}
+                <form method="post" action="{{ url_for('publish_tiktok') }}">
+                  {{ preview_hidden_inputs(preview_data, values) }}
+                  <input type="hidden" name="use_affiliate_link" value="0" />
+                  <label class="checkbox">
+                    <input
+                      type="checkbox"
+                      name="use_affiliate_link"
+                      value="1"
+                      {% if use_affiliate_checked %}checked{% endif %}
+                      {% if platforms_locked %}disabled{% endif %}
+                    />
+                    <span>Use affiliate link</span>
+                  </label>
+                  <label>
+                    <span>Privacy</span>
+                    <select name="privacy_level">
+                      <option value="PUBLIC" selected>Public</option>
+                      <option value="FRIENDS">Friends</option>
+                      <option value="PRIVATE">Private</option>
+                    </select>
+                  </label>
+                  <button type="submit" class="primary" {% if tiktok_published or platforms_locked %}disabled{% endif %}>
+                    Publish to TikTok
+                  </button>
+                </form>
+                {% if tiktok_published %}
+                  <p class="muted">TikTok video already published.</p>
+                {% elif platforms_locked %}
+                  <p class="muted">Finish publishing to Kaymio website before posting on TikTok.</p>
                 {% endif %}
               {% else %}
-                <button type="button" class="ghost-btn" disabled>Generate TikTok video</button>
                 <button type="button" class="primary" disabled>Publish to TikTok</button>
+                <label class="checkbox">
+                  <input type="checkbox" disabled />
+                  <span>Use affiliate link</span>
+                </label>
+                <p class="muted">Generate and store a TikTok-ready video before publishing.</p>
               {% endif %}
             </div>
           </div>
         </section>
 
-        {% if result %}
-          <section class="card result">
-            <div class="card-header">
-              <h2>Pin ready ✅</h2>
-              <p>Gemini visual + Pinterest copy have been dispatched to your board.</p>
-            </div>
-            <dl>
-              <dt>Title</dt>
-              <dd>{{ result.title }}</dd>
-              <dt>Description</dt>
-              <dd>{{ result.description }}</dd>
-              {% if result.tags %}
-                <dt>Tags</dt>
-                <dd>
-                  {% for tag in result.tags %}
-                    <span class="tag">{{ tag }}</span>
-                  {% endfor %}
-                </dd>
-              {% endif %}
-              {% if result.pin_url %}
-                <dt>Pin URL</dt>
-                <dd><a href="{{ result.pin_url }}" target="_blank" rel="noopener">View on Pinterest</a></dd>
-              {% endif %}
-            </dl>
-          </section>
-        {% endif %}
       </main>
     </div>
   </body>

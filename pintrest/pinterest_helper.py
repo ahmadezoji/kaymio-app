@@ -71,10 +71,15 @@ def create_pinterest_pin(
         response.raise_for_status()
 
     data = response.json()
+    pin_id = data.get("id") or data.get("pin_id")
+    pin_url = data.get("url")
+    if not pin_url and pin_id:
+        pin_url = f"https://www.pinterest.com/pin/{pin_id}/"
+
     return {
-        "status": "created",
-        "id": data.get("id") or data.get("pin_id"),
-        "url": data.get("link") or data.get("url"),
+        "status": data.get("status") or "created",
+        "id": pin_id,
+        "url": pin_url,
     }
 
 
