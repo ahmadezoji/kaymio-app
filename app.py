@@ -24,7 +24,7 @@ from pintrest.pinterest_helper import create_pinterest_pin
 from tiktok.tiktok_api_helper import publish_tiktok_post
 from youtube.youtube_api_helper import publish_short_video
 from kaymio.kaymio import create_woocommerce_product, find_wordpress_nearest_category
-from PIL import Image
+from PIL import Image, ImageOps
 
 load_dotenv()
 
@@ -844,14 +844,16 @@ def generate_pinterest():
     return render_home_view(form_values, preview_payload, product_id=product_id)
 
 def ensure_dimensions(image_bytes: bytes, size: tuple[int, int]) -> bytes:
-    """Resize image bytes to the requested size while preserving format."""
+    """Resize image bytes to the requested size without distorting the aspect ratio."""
     try:
         image = Image.open(BytesIO(image_bytes))
         if image.size == size:
             return image_bytes
-        resized = image.resize(size, Image.LANCZOS)
+        # ImageOps.fit crops from the center so we hit the exact Pinterest/Instagram
+        # dimensions while avoiding stretched visuals.
+        fitted = ImageOps.fit(image, size, method=Image.LANCZOS)
         output = BytesIO()
-        resized.save(output, format="PNG")
+        fitted.save(output, format=image.format or "PNG")
         return output.getvalue()
     except Exception:
         return image_bytes
@@ -1359,4 +1361,3 @@ def publish_tiktok():
 
 if __name__ == "__main__":
     app.run(debug=True, host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
-
