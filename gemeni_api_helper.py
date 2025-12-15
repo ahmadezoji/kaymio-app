@@ -21,6 +21,11 @@ try:  # Attempt to import Gemini SDK once at module import
 except ImportError:  # pragma: no cover
     genai = None  # type: ignore
 
+try:  # Newer Google GenAI SDK exposes video helpers here
+    from google import genai as google_genai  # type: ignore
+except ImportError:  # pragma: no cover
+    google_genai = None  # type: ignore
+
 
 def _coerce_image_bytes(base_image: Union[bytes, bytearray, str, "Image.Image"]) -> bytes:
     """Convert supported image inputs into raw bytes."""
@@ -185,17 +190,122 @@ def generate_video_from_image(
 ) -> bytes:
     """Generate a short-form video from an image + prompt using Gemini Veo."""
 
-    if genai is None:
-        raise RuntimeError("google-generativeai package not available")
-
     api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
     if not api_key:
         raise RuntimeError("GOOGLE_API_KEY or GEMINI_API_KEY is required for video generation")
 
+    if google_genai is not None and hasattr(google_genai, "Client"):
+        return _generate_video_with_modern_sdk(
+            api_key=api_key,
+            prompt=prompt,
+            image=image,
+            duration_seconds=duration_seconds,
+            aspect_ratio=aspect_ratio,
+            resolution=resolution,
+            output_path=output_path,
+            poll_interval=poll_interval,
+        )
+
+    if genai is None:
+        raise RuntimeError("google-generativeai package not available")
+
     types_module = getattr(genai, "types", None)
     client_cls = getattr(genai, "Client", None)
     if not types_module or not client_cls:
-        raise RuntimeError("Gemini SDK is missing required video helpers. Update google-generativeai.")
+        raise RuntimeError(
+            "Gemini SDK is missing required video helpers. Install the google-genai package "
+            "(`pip install google-genai` or re-run `pip install -r requirements.txt`)."
+        )
+
+    return _generate_video_with_legacy_sdk(
+        api_key=api_key,
+        prompt=prompt,
+        image=image,
+        duration_seconds=duration_seconds,
+        aspect_ratio=aspect_ratio,
+        resolution=resolution,
+        output_path=output_path,
+        poll_interval=poll_interval,
+        types_module=types_module,
+        client_cls=client_cls,
+    )
+
+
+def _generate_video_with_modern_sdk(
+    *,
+    api_key: str,
+    prompt: str,
+    image: Union[bytes, Image.Image, str],
+    duration_seconds: int,
+    aspect_ratio: str,
+    resolution: str,
+    output_path: Optional[str],
+    poll_interval: float,
+) -> bytes:
+    """Use google.genai Client to run Veo generation."""
+
+    if google_genai is None:
+        raise RuntimeError("google.genai SDK not available.")
+
+    types_module = getattr(google_genai, "types", None)
+    if types_module is None:
+        raise RuntimeError("google.genai SDK missing types module.")
+
+    client_cls = getattr(google_genai, "Client", None)
+    if client_cls is None:
+        raise RuntimeError("google.genai Client class not available.")
+
+    client = client_cls(api_key=api_key)
+    image_bytes = _coerce_image_bytes(image)
+    image_cls = getattr(types_module, "Image", None)
+    if image_cls is None:
+        raise RuntimeError("google.genai SDK missing Image helper.")
+    image_obj = image_cls(image_bytes=image_bytes, mime_type="image/png")
+
+    source_cls = getattr(types_module, "GenerateVideosSource", None)
+    if source_cls is None:
+        raise RuntimeError("google.genai SDK missing GenerateVideosSource helper.")
+    source = source_cls(prompt=prompt, image=image_obj)
+
+    config_cls = getattr(types_module, "GenerateVideosConfig", None)
+    config = None
+    if config_cls:
+        config = config_cls(
+            aspect_ratio=aspect_ratio,
+            resolution=resolution,
+            duration_seconds=duration_seconds,
+        )
+
+    model_name = os.getenv("GEMINI_VIDEO_MODEL", "veo-3.1-fast-generate-001")
+    model_client = getattr(client, "models", None)
+    if model_client is None or not hasattr(model_client, "generate_videos"):
+        raise RuntimeError("google.genai client does not expose video generation endpoint")
+
+    operation = model_client.generate_videos(
+        model=model_name,
+        source=source,
+        config=config,
+    )
+
+    operations_client = getattr(client, "operations", None)
+    operation = _poll_video_operation(operation, operations_client, poll_interval)
+    return _finalize_modern_video(operation, client, output_path)
+
+
+def _generate_video_with_legacy_sdk(
+    *,
+    api_key: str,
+    prompt: str,
+    image: Union[bytes, Image.Image, str],
+    duration_seconds: int,
+    aspect_ratio: str,
+    resolution: str,
+    output_path: Optional[str],
+    poll_interval: float,
+    types_module,
+    client_cls,
+) -> bytes:
+    """Fallback to google.generativeai Client for older SDKs."""
 
     genai.configure(api_key=api_key)
     client = client_cls(api_key=api_key)
@@ -238,12 +348,7 @@ def generate_video_from_image(
     )
 
     operations_client = getattr(client, "operations", None)
-    while hasattr(operation, "done") and not operation.done:
-        time.sleep(poll_interval)
-        if operations_client and hasattr(operations_client, "get"):
-            operation = operations_client.get(operation)
-        else:
-            break
+    operation = _poll_video_operation(operation, operations_client, poll_interval)
 
     result = getattr(operation, "result", None)
     generated_videos = getattr(result, "generated_videos", None) if result else None
@@ -258,6 +363,50 @@ def generate_video_from_image(
     buffer = io.BytesIO()
     video_info.video.save(buffer)
     video_bytes = buffer.getvalue()
+
+    if output_path:
+        with open(output_path, "wb") as f_handle:
+            f_handle.write(video_bytes)
+
+    return video_bytes
+
+
+def _poll_video_operation(operation, operations_client, poll_interval: float):
+    """Poll a long-running video operation until completion."""
+
+    while hasattr(operation, "done") and not operation.done:
+        time.sleep(poll_interval)
+        if operations_client and hasattr(operations_client, "get"):
+            operation = operations_client.get(operation)
+        else:
+            break
+
+    if getattr(operation, "error", None):
+        raise RuntimeError(f"Video generation failed: {operation.error}")
+
+    return operation
+
+
+def _finalize_modern_video(operation, client, output_path: Optional[str]) -> bytes:
+    """Download generated video bytes via google.genai files API."""
+
+    result = getattr(operation, "result", None) or getattr(operation, "response", None)
+    generated_videos = getattr(result, "generated_videos", None) if result else None
+    if not generated_videos:
+        raise RuntimeError("No videos returned from Veo video generation.")
+
+    video_container = generated_videos[0]
+    video_obj = getattr(video_container, "video", None) or video_container
+    if video_obj is None:
+        raise RuntimeError("Video payload missing from Veo response.")
+
+    video_bytes = getattr(video_obj, "video_bytes", None)
+    files_client = getattr(client, "files", None)
+    if video_bytes is None and files_client and hasattr(files_client, "download"):
+        video_bytes = files_client.download(file=video_obj)
+
+    if video_bytes is None:
+        raise RuntimeError("Video bytes unavailable in Veo response.")
 
     if output_path:
         with open(output_path, "wb") as f_handle:
