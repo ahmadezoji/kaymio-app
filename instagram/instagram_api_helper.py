@@ -3,12 +3,18 @@ from __future__ import annotations
 
 import logging
 import os
+from pathlib import Path
 from typing import Dict, Optional
+from urllib.parse import urlparse, unquote
 
 import requests
 
+from kaymio.kaymio import upload_media_to_wordpress_ext
+
 logger = logging.getLogger(__name__)
 GRAPH_API_BASE = "https://graph.facebook.com/v21.0"
+MEDIA_PREFIX = "/media/"
+TEMPLATE_IMAGES_ROOT = Path(__file__).resolve().parents[1] / "template_images"
 
 
 def _get_instagram_credentials() -> Dict[str, str]:
@@ -19,6 +25,38 @@ def _get_instagram_credentials() -> Dict[str, str]:
     return {"access_token": access_token, "user_id": user_id}
 
 
+def _resolve_local_media_path(media_url: str) -> Optional[str]:
+    if not media_url:
+        return None
+    try:
+        parsed = urlparse(media_url)
+    except ValueError:
+        return None
+    relative_token = parsed.path.split(MEDIA_PREFIX, 1)
+    if len(relative_token) != 2:
+        return None
+    relative_path = Path(unquote(relative_token[1]))
+    candidate = (TEMPLATE_IMAGES_ROOT / relative_path).resolve()
+    storage_root = TEMPLATE_IMAGES_ROOT.resolve()
+    if not str(candidate).startswith(str(storage_root)) or not candidate.exists():
+        return None
+    return str(candidate)
+
+
+def _ensure_public_image_url(image_url: str) -> str:
+    local_path = _resolve_local_media_path(image_url)
+    if not local_path:
+        return image_url
+    try:
+        uploaded_url = upload_media_to_wordpress_ext(local_path)
+        if uploaded_url:
+            return uploaded_url
+        logger.warning("WordPress upload failed, falling back to local media URL.")
+    except Exception:
+        logger.exception("Unable to upload Instagram media to WordPress")
+    return image_url
+
+
 def _create_media_container(
     *,
     image_url: str,
@@ -27,9 +65,10 @@ def _create_media_container(
     share_link: Optional[str] = None,
 ) -> Dict[str, str]:
     creds = _get_instagram_credentials()
+    public_image_url = _ensure_public_image_url(image_url)
     payload = {
         "access_token": creds["access_token"],
-        "image_url": image_url,
+        "image_url": public_image_url,
     }
     if caption:
         payload["caption"] = caption[:2200]

@@ -122,6 +122,14 @@ def get_tag_id(tag_name, wp_url, wp_username, wp_password):
         return None
 
 
+
+def upload_media_to_wordpress_ext(image_path):
+    if image_path and os.path.exists(image_path):
+        image_url = upload_wordpress_media(
+            image_path, wp_url, wp_username, wp_password)
+        return image_url
+    return None
+        
 def create_woocommerce_product(name, description, price, image_path=None, tags=None, images=None, affiliate_link=None, category_id=None):
     if not all([consumer_key, consumer_secret]):
         print("WooCommerce API credentials not found")
