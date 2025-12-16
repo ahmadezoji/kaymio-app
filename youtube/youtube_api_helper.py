@@ -24,7 +24,7 @@ def publish_short_video(
     title: str,
     description: str,
     tags: Optional[Iterable[str]] = None,
-    privacy_status: str = "unlisted",
+    privacy_status: str = "public",
 ) -> Dict[str, str]:
     """Upload a short-form MP4 to YouTube using the resumable upload flow."""
 
