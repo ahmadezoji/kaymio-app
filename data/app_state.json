@@ -259,11 +259,19 @@
         "instagram_feed": {
           "status": "published",
           "use_affiliate_link": false
+        },
+        "youtube": {
+          "status": "published",
+          "video_path": "videos/27ec03aef2b14de49f43db87ebc36b45.mp4",
+          "base_image_path": "generated/ddbb78721fa947bfb9e2ee3fdc2fe282.png",
+          "use_affiliate_link": false,
+          "video_id": "T0Q2S6LEOs8"
         }
       },
       "assets": {
         "original_image_path": "originals/54f9b29479ee4c3ebbe2108756438e1f.png",
-        "generated_image_path": "generated/ddbb78721fa947bfb9e2ee3fdc2fe282.png"
+        "generated_image_path": "generated/ddbb78721fa947bfb9e2ee3fdc2fe282.png",
+        "generated_video_path": "videos/27ec03aef2b14de49f43db87ebc36b45.mp4"
       },
       "results": {
         "website": {
@@ -287,6 +295,11 @@
           "pin_id": "903323637788483781",
           "pin_url": "https://www.pinterest.com/pin/903323637788483781/",
           "status": "created"
+        },
+        "youtube": {
+          "title": "Zarif \u00c7i\u00e7ekli Midi Elbise - Uzun Kollu, B\u00fcy\u00fck Boy, \u00c7ok Y\u00f6nl\u00fc",
+          "description": "Elevate your autumn and winter wardrobe with the stunning Zarif \u00c7i\u00e7ekli Midi Elbise\u2014an elegant, long-sleeved floral dress that effortlessly transitions from casual strolls to chic gatherings! Dont miss out on this versatile piece that combines comfort and style\u2014grab yours now and step out in confidence! \ud83c\udf38\u2728",
+          "video_id": "T0Q2S6LEOs8"
         }
       },
       "form_values": {
@@ -365,12 +378,12 @@
         "website_boost_prompt": "",
         "use_affiliate_link": "0",
         "generated_image_url": "/media/generated/ddbb78721fa947bfb9e2ee3fdc2fe282.png",
-        "image_public_url": "http://127.0.0.1:8000/media/generated/ddbb78721fa947bfb9e2ee3fdc2fe282.png",
-        "generated_video_path": "",
-        "video_url": "",
-        "video_public_url": "",
+        "image_public_url": "http://127.0.0.1:5500/media/generated/ddbb78721fa947bfb9e2ee3fdc2fe282.png",
+        "generated_video_path": "videos/27ec03aef2b14de49f43db87ebc36b45.mp4",
+        "video_url": "/media/videos/27ec03aef2b14de49f43db87ebc36b45.mp4",
+        "video_public_url": "http://127.0.0.1:5500/media/videos/27ec03aef2b14de49f43db87ebc36b45.mp4",
         "instagram_image_url": "/media/generated/ddbb78721fa947bfb9e2ee3fdc2fe282.png",
-        "instagram_image_public_url": "http://127.0.0.1:8000/media/generated/ddbb78721fa947bfb9e2ee3fdc2fe282.png"
+        "instagram_image_public_url": "http://127.0.0.1:5500/media/generated/ddbb78721fa947bfb9e2ee3fdc2fe282.png"
       }
     }
   },

@@ -1208,7 +1208,7 @@ def generate_platform_video(platform: str):
         video_bytes = generate_video_from_image(
             prompt=prompt,
             image=base_bytes,
-            duration_seconds=6,
+            duration_seconds=10,
             aspect_ratio="9:16",
             resolution="720p",
         )
@@ -1271,7 +1271,7 @@ def publish_youtube():
             title=title,
             description=description,
             tags=keywords,
-            privacy_status=raw_form_values.get("privacy_status", "unlisted"),
+            privacy_status=raw_form_values.get("privacy_status", "public"),
         )
         flash(
             f"YouTube Short uploaded (video id: {response.get('video_id', 'n/a')}).",
