@@ -1177,8 +1177,10 @@ def generate_platform_video(platform: str):
     use_affiliate_link_flag = str(form_values.get("use_affiliate_link", "0")).lower() in TRUTHY_VALUES
     product_id = resolve_product_id(form_values)
     preview_payload = rebuild_preview_payload(raw_form_values)
-    base_image_path = raw_form_values.get("instagram_image_path") or raw_form_values.get(
-        "generated_image_path"
+    base_image_path = (
+        raw_form_values.get("original_image_path")
+        or raw_form_values.get("instagram_image_path")
+        or raw_form_values.get("generated_image_path")
     )
 
     if not base_image_path:
@@ -1208,7 +1210,7 @@ def generate_platform_video(platform: str):
         video_bytes = generate_video_from_image(
             prompt=prompt,
             image=base_bytes,
-            duration_seconds=10,
+            duration_seconds=8,
             aspect_ratio="9:16",
             resolution="720p",
         )
