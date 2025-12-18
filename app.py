@@ -255,6 +255,17 @@ def build_render_payload(entry: Dict[str, Any]):
     preview_payload = entry.get("preview")
     if preview_payload:
         preview_payload = _hydrate_preview(preview_payload)
+        assets_snapshot = entry.get("assets") or {}
+        if assets_snapshot:
+            stored_video_path = assets_snapshot.get("generated_video_path")
+            if stored_video_path and not preview_payload.get("generated_video_path"):
+                preview_payload["generated_video_path"] = stored_video_path
+            if stored_video_path and not preview_payload.get("video_url"):
+                preview_payload["video_url"] = url_for("serve_media", filename=stored_video_path)
+            if stored_video_path and not preview_payload.get("video_public_url"):
+                preview_payload["video_public_url"] = url_for(
+                    "serve_media", filename=stored_video_path, _external=True
+                )
     results = entry.get("results") or {}
     return form_values, preview_payload, results.get("pinterest")
 
