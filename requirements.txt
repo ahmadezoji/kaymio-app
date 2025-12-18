@@ -3,3 +3,5 @@ python-dotenv>=1.0
 requests>=2.32
 openai>=1.17
 google-generativeai>=0.5
+Pillow>=10.2
+google-genai
