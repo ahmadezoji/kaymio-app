@@ -1291,9 +1291,25 @@ def publish_youtube():
         flash("Unable to load the generated video. Please regenerate it.", "error")
         return render_home_view(form_values, preview_payload, product_id=product_id)
 
-    title = raw_form_values.get("youtube_title", raw_form_values.get("title", ""))
-    description = raw_form_values.get("youtube_description", raw_form_values.get("description", ""))
-    keywords = parse_tags_payload(raw_form_values.get("youtube_keywords_payload", "[]"))
+    base_title = raw_form_values.get("title") or form_values.get("title", "")
+    base_description = raw_form_values.get("description") or form_values.get("description", "")
+    title = raw_form_values.get("youtube_title") or base_title
+    description = raw_form_values.get("youtube_description") or base_description
+    keywords_payload_raw = raw_form_values.get("youtube_keywords_payload", "[]")
+    keywords = parse_tags_payload(keywords_payload_raw)
+
+    needs_metadata = not title or not description or not keywords
+    if needs_metadata:
+        metadata = generate_youtube_metadata(base_title, base_description)
+        title = title or metadata.get("title", "")
+        description = description or metadata.get("description", "")
+        if not keywords:
+            keywords = metadata.get("keywords", [])
+        if preview_payload:
+            preview_payload["youtube_title"] = title
+            preview_payload["youtube_description"] = description
+            preview_payload["youtube_keywords"] = keywords
+            preview_payload["youtube_keywords_payload"] = json.dumps(keywords or [])
 
     try:
         response = publish_short_video(
