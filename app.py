@@ -53,6 +53,9 @@ MARKET_OPTIONS = [
 RESETTABLE_PLATFORMS = {"pinterest", "instagram", "youtube", "tiktok"}
 PREVIEW_BINARY_FIELDS = {"image_data", "instagram_image_data"}
 TRUTHY_VALUES = {"1", "true", "yes", "on"}
+VIDEO_DURATION_DEFAULT = 8
+VIDEO_DURATION_MIN = 4
+VIDEO_DURATION_MAX = 60
 
 
 def _empty_app_state() -> Dict[str, Any]:
@@ -807,6 +810,7 @@ def generate_pinterest():
             "generated_video_path": raw_form_values.get("generated_video_path", ""),
             "video_url": "",
             "video_public_url": "",
+            "video_duration_seconds": str(VIDEO_DURATION_DEFAULT),
             "video_prompt": (
                 f"Create a dynamic short-form video for {refined_title}. Include upbeat pacing, text overlays "
                 f"highlighting the benefits, and close with a CTA to tap the affiliate link."
@@ -1206,11 +1210,22 @@ def generate_platform_video(platform: str):
     }
     prompt = prompt_templates[target].format(title=title)
 
+    duration_value = (
+        raw_form_values.get("video_duration_seconds")
+        or (preview_payload.get("video_duration_seconds") if preview_payload else None)
+        or str(VIDEO_DURATION_DEFAULT)
+    )
+    try:
+        duration_seconds = int(float(duration_value))
+    except (TypeError, ValueError):
+        duration_seconds = VIDEO_DURATION_DEFAULT
+    duration_seconds = max(VIDEO_DURATION_MIN, min(VIDEO_DURATION_MAX, duration_seconds))
+
     try:
         video_bytes = generate_video_from_image(
             prompt=prompt,
             image=base_bytes,
-            duration_seconds=8,
+            duration_seconds=duration_seconds,
             aspect_ratio="9:16",
             resolution="720p",
         )
@@ -1221,6 +1236,7 @@ def generate_platform_video(platform: str):
     video_path = save_generated_video(video_bytes)
     preview_payload = preview_payload or {}
     preview_payload["generated_video_path"] = video_path
+    preview_payload["video_duration_seconds"] = str(duration_seconds)
     preview_payload["video_url"] = url_for("serve_media", filename=video_path)
     preview_payload["video_public_url"] = url_for(
         "serve_media", filename=video_path, _external=True

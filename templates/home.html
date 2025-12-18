@@ -37,6 +37,7 @@
       <input type="hidden" name="generated_video_path" value="{{ preview.generated_video_path | e }}" />
       <input type="hidden" name="video_prompt" value="{{ preview.video_prompt | e }}" />
       <input type="hidden" name="instagram_image_path" value="{{ preview.instagram_image_path | e }}" />
+      <input type="hidden" name="video_duration_seconds" value="{{ preview.video_duration_seconds | default('8') | e }}" />
     {%- endmacro %}
     {% macro platform_reset_button(platform, label, sku) -%}
       <div class="card-header-actions">
@@ -598,6 +599,18 @@
               {% endif %}
               {% if has_preview %}
                 <form method="post" action="{{ url_for('generate_platform_video', platform='youtube') }}">
+                  <label>
+                    <span>Short duration (seconds)</span>
+                    <input
+                      type="number"
+                      name="video_duration_seconds"
+                      min="4"
+                      max="60"
+                      step="1"
+                      value="{{ preview_data.video_duration_seconds or 8 }}"
+                      {% if youtube_published or platforms_locked %}disabled{% endif %}
+                    />
+                  </label>
                   {{ preview_hidden_inputs(preview_data, values) }}
                   <button type="submit" class="ghost-btn" {% if youtube_published or platforms_locked %}disabled{% endif %}>
                     Generate YouTube Short
