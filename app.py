@@ -764,8 +764,8 @@ def generate_pinterest():
             original_bytes,
             context=context_prompt,
             prompt=(
-                "Design a polished product visual with modern typography, a clear focus on the hero item, "
-                "and scroll-stopping composition that can work across social platforms."
+                "Design a polished product visual with a clear hero focus, scroll-stopping composition, "
+                "and cohesive lighting suitable for social platforms. Do not add any on-screen text—the output must be a pure image."
             ),
             aspect_ratio="2:3",
         )
@@ -951,8 +951,8 @@ def generate_instagram_image():
     variant_label = "story" if variant == "story" else "feed"
     context_prompt = build_prompt_context({**form_values, "title": raw_form_values.get("title", "")})
     inst_prompt = (
-        "Design a high-performing Instagram {variant} visual with bold typography, trending color grading, "
-        "and a magnetic focus on the hero product."
+        "Design a high-performing Instagram {variant} visual with trending color grading, "
+        "dynamic lighting, and a magnetic focus on the hero product, but do not add any on-screen text—the output must be a pure image."
     ).format(variant=variant_label)
 
     try:
