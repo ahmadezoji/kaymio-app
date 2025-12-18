@@ -1177,8 +1177,10 @@ def generate_platform_video(platform: str):
     use_affiliate_link_flag = str(form_values.get("use_affiliate_link", "0")).lower() in TRUTHY_VALUES
     product_id = resolve_product_id(form_values)
     preview_payload = rebuild_preview_payload(raw_form_values)
-    base_image_path = raw_form_values.get("instagram_image_path") or raw_form_values.get(
-        "generated_image_path"
+    base_image_path = (
+        raw_form_values.get("original_image_path")
+        or raw_form_values.get("instagram_image_path")
+        or raw_form_values.get("generated_image_path")
     )
 
     if not base_image_path:
@@ -1194,12 +1196,12 @@ def generate_platform_video(platform: str):
     title = raw_form_values.get("title") or form_values.get("title") or "this product"
     prompt_templates = {
         "youtube": (
-            "Create a vertical YouTube Short for '{title}' with upbeat pacing, animated text callouts, "
-            "and a CTA to tap the affiliate link."
+            "Create a vertical YouTube Short for '{title}' with upbeat pacing, dynamic camera moves, "
+            "and a CTA to tap the affiliate link, but do not add any on-screen text—the output must be pure video."
         ),
         "tiktok": (
             "Create a TikTok-ready vertical video for '{title}' using trendy motion graphics, quick cuts, "
-            "and bold overlays that highlight the wow factor."
+            "and camera moves that highlight the wow factor, but keep the footage clean with no text or overlays."
         ),
     }
     prompt = prompt_templates[target].format(title=title)
@@ -1208,7 +1210,7 @@ def generate_platform_video(platform: str):
         video_bytes = generate_video_from_image(
             prompt=prompt,
             image=base_bytes,
-            duration_seconds=10,
+            duration_seconds=8,
             aspect_ratio="9:16",
             resolution="720p",
         )
@@ -1274,7 +1276,7 @@ def publish_youtube():
             privacy_status=raw_form_values.get("privacy_status", "public"),
         )
         flash(
-            f"YouTube Short uploaded (video id: {response.get('video_id', 'n/a')}).",
+            f"YouTube Short uploaded (video url: {response.get('url', 'n/a')}).",
             "success",
         )
         update_product_state(
