@@ -6,6 +6,7 @@ import logging
 import os
 import time
 from typing import Optional, Union
+from google.genai import types as gemtype
 
 logger = logging.getLogger(__name__)
 from dotenv import load_dotenv
@@ -350,19 +351,26 @@ def _generate_video_with_legacy_sdk(
     operations_client = getattr(client, "operations", None)
     operation = _poll_video_operation(operation, operations_client, poll_interval)
 
-    result = getattr(operation, "result", None)
+    result = _resolve_operation_result(operation)
     generated_videos = getattr(result, "generated_videos", None) if result else None
     if not generated_videos:
         raise RuntimeError("No videos returned from Veo video generation.")
 
-    video_info = generated_videos[0]
-    files_client = getattr(client, "files", None)
-    if files_client and hasattr(files_client, "download"):
-        files_client.download(file=video_info.video)
+    video_container = generated_videos[0]
+    video_obj = getattr(video_container, "video", None) or video_container
 
-    buffer = io.BytesIO()
-    video_info.video.save(buffer)
-    video_bytes = buffer.getvalue()
+    files_client = getattr(client, "files", None)
+    video_bytes = getattr(video_obj, "video_bytes", None)
+    if video_bytes is None and files_client and hasattr(files_client, "download"):
+        video_bytes = files_client.download(file=video_obj)
+
+    if video_bytes is None and hasattr(video_obj, "save"):
+        buffer = io.BytesIO()
+        video_obj.save(buffer)
+        video_bytes = buffer.getvalue()
+
+    if video_bytes is None:
+        raise RuntimeError("Video bytes unavailable in Veo response.")
 
     if output_path:
         with open(output_path, "wb") as f_handle:
@@ -374,7 +382,13 @@ def _generate_video_with_legacy_sdk(
 def _poll_video_operation(operation, operations_client, poll_interval: float):
     """Poll a long-running video operation until completion."""
 
-    while hasattr(operation, "done") and not operation.done:
+    def is_done(op):
+        d = getattr(op, "done", None)
+        if callable(d):
+            return bool(d())
+        return bool(d)
+
+    while not is_done(operation):
         time.sleep(poll_interval)
         if operations_client and hasattr(operations_client, "get"):
             operation = operations_client.get(operation)
@@ -384,24 +398,62 @@ def _poll_video_operation(operation, operations_client, poll_interval: float):
     if getattr(operation, "error", None):
         raise RuntimeError(f"Video generation failed: {operation.error}")
 
+    # Log the operation object if it claims to be done but result is empty
+    # This helps you see if 'safety_ratings' or other reasons blocked it.
+    logger.debug(f"Operation completed. Metadata: {getattr(operation, 'metadata', 'N/A')}")
+
     return operation
 
 
-def _finalize_modern_video(operation, client, output_path: Optional[str]) -> bytes:
-    """Download generated video bytes via google.genai files API."""
 
-    result = getattr(operation, "result", None) or getattr(operation, "response", None)
-    generated_videos = getattr(result, "generated_videos", None) if result else None
+def _resolve_operation_result(operation):
+    """
+    Robustly extracts the result from a long-running operation.
+    Handles differences between SDK versions and response structures.
+    """
+    if operation is None:
+        return None
+
+    # 1. Try checking for a direct 'result' attribute/method (Modern SDK)
+    result_attr = getattr(operation, "result", None)
+    if result_attr is not None:
+        return result_attr() if callable(result_attr) else result_attr
+
+    # 2. Try checking for 'response' (Common in legacy or gapic-based operations)
+    response_attr = getattr(operation, "response", None)
+    if response_attr is not None:
+        return response_attr() if callable(response_attr) else response_attr
+
+    # 3. Check for 'metadata' which sometimes holds error details or partial results
+    return getattr(operation, "metadata", None)
+
+def _finalize_modern_video(operation, client, output_path: Optional[str]) -> bytes:
+    """Download generated video bytes with improved error handling for safety blocks."""
+
+    result = _resolve_operation_result(operation)
+    
+    # Check if the result exists
+    if result is None:
+        raise RuntimeError(f"Veo operation completed but returned no result. Op State: {operation}")
+
+    # Access generated videos
+    generated_videos = getattr(result, "generated_videos", None)
+    
+    # Check for safety filters if the video list is empty
     if not generated_videos:
-        raise RuntimeError("No videos returned from Veo video generation.")
+        safety_ratings = getattr(result, "safety_ratings", "No safety info provided")
+        raise RuntimeError(
+            f"No videos returned from Veo. This usually indicates a safety filter block.\n"
+            f"Safety Info: {safety_ratings}"
+        )
 
     video_container = generated_videos[0]
     video_obj = getattr(video_container, "video", None) or video_container
-    if video_obj is None:
-        raise RuntimeError("Video payload missing from Veo response.")
-
+    
+    # Standard byte extraction
     video_bytes = getattr(video_obj, "video_bytes", None)
     files_client = getattr(client, "files", None)
+    
     if video_bytes is None and files_client and hasattr(files_client, "download"):
         video_bytes = files_client.download(file=video_obj)
 

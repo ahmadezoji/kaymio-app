@@ -23,6 +23,7 @@
       <input type="hidden" name="category" value="{{ values.get('category', '') | e }}" />
       <input type="hidden" name="price" value="{{ values.get('price', '') | e }}" />
       <input type="hidden" name="website_boost_prompt_pref" value="{{ values.get('website_boost_prompt', '') | e }}" />
+      <input type="hidden" name="youtube_boost_prompt" value="{{ values.get('youtube_boost_prompt', '') | e }}" />
       <input type="hidden" name="use_affiliate_link_pref" value="{{ values.get('use_affiliate_link', '0') | e }}" />
       <input type="hidden" name="tags" value="{{ preview.tags_payload | e }}" />
       <input type="hidden" name="generated_image_path" value="{{ preview.generated_image_path | e }}" />
@@ -380,6 +381,7 @@
                       <input type="hidden" name="category" value="{{ values.get('category', '') }}" />
                       <input type="hidden" name="price" value="{{ values.get('price', '') }}" />
                       <input type="hidden" name="website_boost_prompt_pref" value="{{ values.get('website_boost_prompt', '') }}" />
+                      <input type="hidden" name="youtube_boost_prompt" value="{{ values.get('youtube_boost_prompt', '') }}" />
                       <input type="hidden" name="use_affiliate_link_pref" value="{{ values.get('use_affiliate_link', '1') }}" />
                       <button type="submit" class="ghost-btn">Regenerate visual</button>
                     </form>
@@ -611,6 +613,22 @@
                       {% if youtube_published or platforms_locked %}disabled{% endif %}
                     />
                   </label>
+                  {% set youtube_boost_pref = values.get('youtube_boost_prompt', '') %}
+                  {% if not youtube_boost_pref %}
+                    {% set youtube_boost_pref = preview_data.youtube_boost_prompt | default('', true) %}
+                  {% endif %}
+                  <label>
+                    <span>Boost prompt</span>
+                    <textarea
+                      name="youtube_boost_prompt"
+                      placeholder="Provide reassurance about safe content: e.g., no logos, no celebrities, wholesome styling notes..."
+                      rows="3"
+                      {% if youtube_published or platforms_locked %}disabled{% endif %}
+                    >{{ youtube_boost_pref }}</textarea>
+                  </label>
+                  <p class="muted">
+                    Tip: remind Gemini the footage is brand-safe (e.g., “feature a generic model wearing this stylish jacket, no logos visible”).
+                  </p>
                   {{ preview_hidden_inputs(preview_data, values) }}
                   <button type="submit" class="ghost-btn" {% if youtube_published or platforms_locked %}disabled{% endif %}>
                     Generate YouTube Short

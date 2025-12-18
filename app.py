@@ -446,6 +446,7 @@ def extract_form_defaults(raw_form_values: Dict[str, str]) -> Dict[str, str]:
             "category",
             "price",
             "website_boost_prompt",
+            "youtube_boost_prompt",
             "use_affiliate_link",
         )
     }
@@ -511,6 +512,7 @@ def rebuild_preview_payload(raw_form_values: Dict[str, str]):
         "category": raw_form_values.get("category", ""),
         "price": raw_form_values.get("price", ""),
         "website_boost_prompt": raw_form_values.get("website_boost_prompt", ""),
+        "youtube_boost_prompt": raw_form_values.get("youtube_boost_prompt", ""),
         "use_affiliate_link": (
             raw_form_values.get("use_affiliate_link")
             or raw_form_values.get("use_affiliate_link_pref")
@@ -818,6 +820,7 @@ def generate_pinterest():
             "category": form_values.get("category", ""),
             "price": form_values.get("price", ""),
             "website_boost_prompt": form_values.get("website_boost_prompt", ""),
+            "youtube_boost_prompt": form_values.get("youtube_boost_prompt", ""),
             "use_affiliate_link": form_values.get("use_affiliate_link", "0") or "0",
         }
 
@@ -1209,6 +1212,13 @@ def generate_platform_video(platform: str):
         ),
     }
     prompt = prompt_templates[target].format(title=title)
+    boost_prompt = raw_form_values.get("youtube_boost_prompt") or form_values.get("youtube_boost_prompt", "")
+    if target == "youtube":
+        form_values["youtube_boost_prompt"] = boost_prompt
+        if boost_prompt:
+            prompt = (
+                f"{prompt}\n\nAdditional creator guidance (safe content details): {boost_prompt.strip()}"
+            )
 
     duration_value = (
         raw_form_values.get("video_duration_seconds")
@@ -1235,6 +1245,8 @@ def generate_platform_video(platform: str):
 
     video_path = save_generated_video(video_bytes)
     preview_payload = preview_payload or {}
+    if target == "youtube":
+        preview_payload["youtube_boost_prompt"] = boost_prompt
     preview_payload["generated_video_path"] = video_path
     preview_payload["video_duration_seconds"] = str(duration_seconds)
     preview_payload["video_url"] = url_for("serve_media", filename=video_path)
