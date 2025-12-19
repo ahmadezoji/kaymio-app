@@ -1,6 +1,7 @@
 """Instagram Graph helpers for publishing feed posts and stories."""
 from __future__ import annotations
 
+import json
 import logging
 import os
 from pathlib import Path
@@ -15,13 +16,34 @@ logger = logging.getLogger(__name__)
 GRAPH_API_BASE = "https://graph.facebook.com/v21.0"
 MEDIA_PREFIX = "/media/"
 TEMPLATE_IMAGES_ROOT = Path(__file__).resolve().parents[1] / "template_images"
+TOKEN_FILE = Path(__file__).with_name("instagram_token.json")
+
+
+def _load_token_file() -> Dict[str, str]:
+    if not TOKEN_FILE.exists():
+        return {}
+    try:
+        payload = json.loads(TOKEN_FILE.read_text())
+    except json.JSONDecodeError:
+        logger.warning("Invalid JSON in %s", TOKEN_FILE)
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    return payload
 
 
 def _get_instagram_credentials() -> Dict[str, str]:
     access_token = os.getenv("INSTAGRAM_ACCESS_TOKEN")
     user_id = os.getenv("INSTAGRAM_USER_ID")
     if not access_token or not user_id:
-        raise RuntimeError("INSTAGRAM_ACCESS_TOKEN and INSTAGRAM_USER_ID must be configured")
+        token_payload = _load_token_file()
+        access_token = access_token or token_payload.get("INSTAGRAM_ACCESS_TOKEN")
+        user_id = user_id or token_payload.get("INSTAGRAM_USER_ID")
+    if not access_token or not user_id:
+        raise RuntimeError(
+            "INSTAGRAM_ACCESS_TOKEN and INSTAGRAM_USER_ID must be configured "
+            "(env vars or instagram/instagram_token.json)."
+        )
     return {"access_token": access_token, "user_id": user_id}
 
 

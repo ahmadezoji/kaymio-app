@@ -11,6 +11,7 @@ Store the outputs in .env or your server secrets manager.
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
 import urllib.parse
@@ -63,6 +64,25 @@ def _load_dotenv() -> None:
                 value = value[1:-1]
             os.environ.setdefault(key, value)
         break
+
+
+def _write_token_file(
+    *,
+    access_token: str,
+    user_id: str,
+    page_id: str,
+    expires_in: object,
+) -> Path:
+    token_path = Path(__file__).with_name("instagram_token.json")
+    payload = {
+        "INSTAGRAM_ACCESS_TOKEN": access_token,
+        "INSTAGRAM_USER_ID": user_id,
+        "FB_LONG_LIVED_USER_ACCESS_TOKEN": access_token,
+        "FB_PAGE_ID": page_id,
+        "EXPIRES_IN": expires_in,
+    }
+    token_path.write_text(json.dumps(payload, indent=2))
+    return token_path
 
 
 def _request_json(url: str, *, params: dict) -> dict:
@@ -205,12 +225,20 @@ def main() -> int:
         print(exc, file=sys.stderr)
         return 1
 
+    token_path = _write_token_file(
+        access_token=long_token,
+        user_id=ig_user_id,
+        page_id=page_id,
+        expires_in=long_payload.get("expires_in", "unknown"),
+    )
+
     print("\nSuccess! Store these values in your environment (.env on the server):\n")
     print(f"INSTAGRAM_ACCESS_TOKEN={long_token}")
     print(f"INSTAGRAM_USER_ID={ig_user_id}")
     print(f"FB_LONG_LIVED_USER_ACCESS_TOKEN={long_token}")
     print(f"FB_PAGE_ID={page_id}")
     print(f"Expires in: {long_payload.get('expires_in', 'unknown')} seconds")
+    print(f"\nSaved JSON credentials to: {token_path}")
     return 0
 
 
