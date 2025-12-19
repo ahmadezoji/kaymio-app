@@ -53,6 +53,9 @@ MARKET_OPTIONS = [
 RESETTABLE_PLATFORMS = {"pinterest", "instagram", "youtube", "tiktok"}
 PREVIEW_BINARY_FIELDS = {"image_data", "instagram_image_data"}
 TRUTHY_VALUES = {"1", "true", "yes", "on"}
+VIDEO_DURATION_DEFAULT = 8
+VIDEO_DURATION_MIN = 4
+VIDEO_DURATION_MAX = 60
 
 
 def _empty_app_state() -> Dict[str, Any]:
@@ -252,6 +255,17 @@ def build_render_payload(entry: Dict[str, Any]):
     preview_payload = entry.get("preview")
     if preview_payload:
         preview_payload = _hydrate_preview(preview_payload)
+        assets_snapshot = entry.get("assets") or {}
+        if assets_snapshot:
+            stored_video_path = assets_snapshot.get("generated_video_path")
+            if stored_video_path and not preview_payload.get("generated_video_path"):
+                preview_payload["generated_video_path"] = stored_video_path
+            if stored_video_path and not preview_payload.get("video_url"):
+                preview_payload["video_url"] = url_for("serve_media", filename=stored_video_path)
+            if stored_video_path and not preview_payload.get("video_public_url"):
+                preview_payload["video_public_url"] = url_for(
+                    "serve_media", filename=stored_video_path, _external=True
+                )
     results = entry.get("results") or {}
     return form_values, preview_payload, results.get("pinterest")
 
@@ -443,6 +457,7 @@ def extract_form_defaults(raw_form_values: Dict[str, str]) -> Dict[str, str]:
             "category",
             "price",
             "website_boost_prompt",
+            "youtube_boost_prompt",
             "use_affiliate_link",
         )
     }
@@ -508,6 +523,7 @@ def rebuild_preview_payload(raw_form_values: Dict[str, str]):
         "category": raw_form_values.get("category", ""),
         "price": raw_form_values.get("price", ""),
         "website_boost_prompt": raw_form_values.get("website_boost_prompt", ""),
+        "youtube_boost_prompt": raw_form_values.get("youtube_boost_prompt", ""),
         "use_affiliate_link": (
             raw_form_values.get("use_affiliate_link")
             or raw_form_values.get("use_affiliate_link_pref")
@@ -807,6 +823,7 @@ def generate_pinterest():
             "generated_video_path": raw_form_values.get("generated_video_path", ""),
             "video_url": "",
             "video_public_url": "",
+            "video_duration_seconds": str(VIDEO_DURATION_DEFAULT),
             "video_prompt": (
                 f"Create a dynamic short-form video for {refined_title}. Include upbeat pacing, text overlays "
                 f"highlighting the benefits, and close with a CTA to tap the affiliate link."
@@ -814,6 +831,7 @@ def generate_pinterest():
             "category": form_values.get("category", ""),
             "price": form_values.get("price", ""),
             "website_boost_prompt": form_values.get("website_boost_prompt", ""),
+            "youtube_boost_prompt": form_values.get("youtube_boost_prompt", ""),
             "use_affiliate_link": form_values.get("use_affiliate_link", "0") or "0",
         }
 
@@ -1205,12 +1223,30 @@ def generate_platform_video(platform: str):
         ),
     }
     prompt = prompt_templates[target].format(title=title)
+    boost_prompt = raw_form_values.get("youtube_boost_prompt") or form_values.get("youtube_boost_prompt", "")
+    if target == "youtube":
+        form_values["youtube_boost_prompt"] = boost_prompt
+        if boost_prompt:
+            prompt = (
+                f"{prompt}\n\nAdditional creator guidance (safe content details): {boost_prompt.strip()}"
+            )
+
+    duration_value = (
+        raw_form_values.get("video_duration_seconds")
+        or (preview_payload.get("video_duration_seconds") if preview_payload else None)
+        or str(VIDEO_DURATION_DEFAULT)
+    )
+    try:
+        duration_seconds = int(float(duration_value))
+    except (TypeError, ValueError):
+        duration_seconds = VIDEO_DURATION_DEFAULT
+    duration_seconds = max(VIDEO_DURATION_MIN, min(VIDEO_DURATION_MAX, duration_seconds))
 
     try:
         video_bytes = generate_video_from_image(
             prompt=prompt,
             image=base_bytes,
-            duration_seconds=8,
+            duration_seconds=duration_seconds,
             aspect_ratio="9:16",
             resolution="720p",
         )
@@ -1220,7 +1256,10 @@ def generate_platform_video(platform: str):
 
     video_path = save_generated_video(video_bytes)
     preview_payload = preview_payload or {}
+    if target == "youtube":
+        preview_payload["youtube_boost_prompt"] = boost_prompt
     preview_payload["generated_video_path"] = video_path
+    preview_payload["video_duration_seconds"] = str(duration_seconds)
     preview_payload["video_url"] = url_for("serve_media", filename=video_path)
     preview_payload["video_public_url"] = url_for(
         "serve_media", filename=video_path, _external=True
@@ -1263,9 +1302,25 @@ def publish_youtube():
         flash("Unable to load the generated video. Please regenerate it.", "error")
         return render_home_view(form_values, preview_payload, product_id=product_id)
 
-    title = raw_form_values.get("youtube_title", raw_form_values.get("title", ""))
-    description = raw_form_values.get("youtube_description", raw_form_values.get("description", ""))
-    keywords = parse_tags_payload(raw_form_values.get("youtube_keywords_payload", "[]"))
+    base_title = raw_form_values.get("title") or form_values.get("title", "")
+    base_description = raw_form_values.get("description") or form_values.get("description", "")
+    title = raw_form_values.get("youtube_title") or base_title
+    description = raw_form_values.get("youtube_description") or base_description
+    keywords_payload_raw = raw_form_values.get("youtube_keywords_payload", "[]")
+    keywords = parse_tags_payload(keywords_payload_raw)
+
+    needs_metadata = not title or not description or not keywords
+    if needs_metadata:
+        metadata = generate_youtube_metadata(base_title, base_description)
+        title = title or metadata.get("title", "")
+        description = description or metadata.get("description", "")
+        if not keywords:
+            keywords = metadata.get("keywords", [])
+        if preview_payload:
+            preview_payload["youtube_title"] = title
+            preview_payload["youtube_description"] = description
+            preview_payload["youtube_keywords"] = keywords
+            preview_payload["youtube_keywords_payload"] = json.dumps(keywords or [])
 
     try:
         response = publish_short_video(
