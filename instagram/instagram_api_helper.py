@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from pathlib import Path
 from typing import Dict, Optional
 from urllib.parse import urlparse, unquote
@@ -17,6 +18,8 @@ GRAPH_API_BASE = "https://graph.facebook.com/v21.0"
 MEDIA_PREFIX = "/media/"
 TEMPLATE_IMAGES_ROOT = Path(__file__).resolve().parents[1] / "template_images"
 TOKEN_FILE = Path(__file__).with_name("instagram_token.json")
+PUBLISH_STATUS_TIMEOUT_SECONDS = 60
+PUBLISH_STATUS_POLL_SECONDS = 3
 
 
 def _load_token_file() -> Dict[str, str]:
@@ -108,6 +111,9 @@ def _create_media_container(
     if not creation_id:
         raise RuntimeError("Instagram media creation did not return an ID")
 
+    if not _wait_for_media_ready(creation_id, creds["access_token"]):
+        raise RuntimeError("Instagram media is not ready to publish yet.")
+
     publish_url = f"{GRAPH_API_BASE}/{creds['user_id']}/media_publish"
     publish_payload = {"creation_id": creation_id, "access_token": creds["access_token"]}
     publish_response = requests.post(publish_url, data=publish_payload, timeout=30)
@@ -116,6 +122,31 @@ def _create_media_container(
         publish_response.raise_for_status()
 
     return publish_response.json()
+
+
+def _wait_for_media_ready(creation_id: str, access_token: str) -> bool:
+    status_url = f"{GRAPH_API_BASE}/{creation_id}"
+    deadline = time.time() + PUBLISH_STATUS_TIMEOUT_SECONDS
+    last_status = None
+    while time.time() < deadline:
+        response = requests.get(
+            status_url,
+            params={"fields": "status_code", "access_token": access_token},
+            timeout=30,
+        )
+        if response.status_code >= 400:
+            logger.warning("Instagram status check failed: %s - %s", response.status_code, response.text)
+            return False
+        status = response.json().get("status_code")
+        last_status = status
+        if status == "FINISHED":
+            return True
+        if status in {"ERROR", "EXPIRED"}:
+            logger.error("Instagram media creation failed with status: %s", status)
+            return False
+        time.sleep(PUBLISH_STATUS_POLL_SECONDS)
+    logger.warning("Instagram media not ready after polling (last status: %s)", last_status)
+    return False
 
 
 def publish_instagram_post(
