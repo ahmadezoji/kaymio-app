@@ -33,10 +33,11 @@ def _load_token_file() -> Dict[str, str]:
 
 
 def _get_instagram_credentials() -> Dict[str, str]:
-    
+    access_token = os.getenv("INSTAGRAM_ACCESS_TOKEN")
+    user_id = os.getenv("INSTAGRAM_USER_ID")
     token_payload = _load_token_file()
-    access_token = access_token or token_payload.get("INSTAGRAM_ACCESS_TOKEN")
-    user_id = user_id or token_payload.get("INSTAGRAM_USER_ID")
+    access_token = token_payload.get("INSTAGRAM_ACCESS_TOKEN")
+    user_id = token_payload.get("INSTAGRAM_USER_ID")
     if not access_token or not user_id:
         raise RuntimeError(
             "INSTAGRAM_ACCESS_TOKEN and INSTAGRAM_USER_ID must be configured "
