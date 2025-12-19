@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 import sys
 import urllib.parse
+from pathlib import Path
 
 import requests
 
@@ -36,6 +37,32 @@ def _require_env(name: str) -> str:
             f"{name} is required. Set it in your environment or .env file before running this script."
         )
     return value
+
+
+def _load_dotenv() -> None:
+    """Load environment variables from .env if present."""
+    try:
+        from dotenv import load_dotenv  # type: ignore
+
+        if load_dotenv():
+            return
+    except Exception:
+        pass
+
+    for candidate in (Path.cwd() / ".env", Path(__file__).resolve().parents[1] / ".env"):
+        if not candidate.exists():
+            continue
+        for line in candidate.read_text().splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#") or "=" not in stripped:
+                continue
+            key, value = stripped.split("=", 1)
+            key = key.strip()
+            value = value.strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+                value = value[1:-1]
+            os.environ.setdefault(key, value)
+        break
 
 
 def _request_json(url: str, *, params: dict) -> dict:
@@ -121,6 +148,7 @@ def _choose_page(pages: list[dict]) -> dict:
 
 
 def main() -> int:
+    _load_dotenv()
     try:
         app_id = _require_env("FB_APP_ID")
         app_secret = _require_env("FB_APP_SECRET")
