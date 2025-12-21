@@ -1215,11 +1215,13 @@ def generate_platform_video(platform: str):
     prompt_templates = {
         "youtube": (
             "Create a vertical YouTube Short for '{title}' with upbeat pacing, dynamic camera moves, "
-            "and a CTA to tap the affiliate link, but do not add any on-screen text—the output must be pure video."
+            "and a CTA to tap the affiliate link, but do not add any on-screen text—the output must be pure video. "
+            "Do not include any voiceover or speech; choose and add suitable music only."
         ),
         "tiktok": (
             "Create a TikTok-ready vertical video for '{title}' using trendy motion graphics, quick cuts, "
-            "and camera moves that highlight the wow factor, but keep the footage clean with no text or overlays."
+            "and camera moves that highlight the wow factor, but keep the footage clean with no text or overlays. "
+            "Do not include any voiceover or speech; choose and add suitable music only."
         ),
     }
     prompt = prompt_templates[target].format(title=title)
