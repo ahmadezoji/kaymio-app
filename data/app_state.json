@@ -118,274 +118,64 @@
         "instagram_image_data": ""
       }
     },
-    "sz25040741991908005": {
-      "platforms": {
-        "pinterest": {
-          "status": "published",
-          "title": "Vintage Green Womens Bomber Jacket - Stylish Spring Outerwear",
-          "description": "Elevate your spring style with our Vintage Green Womens Bomber Jacket\u2014perfect for sipping lattes at Starbucks or strolling through the park! Dont miss out on this chic outerwear essential that combines comfort and trendiness; grab yours before they fly off the shelves!",
-          "tags": [
-            "Vintage",
-            "Green",
-            "Womens",
-            "Bomber",
-            "Jacket",
-            "-"
-          ],
-          "pin_id": "903323637788295088",
-          "pin_url": "https://onelink.shein.com/22/59svwtfa1t79",
-          "published": true
-        }
-      },
-      "assets": {
-        "original_image_path": "originals/54a4532d580d42c7a6f06d60e096fc7d.png",
-        "generated_image_path": "generated/073bf572c3e740ad87774a0605c1992b.png"
-      },
-      "results": {
-        "pinterest": {
-          "title": "Vintage Green Womens Bomber Jacket - Stylish Spring Outerwear",
-          "description": "Elevate your spring style with our Vintage Green Womens Bomber Jacket\u2014perfect for sipping lattes at Starbucks or strolling through the park! Dont miss out on this chic outerwear essential that combines comfort and trendiness; grab yours before they fly off the shelves!",
-          "tags": [
-            "Vintage",
-            "Green",
-            "Womens",
-            "Bomber",
-            "Jacket",
-            "-"
-          ],
-          "pin_id": "903323637788295088",
-          "pin_url": "https://onelink.shein.com/22/59svwtfa1t79",
-          "status": "created"
-        }
-      },
-      "form_values": {
-        "market": "Shein",
-        "sku_or_url": "sz25040741991908005",
-        "title": "Vintage Green Womens Bomber Jacket - Stylish Spring Outerwear",
-        "description": "Elevate your spring style with our Vintage Green Womens Bomber Jacket\u2014perfect for sipping lattes at Starbucks or strolling through the park! Dont miss out on this chic outerwear essential that combines comfort and trendiness; grab yours before they fly off the shelves!",
-        "affiliate_link": "https://onelink.shein.com/22/59svwtfa1t79",
-        "pinterest_extra": "SOme wemen or girl wearing this jacket and set down  in starbucks"
-      },
-      "preview": {
-        "title": "Vintage Green Womens Bomber Jacket - Stylish Spring Outerwear",
-        "description": "Elevate your spring style with our Vintage Green Womens Bomber Jacket\u2014perfect for sipping lattes at Starbucks or strolling through the park! Dont miss out on this chic outerwear essential that combines comfort and trendiness; grab yours before they fly off the shelves!",
-        "tags": [
-          "Vintage",
-          "Green",
-          "Womens",
-          "Bomber",
-          "Jacket",
-          "-"
-        ],
-        "tags_payload": "[\"Vintage\", \"Green\", \"Womens\", \"Bomber\", \"Jacket\", \"-\"]",
-        "generated_image_path": "generated/073bf572c3e740ad87774a0605c1992b.png",
-        "original_image_path": "originals/54a4532d580d42c7a6f06d60e096fc7d.png",
-        "affiliate_link": "https://onelink.shein.com/22/59svwtfa1t79",
-        "market": "Shein",
-        "sku_or_url": "sz25040741991908005",
-        "pinterest_extra": "SOme wemen or girl wearing this jacket and set down  in starbucks",
-        "title_input": "Vintage Green Womens Bomber Jacket - Stylish Spring Outerwear",
-        "description_input": "Elevate your spring style with our Vintage Green Womens Bomber Jacket\u2014perfect for sipping lattes at Starbucks or strolling through the park! Dont miss out on this chic outerwear essential that combines comfort and trendiness; grab yours before they fly off the shelves!",
-        "instagram_caption": "Elevate your spring style with our Vintage Green Womens Bomber Jacket\u2014perfect for sipping lattes at Starbucks or strolling through the park! Dont miss out on this chic outerwear essential that combines comfort and trendiness; grab yours before they fly off the shelves!",
-        "instagram_hashtags": [
-          "vintage",
-          "green",
-          "womens",
-          "bomber",
-          "jacket",
-          "-",
-          "stylish",
-          "spring",
-          "outerwear"
-        ],
-        "instagram_hashtags_payload": "[\"vintage\", \"green\", \"womens\", \"bomber\", \"jacket\", \"-\", \"stylish\", \"spring\", \"outerwear\"]",
-        "tiktok_caption": "Elevate your spring style with our Vintage Green Womens Bomber Jacket\u2014perfect for sipping lattes at Starbucks or strolling through the park! Dont miss out on this chic outerwear essential that combines comfort and trendiness; grab yours before they fly off the shelves!",
-        "tiktok_hashtags": [
-          "vintage",
-          "green",
-          "womens",
-          "bomber",
-          "jacket",
-          "-"
-        ],
-        "tiktok_hashtags_payload": "[\"vintage\", \"green\", \"womens\", \"bomber\", \"jacket\", \"-\"]",
-        "youtube_title": "Vintage Green Womens Bomber Jacket - Stylish Spring Outerwear",
-        "youtube_description": "Elevate your spring style with our Vintage Green Womens Bomber Jacket\u2014perfect for sipping lattes at Starbucks or strolling through the park! Dont miss out on this chic outerwear essential that combines comfort and trendiness; grab yours before they fly off the shelves!",
-        "youtube_keywords": [
-          "Vintage",
-          "Green",
-          "Womens",
-          "Bomber",
-          "Jacket",
-          "-",
-          "Stylish",
-          "Spring"
-        ],
-        "youtube_keywords_payload": "[\"Vintage\", \"Green\", \"Womens\", \"Bomber\", \"Jacket\", \"-\", \"Stylish\", \"Spring\"]",
-        "video_prompt": "Create a dynamic short-form video for Vintage Green Womens Bomber Jacket - Stylish Spring Outerwear. Include upbeat pacing, text overlays highlighting the benefits, and close with a CTA to tap the affiliate link.",
-        "instagram_image_path": "generated/073bf572c3e740ad87774a0605c1992b.png",
-        "generated_image_url": "/media/generated/073bf572c3e740ad87774a0605c1992b.png",
-        "image_public_url": "http://127.0.0.1:8000/media/generated/073bf572c3e740ad87774a0605c1992b.png",
-        "generated_video_path": "",
-        "video_url": "",
-        "video_public_url": "",
-        "instagram_image_url": "/media/generated/073bf572c3e740ad87774a0605c1992b.png",
-        "instagram_image_public_url": "http://127.0.0.1:8000/media/generated/073bf572c3e740ad87774a0605c1992b.png"
-      }
-    },
-    "sz25100505556054483": {
+    "B09M9Y6L96": {
       "platforms": {
         "website": {
           "status": "published",
-          "product_url": "https://kaymio.com/product/zarif-yuvarlak-yaka-uzun-kollu-buyuk-boy-islemeli-cicekli-midi-elbise-kazak-elbise-bircok-durum-ve-mevsim-icin-cok-yonlu-sonbahar-kis/"
-        },
-        "pinterest": {
-          "status": "published",
-          "title": "Zarif \u00c7i\u00e7ekli Midi Elbise - Uzun Kollu, B\u00fcy\u00fck Boy, \u00c7ok Y\u00f6nl\u00fc",
-          "description": "Elevate your autumn and winter wardrobe with the stunning Zarif \u00c7i\u00e7ekli Midi Elbise\u2014an elegant, long-sleeved floral dress that effortlessly transitions from casual strolls to chic gatherings! Dont miss out on this versatile piece that combines comfort and style\u2014grab yours now and step out in confidence! \ud83c\udf38\u2728",
-          "tags": [
-            "Zarif",
-            "\u00c7i\u00e7ekli",
-            "Midi",
-            "Elbise",
-            "-",
-            "Uzun"
-          ],
-          "use_affiliate_link": false,
-          "pin_id": "903323637788483781",
-          "pin_url": "https://www.pinterest.com/pin/903323637788483781/",
-          "published": true
-        },
-        "instagram_feed": {
-          "status": "published",
-          "use_affiliate_link": false
-        },
-        "youtube": {
-          "status": "published",
-          "video_path": "videos/27ec03aef2b14de49f43db87ebc36b45.mp4",
-          "base_image_path": "generated/ddbb78721fa947bfb9e2ee3fdc2fe282.png",
-          "use_affiliate_link": false,
-          "video_id": "T0Q2S6LEOs8"
+          "product_url": "https://kaymio.com/product/prettygarden-womens-dresses-2025-summer-maxi-dress-boho-short-sleeve-v-neck-swiss-dot-ruffle-tiered-smocked-flowy-long-dress-x-large-a-blue/"
         }
       },
       "assets": {
-        "original_image_path": "originals/54f9b29479ee4c3ebbe2108756438e1f.png",
-        "generated_image_path": "generated/ddbb78721fa947bfb9e2ee3fdc2fe282.png",
-        "generated_video_path": "videos/27ec03aef2b14de49f43db87ebc36b45.mp4"
+        "amazon_image_urls": [
+          "https://m.media-amazon.com/images/I/71m8UKMlzrL._AC_SL1500_.jpg",
+          "https://m.media-amazon.com/images/I/91twngEkIGL._AC_SL1500_.jpg",
+          "https://m.media-amazon.com/images/I/91Pvd4ELreL._AC_SL1500_.jpg",
+          "https://m.media-amazon.com/images/I/91TMVel2UuL._AC_SL1500_.jpg",
+          "https://m.media-amazon.com/images/I/81BPvbsJqvL._AC_SL1500_.jpg"
+        ],
+        "source_image_urls": [
+          "https://m.media-amazon.com/images/I/71m8UKMlzrL._AC_SL1500_.jpg",
+          "https://m.media-amazon.com/images/I/91twngEkIGL._AC_SL1500_.jpg",
+          "https://m.media-amazon.com/images/I/91Pvd4ELreL._AC_SL1500_.jpg",
+          "https://m.media-amazon.com/images/I/91TMVel2UuL._AC_SL1500_.jpg",
+          "https://m.media-amazon.com/images/I/81BPvbsJqvL._AC_SL1500_.jpg"
+        ],
+        "original_image_path": "originals/95668b11b7ed4196a663ba1b27c19d1f.jpg"
       },
       "results": {
         "website": {
-          "product_url": "https://kaymio.com/product/zarif-yuvarlak-yaka-uzun-kollu-buyuk-boy-islemeli-cicekli-midi-elbise-kazak-elbise-bircok-durum-ve-mevsim-icin-cok-yonlu-sonbahar-kis/",
-          "title": "Zarif Yuvarlak Yaka Uzun Kollu B\u00fcy\u00fck Boy \u0130\u015flemeli \u00c7i\u00e7ekli Midi Elbise Kazak Elbise, Bir\u00e7ok Durum ve Mevsim \u0130\u00e7in \u00c7ok Y\u00f6nl\u00fc, Sonbahar K\u0131\u015f",
-          "description": "Zarif Yuvarlak Yaka Uzun Kollu B\u00fcy\u00fck Boy \u0130\u015flemeli \u00c7i\u00e7ekli Midi Elbise Kazak Elbise, Bir\u00e7ok Durum ve Mevsim \u0130\u00e7in \u00c7ok Y\u00f6nl\u00fc, Sonbahar K\u0131\u015f",
-          "price": "16.50",
-          "category": "women clothes"
-        },
-        "pinterest": {
-          "title": "Zarif \u00c7i\u00e7ekli Midi Elbise - Uzun Kollu, B\u00fcy\u00fck Boy, \u00c7ok Y\u00f6nl\u00fc",
-          "description": "Elevate your autumn and winter wardrobe with the stunning Zarif \u00c7i\u00e7ekli Midi Elbise\u2014an elegant, long-sleeved floral dress that effortlessly transitions from casual strolls to chic gatherings! Dont miss out on this versatile piece that combines comfort and style\u2014grab yours now and step out in confidence! \ud83c\udf38\u2728",
-          "tags": [
-            "Zarif",
-            "\u00c7i\u00e7ekli",
-            "Midi",
-            "Elbise",
-            "-",
-            "Uzun"
-          ],
-          "pin_id": "903323637788483781",
-          "pin_url": "https://www.pinterest.com/pin/903323637788483781/",
-          "status": "created"
-        },
-        "youtube": {
-          "title": "Zarif \u00c7i\u00e7ekli Midi Elbise - Uzun Kollu, B\u00fcy\u00fck Boy, \u00c7ok Y\u00f6nl\u00fc",
-          "description": "Elevate your autumn and winter wardrobe with the stunning Zarif \u00c7i\u00e7ekli Midi Elbise\u2014an elegant, long-sleeved floral dress that effortlessly transitions from casual strolls to chic gatherings! Dont miss out on this versatile piece that combines comfort and style\u2014grab yours now and step out in confidence! \ud83c\udf38\u2728",
-          "video_id": "T0Q2S6LEOs8"
+          "product_url": "https://kaymio.com/product/prettygarden-womens-dresses-2025-summer-maxi-dress-boho-short-sleeve-v-neck-swiss-dot-ruffle-tiered-smocked-flowy-long-dress-x-large-a-blue/",
+          "title": "PRETTYGARDEN Womens Dresses 2025 Summer Maxi Dress Boho Short Sleeve V Neck Swiss Dot Ruffle Tiered Smocked Flowy Long Dress X-Large A-blue",
+          "description": "Material:Long dresses for women summer is made of comfy and durable fabric,great for summer and spring seasons.S=US 4-6, M=US 8-10, L=US 12-14, XL=US 16-18, XXL=US 20",
+          "price": "$49.89",
+          "category": "Casual"
         }
       },
       "form_values": {
-        "market": "Shein",
-        "sku_or_url": "sz25100505556054483",
-        "title": "Zarif \u00c7i\u00e7ekli Midi Elbise - Uzun Kollu, B\u00fcy\u00fck Boy, \u00c7ok Y\u00f6nl\u00fc",
-        "description": "Elevate your autumn and winter wardrobe with the stunning Zarif \u00c7i\u00e7ekli Midi Elbise\u2014an elegant, long-sleeved floral dress that effortlessly transitions from casual strolls to chic gatherings! Dont miss out on this versatile piece that combines comfort and style\u2014grab yours now and step out in confidence! \ud83c\udf38\u2728",
-        "affiliate_link": "https://onelink.shein.com/23/5a9lndoyq8ll",
-        "pinterest_extra": "wear that on a beautiful girk , walking in a amazing street",
-        "category": "women clothes",
-        "price": "16.50",
+        "market": "Amazon",
+        "sku_or_url": "https://www.amazon.com/PRETTYGARDEN-Womens-Sleeve-Smocked-X-Large/dp/B09M9Y6L96?ref_=ast_slp_dp&th=1&psc=1",
+        "title": "PRETTYGARDEN Womens Dresses 2025 Summer Maxi Dress Boho Short Sleeve V Neck Swiss Dot Ruffle Tiered Smocked Flowy Long Dress X-Large A-blue",
+        "description": "Material:Long dresses for women summer is made of comfy and durable fabric,great for summer and spring seasons.S=US 4-6, M=US 8-10, L=US 12-14, XL=US 16-18, XXL=US 20",
+        "affiliate_link": "https://www.amazon.com/dp/B09M9Y6L96?tag=kaymio-20",
+        "pinterest_extra": "",
+        "category": "Casual",
+        "price": "$49.89",
         "website_boost_prompt": "",
-        "use_affiliate_link": "0"
-      },
-      "preview": {
-        "title": "Zarif \u00c7i\u00e7ekli Midi Elbise - Uzun Kollu, B\u00fcy\u00fck Boy, \u00c7ok Y\u00f6nl\u00fc",
-        "description": "Elevate your autumn and winter wardrobe with the stunning Zarif \u00c7i\u00e7ekli Midi Elbise\u2014an elegant, long-sleeved floral dress that effortlessly transitions from casual strolls to chic gatherings! Dont miss out on this versatile piece that combines comfort and style\u2014grab yours now and step out in confidence! \ud83c\udf38\u2728",
-        "tags": [
-          "Zarif",
-          "\u00c7i\u00e7ekli",
-          "Midi",
-          "Elbise",
-          "-",
-          "Uzun"
-        ],
-        "tags_payload": "[\"Zarif\", \"\\u00c7i\\u00e7ekli\", \"Midi\", \"Elbise\", \"-\", \"Uzun\"]",
-        "generated_image_path": "generated/ddbb78721fa947bfb9e2ee3fdc2fe282.png",
-        "original_image_path": "originals/54f9b29479ee4c3ebbe2108756438e1f.png",
-        "affiliate_link": "https://onelink.shein.com/23/5a9lndoyq8ll",
-        "market": "Shein",
-        "sku_or_url": "sz25100505556054483",
-        "pinterest_extra": "wear that on a beautiful girk , walking in a amazing street",
-        "title_input": "Zarif \u00c7i\u00e7ekli Midi Elbise - Uzun Kollu, B\u00fcy\u00fck Boy, \u00c7ok Y\u00f6nl\u00fc",
-        "description_input": "Elevate your autumn and winter wardrobe with the stunning Zarif \u00c7i\u00e7ekli Midi Elbise\u2014an elegant, long-sleeved floral dress that effortlessly transitions from casual strolls to chic gatherings! Dont miss out on this versatile piece that combines comfort and style\u2014grab yours now and step out in confidence! \ud83c\udf38\u2728",
-        "instagram_caption": "Elevate your autumn and winter wardrobe with the stunning Zarif \u00c7i\u00e7ekli Midi Elbise\u2014an elegant, long-sleeved floral dress that effortlessly transitions from casual strolls to chic gatherings! Dont miss out on this versatile piece that combines comfort and style\u2014grab yours now and step out in confidence! \ud83c\udf38\u2728",
-        "instagram_hashtags": [
-          "zarif",
-          "\u00e7i\u00e7ekli",
-          "midi",
-          "elbise",
-          "-",
-          "uzun",
-          "kollu,",
-          "b\u00fcy\u00fck",
-          "boy,",
-          "\u00e7ok"
-        ],
-        "instagram_hashtags_payload": "[\"zarif\", \"\\u00e7i\\u00e7ekli\", \"midi\", \"elbise\", \"-\", \"uzun\", \"kollu,\", \"b\\u00fcy\\u00fck\", \"boy,\", \"\\u00e7ok\"]",
-        "tiktok_caption": "Elevate your autumn and winter wardrobe with the stunning Zarif \u00c7i\u00e7ekli Midi Elbise\u2014an elegant, long-sleeved floral dress that effortlessly transitions from casual strolls to chic gatherings! Dont miss out on this versatile piece that combines comfort and style\u2014grab yours now and step out in confidence! \ud83c\udf38\u2728",
-        "tiktok_hashtags": [
-          "zarif",
-          "\u00e7i\u00e7ekli",
-          "midi",
-          "elbise",
-          "-",
-          "uzun"
-        ],
-        "tiktok_hashtags_payload": "[\"zarif\", \"\\u00e7i\\u00e7ekli\", \"midi\", \"elbise\", \"-\", \"uzun\"]",
-        "youtube_title": "Zarif \u00c7i\u00e7ekli Midi Elbise - Uzun Kollu, B\u00fcy\u00fck Boy, \u00c7ok Y\u00f6nl\u00fc",
-        "youtube_description": "Elevate your autumn and winter wardrobe with the stunning Zarif \u00c7i\u00e7ekli Midi Elbise\u2014an elegant, long-sleeved floral dress that effortlessly transitions from casual strolls to chic gatherings! Dont miss out on this versatile piece that combines comfort and style\u2014grab yours now and step out in confidence! \ud83c\udf38\u2728",
-        "youtube_keywords": [
-          "Zarif",
-          "\u00c7i\u00e7ekli",
-          "Midi",
-          "Elbise",
-          "-",
-          "Uzun",
-          "Kollu,",
-          "B\u00fcy\u00fck"
-        ],
-        "youtube_keywords_payload": "[\"Zarif\", \"\\u00c7i\\u00e7ekli\", \"Midi\", \"Elbise\", \"-\", \"Uzun\", \"Kollu,\", \"B\\u00fcy\\u00fck\"]",
-        "video_prompt": "Create a dynamic short-form video for Zarif \u00c7i\u00e7ekli Midi Elbise - Uzun Kollu, B\u00fcy\u00fck Boy, \u00c7ok Y\u00f6nl\u00fc. Include upbeat pacing, text overlays highlighting the benefits, and close with a CTA to tap the affiliate link.",
-        "instagram_image_path": "generated/ddbb78721fa947bfb9e2ee3fdc2fe282.png",
-        "category": "women clothes",
-        "price": "16.50",
-        "website_boost_prompt": "",
+        "youtube_boost_prompt": "",
         "use_affiliate_link": "0",
-        "generated_image_url": "/media/generated/ddbb78721fa947bfb9e2ee3fdc2fe282.png",
-        "image_public_url": "http://127.0.0.1:5500/media/generated/ddbb78721fa947bfb9e2ee3fdc2fe282.png",
-        "generated_video_path": "videos/27ec03aef2b14de49f43db87ebc36b45.mp4",
-        "video_url": "/media/videos/27ec03aef2b14de49f43db87ebc36b45.mp4",
-        "video_public_url": "http://127.0.0.1:5500/media/videos/27ec03aef2b14de49f43db87ebc36b45.mp4",
-        "instagram_image_url": "/media/generated/ddbb78721fa947bfb9e2ee3fdc2fe282.png",
-        "instagram_image_public_url": "http://127.0.0.1:5500/media/generated/ddbb78721fa947bfb9e2ee3fdc2fe282.png"
+        "original_image_path": "originals/95668b11b7ed4196a663ba1b27c19d1f.jpg"
+      },
+      "preview": {
+        "title": "PRETTYGARDEN Womens Dresses 2025 Summer Maxi Dress Boho Short Sleeve V Neck Swiss Dot Ruffle Tiered Smocked Flowy Long Dress X-Large A-blue",
+        "description": "Material:Long dresses for women summer is made of comfy and durable fabric,great for summer and spring seasons.S=US 4-6, M=US 8-10, L=US 12-14, XL=US 16-18, XXL=US 20",
+        "tags": [],
+        "original_image_path": "originals/95668b11b7ed4196a663ba1b27c19d1f.jpg",
+        "generated_image_path": "",
+        "category": "Casual",
+        "price": "$49.89",
+        "website_boost_prompt": ""
       }
     }
   },
-  "last_product_id": "sz25100505556054483"
+  "last_product_id": "B09M9Y6L96"
 }

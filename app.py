@@ -4,11 +4,14 @@ import os
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 from uuid import uuid4
 
+import requests
 from dotenv import load_dotenv
 from flask import Flask, abort, flash, render_template, request, send_from_directory, url_for
 
+from amazon.amazon_api import build_affiliate_link, extract_asin, fetch_product_from_canopy
 from gemeni_api_helper import edit_image, generate_video_from_image
 from instagram.instagram_api_helper import publish_instagram_post, publish_instagram_story
 from openai_helper import (
@@ -202,7 +205,14 @@ def update_product_state(
 
 
 def resolve_product_id(values: Dict[str, str]) -> str:
-    return normalize_product_id(values.get("sku_or_url", ""))
+    raw = values.get("sku_or_url", "")
+    market = (values.get("market") or "").strip().lower()
+    if market == "amazon" and raw:
+        try:
+            return normalize_product_id(extract_asin(raw))
+        except ValueError:
+            return normalize_product_id(raw)
+    return normalize_product_id(raw)
 
 
 def collect_form_values(form_data) -> Dict[str, str]:
@@ -444,6 +454,68 @@ def build_website_description(title: str, base_description: str, boost_prompt: s
     return enhanced or base_description
 
 
+def resolve_amazon_domain(raw_url: str) -> str:
+    if not raw_url:
+        return "com"
+    parsed = urlparse(raw_url)
+    host = (parsed.netloc or "").lower()
+    if not host:
+        return "com"
+    if "amazon." not in host:
+        return "com"
+    suffix = host.split("amazon.", 1)[-1]
+    if not suffix:
+        return "com"
+    return suffix
+
+
+def guess_filename_from_url(raw_url: str, default_name: str = "amazon") -> str:
+    parsed = urlparse(raw_url)
+    suffix = Path(parsed.path or "").suffix.lower()
+    if suffix.lstrip(".") not in ALLOWED_EXTENSIONS:
+        suffix = ".jpg"
+    return f"{default_name}{suffix}"
+
+
+def download_image_bytes(image_url: str) -> bytes:
+    resp = requests.get(image_url, timeout=15)
+    if resp.status_code != 200:
+        raise ValueError(f"Image download failed ({resp.status_code}).")
+    return resp.content
+
+
+def resolve_source_image_urls(saved_state: Dict[str, Any]) -> List[str]:
+    assets = (saved_state.get("assets") or {}) if saved_state else {}
+    return assets.get("source_image_urls") or assets.get("amazon_image_urls") or []
+
+
+def ensure_downloaded_original_image(
+    product_id: str,
+    form_values: Dict[str, str],
+    saved_state: Dict[str, Any],
+    preview_payload: Optional[Dict[str, Any]] = None,
+) -> Optional[tuple[str, bytes]]:
+    image_urls = resolve_source_image_urls(saved_state)
+    if not image_urls:
+        return None
+    image_url = image_urls[0]
+    image_bytes = download_image_bytes(image_url)
+    filename = guess_filename_from_url(image_url)
+    image_relative = save_original_image(image_bytes, filename)
+    resolved = resolve_storage_path(image_relative)
+    if not resolved:
+        return None
+    form_values["original_image_path"] = image_relative
+    update_product_state(
+        product_id,
+        form_values=form_values,
+        assets={"original_image_path": image_relative},
+    )
+    if preview_payload is not None:
+        preview_payload["original_image_path"] = image_relative
+    return image_relative, image_bytes
+
+
 def extract_form_defaults(raw_form_values: Dict[str, str]) -> Dict[str, str]:
     defaults = {
         key: raw_form_values.get(key, "")
@@ -622,6 +694,62 @@ def reset_platform():
     )
 
 
+@app.route("/fetch-amazon-product", methods=["POST"])
+def fetch_amazon_product():
+    raw_form_values = collect_form_values(request.form)
+    form_values = extract_form_defaults(raw_form_values)
+    market = (form_values.get("market") or "").strip()
+    sku_or_url = (form_values.get("sku_or_url") or "").strip()
+    product_id = resolve_product_id(form_values)
+
+    if not market or market.lower() != "amazon":
+        flash("Choose Amazon before fetching marketplace data.", "error")
+        return render_home_view(form_values, product_id=product_id)
+    if not sku_or_url:
+        flash("Provide an Amazon ASIN or product URL before fetching.", "error")
+        return render_home_view(form_values, product_id=product_id)
+
+    try:
+        asin = extract_asin(sku_or_url)
+    except ValueError as exc:
+        flash(str(exc), "error")
+        return render_home_view(form_values, product_id=product_id)
+
+    # domain = resolve_amazon_domain(sku_or_url)
+    try:
+        fetched = fetch_product_from_canopy(asin)
+    except Exception as exc:
+        app.logger.exception("Amazon product fetch failed")
+        flash(f"Unable to fetch Amazon product data: {exc}", "error")
+        return render_home_view(form_values, product_id=product_id)
+
+    updated_values = dict(form_values)
+    candidate_values = {
+        "title": fetched.get("title") or "",
+        "description": fetched.get("description") or "",
+        "category": fetched.get("category") or "",
+        "price": fetched.get("price") or "",
+        "affiliate_link": build_affiliate_link(asin),
+    }
+    for key, value in candidate_values.items():
+        if not updated_values.get(key):
+            updated_values[key] = value
+
+    assets = {}
+    image_urls = fetched.get("image_urls") or []
+    if image_urls:
+        assets["amazon_image_urls"] = image_urls
+        assets["source_image_urls"] = image_urls
+
+    update_product_state(
+        product_id,
+        form_values=updated_values,
+        assets=assets,
+    )
+    flash("Amazon product data loaded. Review and edit the fields below.", "success")
+    return render_home_view(updated_values, product_id=product_id)
+
+
 @app.route("/save-draft", methods=["POST"])
 def save_draft():
     raw_form_values = collect_form_values(request.form)
@@ -677,6 +805,7 @@ def generate_pinterest():
     if not original_image_path and saved_state:
         assets = saved_state.get("assets") or {}
         original_image_path = assets.get("original_image_path", "")
+    auto_image_urls = resolve_source_image_urls(saved_state)
     form_values.setdefault("use_affiliate_link", "0")
     use_affiliate_link_flag = str(form_values.get("use_affiliate_link", "0")).lower() in TRUTHY_VALUES
     product_id = resolve_product_id(form_values)
@@ -695,7 +824,7 @@ def generate_pinterest():
     if not form_values.get("affiliate_link"):
         errors.append("Affiliate link is required so shoppers can reach the product.")
 
-    if (image_file is None or image_file.filename == "") and not original_image_path:
+    if (image_file is None or image_file.filename == "") and not original_image_path and not auto_image_urls:
         errors.append("Upload at least one product image so we can craft a pin.")
     elif image_file is not None and image_file.filename and not allowed_file(image_file.filename):
         errors.append("Unsupported image type. Use PNG, JPG, JPEG, GIF, or WEBP.")
@@ -712,11 +841,26 @@ def generate_pinterest():
             return render_home_view(form_values, product_id=product_id)
         original_image_path = save_original_image(original_bytes, image_file.filename)
     else:
-        try:
-            original_bytes = load_stored_image(original_image_path)
-        except Exception:
-            flash("Unable to load the previously uploaded image. Please upload again.", "error")
-            return render_home_view(form_values, product_id=product_id)
+        if not original_image_path:
+            try:
+                downloaded = ensure_downloaded_original_image(
+                    product_id, form_values, saved_state, preview_payload=None
+                )
+            except Exception as exc:
+                app.logger.exception("Source image download failed")
+                flash(f"Unable to download the product image: {exc}", "error")
+                return render_home_view(form_values, product_id=product_id)
+            if downloaded:
+                original_image_path, original_bytes = downloaded
+            else:
+                flash("Unable to locate a product image. Please upload one.", "error")
+                return render_home_view(form_values, product_id=product_id)
+        else:
+            try:
+                original_bytes = load_stored_image(original_image_path)
+            except Exception:
+                flash("Unable to load the previously uploaded image. Please upload again.", "error")
+                return render_home_view(form_values, product_id=product_id)
 
     raw_title = form_values.get("title", "")
     raw_description = form_values.get("description", "")
@@ -950,19 +1094,33 @@ def generate_instagram_image():
     use_affiliate_link_flag = str(form_values.get("use_affiliate_link", "0")).lower() in TRUTHY_VALUES
     product_id = resolve_product_id(form_values)
     preview_payload = rebuild_preview_payload(raw_form_values)
+    saved_state = get_product_state(product_id) if product_id else {}
     base_image_path = raw_form_values.get("original_image_path") or raw_form_values.get(
         "generated_image_path"
     )
 
+    base_bytes = None
     if not base_image_path:
-        flash("Upload a product image before generating Instagram visuals.", "error")
-        return render_home_view(form_values, preview_payload, product_id=product_id)
+        try:
+            downloaded = ensure_downloaded_original_image(
+                product_id, form_values, saved_state, preview_payload
+            )
+        except Exception as exc:
+            app.logger.exception("Source image download failed")
+            flash(f"Unable to download the product image: {exc}", "error")
+            return render_home_view(form_values, preview_payload, product_id=product_id)
+        if downloaded:
+            base_image_path, base_bytes = downloaded
+        else:
+            flash("Upload a product image before generating Instagram visuals.", "error")
+            return render_home_view(form_values, preview_payload, product_id=product_id)
 
-    try:
-        base_bytes = load_stored_media(base_image_path)
-    except Exception:
-        flash("Unable to load the base image. Please regenerate your creative first.", "error")
-        return render_home_view(form_values, preview_payload, product_id=product_id)
+    if base_bytes is None:
+        try:
+            base_bytes = load_stored_media(base_image_path)
+        except Exception:
+            flash("Unable to load the base image. Please regenerate your creative first.", "error")
+            return render_home_view(form_values, preview_payload, product_id=product_id)
 
     variant = raw_form_values.get("instagram_variant", "feed").lower()
     aspect_ratio = "4:5" if variant == "feed" else "9:16"
@@ -1070,6 +1228,16 @@ def publish_website():
     product_id = resolve_product_id(form_values)
     preview_payload = rebuild_preview_payload(raw_form_values)
     saved_state = get_product_state(product_id) if product_id else {}
+    if not product_id:
+        state = load_app_state()
+        fallback_id = state.get("last_product_id") or ""
+        if fallback_id:
+            product_id = fallback_id
+            saved_state = state.get("products", {}).get(product_id, {})
+            fallback_values = saved_state.get("form_values") or {}
+            for key, value in fallback_values.items():
+                if not form_values.get(key):
+                    form_values[key] = value
 
     if not preview_payload and saved_state.get("preview"):
         preview_payload = _hydrate_preview(saved_state.get("preview"))
@@ -1102,6 +1270,17 @@ def publish_website():
 
     image_relative = _resolve_image_path()
     resolved_image_path = resolve_storage_path(image_relative) if image_relative else None
+    if not resolved_image_path:
+        try:
+            downloaded = ensure_downloaded_original_image(
+                product_id, form_values, saved_state, preview_payload
+            )
+        except Exception as exc:
+            app.logger.exception("Source image download failed")
+            flash(f"Unable to download product image: {exc}", "error")
+        if downloaded:
+            image_relative, _ = downloaded
+            resolved_image_path = resolve_storage_path(image_relative)
     if not resolved_image_path:
         flash("Upload an original product image before publishing to Kaymio.", "error")
         return render_home_view(form_values, preview_payload, product_id=product_id)
@@ -1195,21 +1374,35 @@ def generate_platform_video(platform: str):
     use_affiliate_link_flag = str(form_values.get("use_affiliate_link", "0")).lower() in TRUTHY_VALUES
     product_id = resolve_product_id(form_values)
     preview_payload = rebuild_preview_payload(raw_form_values)
+    saved_state = get_product_state(product_id) if product_id else {}
     base_image_path = (
         raw_form_values.get("original_image_path")
         or raw_form_values.get("instagram_image_path")
         or raw_form_values.get("generated_image_path")
     )
 
+    base_bytes = None
     if not base_image_path:
-        flash("Generate an image first to feed the video workflow.", "error")
-        return render_home_view(form_values, preview_payload, product_id=product_id)
+        try:
+            downloaded = ensure_downloaded_original_image(
+                product_id, form_values, saved_state, preview_payload
+            )
+        except Exception as exc:
+            app.logger.exception("Source image download failed")
+            flash(f"Unable to download the product image: {exc}", "error")
+            return render_home_view(form_values, preview_payload, product_id=product_id)
+        if downloaded:
+            base_image_path, base_bytes = downloaded
+        else:
+            flash("Generate an image first to feed the video workflow.", "error")
+            return render_home_view(form_values, preview_payload, product_id=product_id)
 
-    try:
-        base_bytes = load_stored_media(base_image_path)
-    except Exception:
-        flash("Unable to load the base visual. Please regenerate it.", "error")
-        return render_home_view(form_values, preview_payload, product_id=product_id)
+    if base_bytes is None:
+        try:
+            base_bytes = load_stored_media(base_image_path)
+        except Exception:
+            flash("Unable to load the base visual. Please regenerate it.", "error")
+            return render_home_view(form_values, preview_payload, product_id=product_id)
 
     title = raw_form_values.get("title") or form_values.get("title") or "this product"
     prompt_templates = {

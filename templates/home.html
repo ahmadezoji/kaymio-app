@@ -147,7 +147,16 @@
                 />
               </label>
             </div>
-            <button type="button" class="ghost-btn" title="Coming soon" disabled>Fetch product data</button>
+            <button
+              type="submit"
+              class="ghost-btn"
+              formaction="{{ url_for('fetch_amazon_product') }}"
+              formmethod="post"
+              formnovalidate
+              title="Fetch Amazon product data"
+            >
+              Fetch product data
+            </button>
           </section>
           <input type="hidden" name="use_affiliate_link" value="{{ values.get('use_affiliate_link', '0') }}" />
 
