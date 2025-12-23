@@ -8,13 +8,9 @@ import base64
 import datetime
 import shutil
 import uuid
+import re
 
 from openai_helper import find_nearest_category
-
-
-
-
-
 
 
 
@@ -339,8 +335,63 @@ def get_parent_category_name(category_name):
 
 
 
+def update_affiliate_links():
+    """
+    Fetch all WooCommerce products, find products with Amazon affiliate links
+    containing the old tag, and update them with the new tag.
+    """
+    old_tag = "picksmix01-20"
+    new_tag = "kaymio-20"
+    amazon_url_pattern = r"https://www\.amazon\.com/dp/([A-Z0-9]{10})\?tag=" + old_tag
+
+    try:
+        page = 1
+        while True:
+            # Fetch products page by page
+            response = requests.get(
+                f"{wc_url}/wp-json/wc/v3/products",
+                params={"page": page, "per_page": 100},
+                auth=(consumer_key, consumer_secret),
+                headers={"Content-Type": "application/json"}
+            )
+            if response.status_code != 200:
+                print(f"Failed to fetch products: {response.text}")
+                break
+
+            products = response.json()
+            if not products:
+                break
+
+            for product in products:
+                external_url = product.get("external_url", "")
+                match = re.match(amazon_url_pattern, external_url)
+                if match:
+                    asin = match.group(1)
+                    new_url = f"https://www.amazon.com/dp/{asin}?tag={new_tag}"
+                    product_id = product["id"]
+
+                    # Update product with the new URL
+                    update_response = requests.put(
+                        f"{wc_url}/wp-json/wc/v3/products/{product_id}",
+                        json={"external_url": new_url},
+                        auth=(consumer_key, consumer_secret),
+                        headers={"Content-Type": "application/json"}
+                    )
+
+                    if update_response.status_code == 200:
+                        print(f"Updated product {product_id} with new URL: {new_url}")
+                    else:
+                        print(f"Failed to update product {product_id}: {update_response.text}")
+
+            page += 1
+
+    except Exception as e:
+        print(f"Error updating affiliate links: {e}")
+
+
 if __name__ == "__main__":
     # ppid  = get_category_id_by_name("🧒 Kids & Baby")
     print(f"Category ID for '🧒 Kids & Baby':")
+    # update_affiliate_links()
 
-   
+
