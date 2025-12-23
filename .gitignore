@@ -2,3 +2,7 @@ template_images/*
 *.pyc
 *cpython-*.pyc
 instagram/instagram_token.json
+pintrest/access_token.txt
+access_token.txt
+.env
+data/app_state.json
