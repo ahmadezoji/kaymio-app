@@ -188,6 +188,60 @@ textarea {
   color: var(--accent);
 }
 
+.product-gallery {
+  margin-top: 1rem;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.product-gallery p {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.product-gallery-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 0.75rem;
+}
+
+.product-gallery-item {
+  border-radius: 0.9rem;
+  overflow: hidden;
+  background: var(--card-soft);
+  border: 1px solid var(--border);
+  aspect-ratio: 1 / 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  position: relative;
+}
+
+.product-gallery-item input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.product-gallery-item:has(input:checked) {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(168, 85, 247, 0.3);
+}
+
+.product-gallery-item input:checked + img {
+  outline: 3px solid var(--accent);
+  outline-offset: -3px;
+}
+
+.product-gallery-item img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
 button.primary {
   background: linear-gradient(135deg, var(--accent), var(--accent-strong));
   border: none;

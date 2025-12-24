@@ -134,13 +134,25 @@ def create_woocommerce_product(name, description, price, image_path=None, tags=N
     # Prepare basic auth header
     auth = (consumer_key, consumer_secret)
 
-    # Upload image if provided
-    image_payloads = list(images or [])
+    # Upload images if provided
+    image_payloads = []
     if image_path and os.path.exists(image_path):
-        image_url = upload_wordpress_media(
-            image_path, wp_url, wp_username, wp_password)
+        image_url = upload_wordpress_media(image_path, wp_url, wp_username, wp_password)
         if image_url:
             image_payloads.append({"src": image_url})
+    for item in images or []:
+        if isinstance(item, dict):
+            if item:
+                image_payloads.append(item)
+            continue
+        if not item or not isinstance(item, str):
+            continue
+        if os.path.exists(item):
+            image_url = upload_wordpress_media(item, wp_url, wp_username, wp_password)
+            if image_url:
+                image_payloads.append({"src": image_url})
+        elif item.startswith(("http://", "https://")):
+            image_payloads.append({"src": item})
     # category_id = get_category_id_by_name(category_name)
     # tag_ids = []
 
@@ -393,5 +405,4 @@ if __name__ == "__main__":
     # ppid  = get_category_id_by_name("🧒 Kids & Baby")
     print(f"Category ID for '🧒 Kids & Baby':")
     # update_affiliate_links()
-
 

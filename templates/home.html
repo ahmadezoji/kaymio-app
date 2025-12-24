@@ -39,6 +39,7 @@
       <input type="hidden" name="video_prompt" value="{{ preview.video_prompt | e }}" />
       <input type="hidden" name="instagram_image_path" value="{{ preview.instagram_image_path | e }}" />
       <input type="hidden" name="video_duration_seconds" value="{{ preview.video_duration_seconds | default('8') | e }}" />
+      <input type="hidden" name="selected_original_image" value="{{ values.get('selected_original_image', '') | e }}" />
     {%- endmacro %}
     {% macro platform_reset_button(platform, label, sku) -%}
       <div class="card-header-actions">
@@ -175,6 +176,25 @@
               <span class="dz-icon">⬆︎</span>
               <p>Drag &amp; drop or click to upload a hero image (PNG, JPG, GIF, WEBP).</p>
             </label>
+            {% if product_image_choices %}
+              <div class="product-gallery">
+                <p>Product images</p>
+                <div class="product-gallery-grid">
+                  {% for image_choice in product_image_choices %}
+                    <label class="product-gallery-item">
+                      <input
+                        type="radio"
+                        name="selected_original_image"
+                        value="{{ image_choice.value }}"
+                        {% if image_choice.value == selected_original_image or loop.first %}checked{% endif %}
+                      />
+                      <img src="{{ image_choice.url }}" alt="Product image {{ loop.index }}" loading="lazy" />
+                    </label>
+                  {% endfor %}
+                </div>
+                <p class="muted">Pick the original image to use for Pinterest, Instagram, and video generation.</p>
+              </div>
+            {% endif %}
             <label>
               <span>Product title</span>
               <input
