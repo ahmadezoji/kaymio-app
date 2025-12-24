@@ -23,7 +23,11 @@
       <input type="hidden" name="category" value="{{ values.get('category', '') | e }}" />
       <input type="hidden" name="price" value="{{ values.get('price', '') | e }}" />
       <input type="hidden" name="website_boost_prompt_pref" value="{{ values.get('website_boost_prompt', '') | e }}" />
-      <input type="hidden" name="youtube_boost_prompt" value="{{ values.get('youtube_boost_prompt', '') | e }}" />
+      <input
+        type="hidden"
+        name="youtube_boost_prompt"
+        value="{{ (values.get('youtube_boost_prompt') or preview.youtube_boost_prompt or '') | e }}"
+      />
       <input type="hidden" name="use_affiliate_link_pref" value="{{ values.get('use_affiliate_link', '0') | e }}" />
       <input type="hidden" name="tags" value="{{ preview.tags_payload | e }}" />
       <input type="hidden" name="generated_image_path" value="{{ preview.generated_image_path | e }}" />
@@ -38,7 +42,12 @@
       <input type="hidden" name="generated_video_path" value="{{ preview.generated_video_path | e }}" />
       <input type="hidden" name="video_prompt" value="{{ preview.video_prompt | e }}" />
       <input type="hidden" name="instagram_image_path" value="{{ preview.instagram_image_path | e }}" />
-      <input type="hidden" name="video_duration_seconds" value="{{ preview.video_duration_seconds | default('8') | e }}" />
+      <input
+        type="hidden"
+        name="video_duration_seconds"
+        value="{{ (values.get('video_duration_seconds') or preview.video_duration_seconds or '8') | e }}"
+      />
+      <input type="hidden" name="selected_original_image" value="{{ values.get('selected_original_image', '') | e }}" />
     {%- endmacro %}
     {% macro platform_reset_button(platform, label, sku) -%}
       <div class="card-header-actions">
@@ -175,6 +184,25 @@
               <span class="dz-icon">⬆︎</span>
               <p>Drag &amp; drop or click to upload a hero image (PNG, JPG, GIF, WEBP).</p>
             </label>
+            {% if product_image_choices %}
+              <div class="product-gallery">
+                <p>Product images</p>
+                <div class="product-gallery-grid">
+                  {% for image_choice in product_image_choices %}
+                    <label class="product-gallery-item">
+                      <input
+                        type="radio"
+                        name="selected_original_image"
+                        value="{{ image_choice.value }}"
+                        {% if image_choice.value == selected_original_image or loop.first %}checked{% endif %}
+                      />
+                      <img src="{{ image_choice.url }}" alt="Product image {{ loop.index }}" loading="lazy" />
+                    </label>
+                  {% endfor %}
+                </div>
+                <p class="muted">Pick the original image to use for Pinterest, Instagram, and video generation.</p>
+              </div>
+            {% endif %}
             <label>
               <span>Product title</span>
               <input
@@ -773,4 +801,28 @@
       </main>
     </div>
   </body>
+  <script>
+    (function () {
+      const boostInput = document.querySelector('textarea[name="youtube_boost_prompt"]');
+      const durationInput = document.querySelector(
+        'input[type="number"][name="video_duration_seconds"]'
+      );
+
+      function syncField(name, value) {
+        document.querySelectorAll(`input[type="hidden"][name="${name}"]`).forEach((input) => {
+          input.value = value || "";
+        });
+      }
+
+      if (boostInput) {
+        syncField("youtube_boost_prompt", boostInput.value);
+        boostInput.addEventListener("input", () => syncField("youtube_boost_prompt", boostInput.value));
+      }
+
+      if (durationInput) {
+        syncField("video_duration_seconds", durationInput.value);
+        durationInput.addEventListener("input", () => syncField("video_duration_seconds", durationInput.value));
+      }
+    })();
+  </script>
 </html>

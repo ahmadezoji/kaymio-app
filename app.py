@@ -247,6 +247,9 @@ def render_home_view(
             platform_states = state_entry.get("platforms") or {}
         else:
             platform_states = {}
+    product_image_choices, selected_original_image = build_product_image_choices(
+        form_values or {}, preview_payload, product_id
+    )
     return render_template(
         "home.html",
         markets=MARKET_OPTIONS,
@@ -255,6 +258,8 @@ def render_home_view(
         result=pinterest_result,
         website_result=website_result,
         platform_states=platform_states or {},
+        product_image_choices=product_image_choices,
+        selected_original_image=selected_original_image,
     )
 
 
@@ -489,6 +494,99 @@ def resolve_source_image_urls(saved_state: Dict[str, Any]) -> List[str]:
     return assets.get("source_image_urls") or assets.get("amazon_image_urls") or []
 
 
+def build_product_image_choices(
+    form_values: Dict[str, str],
+    preview_payload: Optional[Dict[str, Any]],
+    product_id: str,
+) -> tuple[List[Dict[str, str]], str]:
+    saved_state = get_product_state(product_id) if product_id else {}
+    source_urls = resolve_source_image_urls(saved_state)
+    choices: List[Dict[str, str]] = []
+    seen = set()
+    selected_value = form_values.get("selected_original_image", "")
+    if source_urls:
+        for url in source_urls:
+            if url and url not in seen:
+                choices.append({"value": f"url:{url}", "url": url})
+                seen.add(url)
+        if choices and selected_value not in {choice["value"] for choice in choices}:
+            selected_value = choices[0]["value"]
+        return choices, selected_value
+    candidate_relative = ""
+    if preview_payload:
+        candidate_relative = preview_payload.get("original_image_path", "")
+    if not candidate_relative:
+        candidate_relative = form_values.get("original_image_path", "")
+    for path in resolve_original_image_paths(saved_state, candidate_relative):
+        image_url = url_for("serve_media", filename=path)
+        if image_url not in seen:
+            choices.append({"value": f"path:{path}", "url": image_url})
+            seen.add(image_url)
+    if choices and selected_value not in {choice["value"] for choice in choices}:
+        selected_value = choices[0]["value"]
+    return choices, selected_value
+
+
+def resolve_selected_original_image(
+    raw_form_values: Dict[str, str],
+    form_values: Dict[str, str],
+    product_id: str,
+    preview_payload: Optional[Dict[str, Any]],
+) -> Optional[tuple[str, Optional[bytes]]]:
+    selected = raw_form_values.get("selected_original_image", "")
+    if not selected:
+        return None
+    if selected.startswith("url:"):
+        image_url = selected[4:]
+        if not image_url:
+            return None
+        image_bytes = download_image_bytes(image_url)
+        filename = guess_filename_from_url(image_url)
+        image_relative = save_original_image(image_bytes, filename)
+        form_values["original_image_path"] = image_relative
+        update_product_state(
+            product_id,
+            form_values=form_values,
+            assets={"original_image_path": image_relative},
+        )
+        if preview_payload is not None:
+            preview_payload["original_image_path"] = image_relative
+        return image_relative, image_bytes
+    if selected.startswith("path:"):
+        image_relative = selected[5:]
+        if resolve_storage_path(image_relative):
+            form_values["original_image_path"] = image_relative
+            if preview_payload is not None:
+                preview_payload["original_image_path"] = image_relative
+            return image_relative, None
+    return None
+
+
+def resolve_original_image_paths(
+    saved_state: Dict[str, Any],
+    fallback_path: Optional[str] = None,
+) -> List[str]:
+    assets = (saved_state.get("assets") or {}) if saved_state else {}
+    candidates: List[str] = []
+    if fallback_path:
+        candidates.append(fallback_path)
+    stored_paths = assets.get("original_image_paths") or []
+    if isinstance(stored_paths, list):
+        candidates.extend(path for path in stored_paths if path)
+    stored_single = assets.get("original_image_path")
+    if stored_single:
+        candidates.append(stored_single)
+    resolved: List[str] = []
+    seen = set()
+    for path in candidates:
+        if not path or path in seen:
+            continue
+        if resolve_storage_path(path):
+            resolved.append(path)
+            seen.add(path)
+    return resolved
+
+
 def ensure_downloaded_original_image(
     product_id: str,
     form_values: Dict[str, str],
@@ -516,6 +614,39 @@ def ensure_downloaded_original_image(
     return image_relative, image_bytes
 
 
+def ensure_downloaded_original_images(
+    product_id: str,
+    form_values: Dict[str, str],
+    saved_state: Dict[str, Any],
+    preview_payload: Optional[Dict[str, Any]] = None,
+) -> List[str]:
+    image_urls = resolve_source_image_urls(saved_state)
+    if not image_urls:
+        return []
+    image_paths: List[str] = []
+    for index, image_url in enumerate(image_urls):
+        try:
+            image_bytes = download_image_bytes(image_url)
+        except Exception as exc:
+            app.logger.warning("Source image download failed for %s: %s", image_url, exc)
+            continue
+        filename = guess_filename_from_url(image_url, default_name=f"amazon_{index + 1}")
+        image_relative = save_original_image(image_bytes, filename)
+        image_paths.append(image_relative)
+    if not image_paths:
+        return []
+    primary_image = image_paths[0]
+    form_values["original_image_path"] = primary_image
+    update_product_state(
+        product_id,
+        form_values=form_values,
+        assets={"original_image_path": primary_image, "original_image_paths": image_paths},
+    )
+    if preview_payload is not None:
+        preview_payload["original_image_path"] = primary_image
+    return image_paths
+
+
 def extract_form_defaults(raw_form_values: Dict[str, str]) -> Dict[str, str]:
     defaults = {
         key: raw_form_values.get(key, "")
@@ -531,6 +662,7 @@ def extract_form_defaults(raw_form_values: Dict[str, str]) -> Dict[str, str]:
             "website_boost_prompt",
             "youtube_boost_prompt",
             "use_affiliate_link",
+            "selected_original_image",
         )
     }
     defaults["website_boost_prompt"] = (
@@ -834,12 +966,25 @@ def generate_pinterest():
             flash(message, "error")
         return render_home_view(form_values, product_id=product_id)
 
+    selected_source = None
+    if raw_form_values.get("selected_original_image"):
+        try:
+            selected_source = resolve_selected_original_image(
+                raw_form_values, form_values, product_id, preview_payload=None
+            )
+        except Exception as exc:
+            app.logger.exception("Selected image download failed")
+            flash(f"Unable to download the selected image: {exc}", "error")
+            return render_home_view(form_values, product_id=product_id)
+
     if image_file is not None and image_file.filename:
         original_bytes = image_file.read()
         if not original_bytes:
             flash("The uploaded image appears to be empty.", "error")
             return render_home_view(form_values, product_id=product_id)
         original_image_path = save_original_image(original_bytes, image_file.filename)
+    elif selected_source:
+        original_image_path, original_bytes = selected_source
     else:
         if not original_image_path:
             try:
@@ -861,6 +1006,12 @@ def generate_pinterest():
             except Exception:
                 flash("Unable to load the previously uploaded image. Please upload again.", "error")
                 return render_home_view(form_values, product_id=product_id)
+    if original_image_path and original_bytes is None:
+        try:
+            original_bytes = load_stored_image(original_image_path)
+        except Exception:
+            flash("Unable to load the selected image. Please try again.", "error")
+            return render_home_view(form_values, product_id=product_id)
 
     raw_title = form_values.get("title", "")
     raw_description = form_values.get("description", "")
@@ -1100,6 +1251,17 @@ def generate_instagram_image():
     )
 
     base_bytes = None
+    if raw_form_values.get("selected_original_image"):
+        try:
+            selected_source = resolve_selected_original_image(
+                raw_form_values, form_values, product_id, preview_payload
+            )
+        except Exception as exc:
+            app.logger.exception("Selected image download failed")
+            flash(f"Unable to download the selected image: {exc}", "error")
+            return render_home_view(form_values, preview_payload, product_id=product_id)
+        if selected_source:
+            base_image_path, base_bytes = selected_source
     if not base_image_path:
         try:
             downloaded = ensure_downloaded_original_image(
@@ -1269,21 +1431,28 @@ def publish_website():
         return assets.get("original_image_path") or assets.get("generated_image_path")
 
     image_relative = _resolve_image_path()
-    resolved_image_path = resolve_storage_path(image_relative) if image_relative else None
-    if not resolved_image_path:
+    image_paths = resolve_original_image_paths(saved_state, image_relative)
+    if not image_paths:
         try:
-            downloaded = ensure_downloaded_original_image(
+            image_paths = ensure_downloaded_original_images(
                 product_id, form_values, saved_state, preview_payload
             )
         except Exception as exc:
             app.logger.exception("Source image download failed")
-            flash(f"Unable to download product image: {exc}", "error")
-        if downloaded:
-            image_relative, _ = downloaded
-            resolved_image_path = resolve_storage_path(image_relative)
-    if not resolved_image_path:
+            flash(f"Unable to download product images: {exc}", "error")
+            image_paths = []
+        if image_paths:
+            image_paths = [path for path in image_paths if resolve_storage_path(path)]
+    if not image_paths:
         flash("Upload an original product image before publishing to Kaymio.", "error")
         return render_home_view(form_values, preview_payload, product_id=product_id)
+    image_relative = image_paths[0]
+    resolved_image_path = resolve_storage_path(image_relative)
+    additional_image_paths = []
+    for path in image_paths[1:]:
+        resolved = resolve_storage_path(path)
+        if resolved:
+            additional_image_paths.append(resolved)
 
     if not preview_payload:
         preview_payload = {
@@ -1322,6 +1491,7 @@ def publish_website():
             tags=tags,
             affiliate_link=affiliate_link,
             category_id=category_id,
+            images=additional_image_paths,
         )
     except Exception as exc:
         app.logger.exception("WooCommerce publish failed")
@@ -1382,6 +1552,17 @@ def generate_platform_video(platform: str):
     )
 
     base_bytes = None
+    if raw_form_values.get("selected_original_image"):
+        try:
+            selected_source = resolve_selected_original_image(
+                raw_form_values, form_values, product_id, preview_payload
+            )
+        except Exception as exc:
+            app.logger.exception("Selected image download failed")
+            flash(f"Unable to download the selected image: {exc}", "error")
+            return render_home_view(form_values, preview_payload, product_id=product_id)
+        if selected_source:
+            base_image_path, base_bytes = selected_source
     if not base_image_path:
         try:
             downloaded = ensure_downloaded_original_image(
@@ -1407,18 +1588,22 @@ def generate_platform_video(platform: str):
     title = raw_form_values.get("title") or form_values.get("title") or "this product"
     prompt_templates = {
         "youtube": (
-            "Create a vertical YouTube Short for '{title}' with upbeat pacing, dynamic camera moves, "
-            "and a CTA to tap the affiliate link, but do not add any on-screen text—the output must be pure video. "
+            "Create a vertical YouTube Short for 'this product' with upbeat pacing, "
+            " do not add any on-screen text—the output must be pure video. "
             "Do not include any voiceover or speech; choose and add suitable music only."
         ),
         "tiktok": (
-            "Create a TikTok-ready vertical video for '{title}' using trendy motion graphics, quick cuts, "
+            "Create a TikTok-ready vertical video for 'this product', "
             "and camera moves that highlight the wow factor, but keep the footage clean with no text or overlays. "
             "Do not include any voiceover or speech; choose and add suitable music only."
         ),
     }
     prompt = prompt_templates[target].format(title=title)
-    boost_prompt = raw_form_values.get("youtube_boost_prompt") or form_values.get("youtube_boost_prompt", "")
+    boost_prompt = (
+        raw_form_values.get("youtube_boost_prompt")
+        or (preview_payload.get("youtube_boost_prompt") if preview_payload else "")
+        or (saved_state.get("form_values") or {}).get("youtube_boost_prompt", "")
+    )
     if target == "youtube":
         form_values["youtube_boost_prompt"] = boost_prompt
         if boost_prompt:
