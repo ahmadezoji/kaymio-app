@@ -1552,6 +1552,17 @@ def generate_platform_video(platform: str):
     )
 
     base_bytes = None
+    if raw_form_values.get("selected_original_image"):
+        try:
+            selected_source = resolve_selected_original_image(
+                raw_form_values, form_values, product_id, preview_payload
+            )
+        except Exception as exc:
+            app.logger.exception("Selected image download failed")
+            flash(f"Unable to download the selected image: {exc}", "error")
+            return render_home_view(form_values, preview_payload, product_id=product_id)
+        if selected_source:
+            base_image_path, base_bytes = selected_source
     if not base_image_path:
         try:
             downloaded = ensure_downloaded_original_image(
@@ -1577,18 +1588,22 @@ def generate_platform_video(platform: str):
     title = raw_form_values.get("title") or form_values.get("title") or "this product"
     prompt_templates = {
         "youtube": (
-            "Create a vertical YouTube Short for '{title}' with upbeat pacing, dynamic camera moves, "
-            "and a CTA to tap the affiliate link, but do not add any on-screen text—the output must be pure video. "
+            "Create a vertical YouTube Short for 'this product' with upbeat pacing, "
+            " do not add any on-screen text—the output must be pure video. "
             "Do not include any voiceover or speech; choose and add suitable music only."
         ),
         "tiktok": (
-            "Create a TikTok-ready vertical video for '{title}' using trendy motion graphics, quick cuts, "
+            "Create a TikTok-ready vertical video for 'this product', "
             "and camera moves that highlight the wow factor, but keep the footage clean with no text or overlays. "
             "Do not include any voiceover or speech; choose and add suitable music only."
         ),
     }
     prompt = prompt_templates[target].format(title=title)
-    boost_prompt = raw_form_values.get("youtube_boost_prompt") or form_values.get("youtube_boost_prompt", "")
+    boost_prompt = (
+        raw_form_values.get("youtube_boost_prompt")
+        or (preview_payload.get("youtube_boost_prompt") if preview_payload else "")
+        or (saved_state.get("form_values") or {}).get("youtube_boost_prompt", "")
+    )
     if target == "youtube":
         form_values["youtube_boost_prompt"] = boost_prompt
         if boost_prompt:
