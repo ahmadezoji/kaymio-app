@@ -86,6 +86,7 @@ def _hydrate_preview(preview: Optional[Dict[str, Any]]) -> Optional[Dict[str, An
             bytes_data = load_stored_media(image_path)
             hydrated["image_data"] = base64.b64encode(bytes_data).decode("utf-8")
             hydrated.setdefault("generated_image_url", url_for("serve_media", filename=image_path))
+            hydrated.setdefault("generated_image_download_url", url_for("download_media", filename=image_path))
             hydrated.setdefault(
                 "image_public_url", url_for("serve_media", filename=image_path, _external=True)
             )
@@ -97,6 +98,7 @@ def _hydrate_preview(preview: Optional[Dict[str, Any]]) -> Optional[Dict[str, An
             insta_bytes = load_stored_media(insta_path)
             hydrated["instagram_image_data"] = base64.b64encode(insta_bytes).decode("utf-8")
             hydrated.setdefault("instagram_image_url", url_for("serve_media", filename=insta_path))
+            hydrated.setdefault("instagram_image_download_url", url_for("download_media", filename=insta_path))
             hydrated.setdefault(
                 "instagram_image_public_url", url_for("serve_media", filename=insta_path, _external=True)
             )
@@ -105,6 +107,7 @@ def _hydrate_preview(preview: Optional[Dict[str, Any]]) -> Optional[Dict[str, An
     video_path = hydrated.get("generated_video_path")
     if video_path:
         hydrated.setdefault("video_url", url_for("serve_media", filename=video_path))
+        hydrated.setdefault("video_download_url", url_for("download_media", filename=video_path))
         hydrated.setdefault(
             "video_public_url", url_for("serve_media", filename=video_path, _external=True)
         )
@@ -277,6 +280,10 @@ def build_render_payload(entry: Dict[str, Any]):
                 preview_payload["generated_video_path"] = stored_video_path
             if stored_video_path and not preview_payload.get("video_url"):
                 preview_payload["video_url"] = url_for("serve_media", filename=stored_video_path)
+            if stored_video_path and not preview_payload.get("video_download_url"):
+                preview_payload["video_download_url"] = url_for(
+                    "download_media", filename=stored_video_path
+                )
             if stored_video_path and not preview_payload.get("video_public_url"):
                 preview_payload["video_public_url"] = url_for(
                     "serve_media", filename=stored_video_path, _external=True
@@ -738,15 +745,20 @@ def rebuild_preview_payload(raw_form_values: Dict[str, str]):
     image_relative = raw_form_values.get("generated_image_path", "")
     if image_relative:
         payload["generated_image_url"] = url_for("serve_media", filename=image_relative)
+        payload["generated_image_download_url"] = url_for(
+            "download_media", filename=image_relative
+        )
         payload["image_public_url"] = url_for("serve_media", filename=image_relative, _external=True)
     
     video_path = raw_form_values.get("generated_video_path", "")
     payload["generated_video_path"] = video_path
     if video_path:
         payload["video_url"] = url_for("serve_media", filename=video_path)
+        payload["video_download_url"] = url_for("download_media", filename=video_path)
         payload["video_public_url"] = url_for("serve_media", filename=video_path, _external=True)
     else:
         payload["video_url"] = ""
+        payload["video_download_url"] = ""
         payload["video_public_url"] = ""
 
     instagram_image_path = raw_form_values.get("instagram_image_path", "")
@@ -755,16 +767,21 @@ def rebuild_preview_payload(raw_form_values: Dict[str, str]):
         try:
             ig_bytes = load_stored_media(instagram_image_path)
             payload["instagram_image_url"] = url_for("serve_media", filename=instagram_image_path)
+            payload["instagram_image_download_url"] = url_for(
+                "download_media", filename=instagram_image_path
+            )
             payload["instagram_image_public_url"] = url_for(
                 "serve_media", filename=instagram_image_path, _external=True
             )
             payload["instagram_image_data"] = base64.b64encode(ig_bytes).decode("utf-8")
         except Exception:
             payload["instagram_image_url"] = ""
+            payload["instagram_image_download_url"] = ""
             payload["instagram_image_public_url"] = ""
             payload["instagram_image_data"] = ""
     else:
         payload["instagram_image_url"] = ""
+        payload["instagram_image_download_url"] = ""
         payload["instagram_image_public_url"] = ""
         payload["instagram_image_data"] = ""
 
@@ -778,6 +795,15 @@ def serve_media(filename: str):
         abort(404)
     relative_path = safe_path.relative_to(STORAGE_ROOT)
     return send_from_directory(STORAGE_ROOT, relative_path.as_posix())
+
+
+@app.route("/media-download/<path:filename>")
+def download_media(filename: str):
+    safe_path = (STORAGE_ROOT / filename).resolve()
+    if not str(safe_path).startswith(str(STORAGE_ROOT.resolve())) or not safe_path.exists():
+        abort(404)
+    relative_path = safe_path.relative_to(STORAGE_ROOT)
+    return send_from_directory(STORAGE_ROOT, relative_path.as_posix(), as_attachment=True)
 
 
 @app.route("/", methods=["GET"])

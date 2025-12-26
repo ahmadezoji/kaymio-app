@@ -398,6 +398,11 @@
                   <p class="muted">Publish to Kaymio website first to unlock Pinterest automation.</p>
                   <button type="button" class="ghost-btn" disabled>Regenerate visual</button>
                   <button type="button" class="primary" disabled>Confirm &amp; publish to Pinterest</button>
+                  {% if preview_data.generated_image_download_url %}
+                    <a class="ghost-btn" href="{{ preview_data.generated_image_download_url }}" download>
+                      Download pin image
+                    </a>
+                  {% endif %}
                 {% elif pinterest_published %}
                   <p class="muted">This SKU is already live on Pinterest. Reset the workflow to create another pin.</p>
                   {% if pinterest_live_url %}
@@ -406,6 +411,11 @@
                       </p>
                     {% endif %}
                     <button type="button" class="primary" {% if pinterest_published %}disabled{% endif %}>Published to Pinterest</button>
+                    {% if preview_data.generated_image_download_url %}
+                      <a class="ghost-btn" href="{{ preview_data.generated_image_download_url }}" download>
+                        Download pin image
+                      </a>
+                    {% endif %}
                   {% else %}
                     <form method="post" action="{{ url_for('generate_pinterest') }}">
                       <input type="hidden" name="market" value="{{ values.get('market', '') }}" />
@@ -436,6 +446,11 @@
                       </label>
                       <button type="submit" class="primary">Confirm &amp; publish to Pinterest</button>
                     </form>
+                    {% if preview_data.generated_image_download_url %}
+                      <a class="ghost-btn" href="{{ preview_data.generated_image_download_url }}" download>
+                        Download pin image
+                      </a>
+                    {% endif %}
                 {% endif %}
               </div>
             </div>
@@ -522,6 +537,14 @@
             <div class="preview-actions">
               {% if platforms_locked %}
                 <p class="muted">Publish to Kaymio website first to unlock Instagram workflows.</p>
+              {% endif %}
+              {% if has_preview %}
+                {% set instagram_download_url = preview_data.instagram_image_download_url or preview_data.generated_image_download_url %}
+                {% if instagram_download_url %}
+                  <a class="ghost-btn" href="{{ instagram_download_url }}" download>
+                    Download Instagram image
+                  </a>
+                {% endif %}
               {% endif %}
               {% if has_preview %}
                 <form method="post" action="{{ url_for('generate_instagram_image') }}">
@@ -635,6 +658,11 @@
             <div class="preview-actions">
               {% if platforms_locked %}
                 <p class="muted">Publish to Kaymio website first to unlock YouTube automation.</p>
+              {% endif %}
+              {% if preview_data.video_download_url %}
+                <a class="ghost-btn" href="{{ preview_data.video_download_url }}" download>
+                  Download YouTube Short
+                </a>
               {% endif %}
               {% if has_preview %}
                 <form method="post" action="{{ url_for('generate_platform_video', platform='youtube') }}">
