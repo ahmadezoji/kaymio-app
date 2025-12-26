@@ -8,6 +8,7 @@ copy into your environment (.env or host secrets manager).
 """
 from __future__ import annotations
 
+import argparse
 import os
 import sys
 import urllib.parse
@@ -60,15 +61,23 @@ def exchange_code_for_tokens(
     return resp.json()
 
 
-def main() -> int:
-    try:
-        client_id = _require_env("YOUTUBE_CLIENT_ID")
-        client_secret = _require_env("YOUTUBE_CLIENT_SECRET")
-    except RuntimeError as exc:
-        print(exc, file=sys.stderr)
-        return 1
+def write_access_token_to_file(access_token: str):
+    """Write the access token to a file."""
+    with open("youtube_access_token.txt", "w") as token_file:
+        token_file.write(access_token)
 
-    redirect_uri = os.getenv("YOUTUBE_REDIRECT_URI", DEFAULT_REDIRECT_URI)
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Generate YouTube OAuth tokens.")
+    parser.add_argument("--client-id", required=True, help="YouTube API client ID")
+    parser.add_argument("--client-secret", required=True, help="YouTube API client secret")
+    parser.add_argument("--redirect-uri", default=DEFAULT_REDIRECT_URI, help="Redirect URI (optional)")
+    args = parser.parse_args()
+
+    client_id = args.client_id
+    client_secret = args.client_secret
+    redirect_uri = args.redirect_uri
+
     auth_url = build_auth_url(client_id, redirect_uri)
     print("\nVisit this URL in your browser to authorize YouTube uploads:\n")
     print(auth_url)
@@ -92,11 +101,17 @@ def main() -> int:
         print(exc, file=sys.stderr)
         return 1
 
+    access_token = token_payload.get("access_token", "")
+    refresh_token = token_payload.get("refresh_token", "")
     print("\nSuccess! Store these values in your environment (.env on the server):\n")
-    print(f"YOUTUBE_ACCESS_TOKEN={token_payload.get('access_token', '')}")
-    print(f"YOUTUBE_REFRESH_TOKEN={token_payload.get('refresh_token', '')}")
+    print(f"YOUTUBE_ACCESS_TOKEN={access_token}")
+    print(f"YOUTUBE_REFRESH_TOKEN={refresh_token}")
     print(f"Expires in: {token_payload.get('expires_in', 'unknown')} seconds")
     print("\nOnly the refresh token needs to persist long term; the service will refresh access tokens automatically.")
+
+    # Write the access token to a file
+    write_access_token_to_file(access_token)
+    print("\nAccess token written to youtube_access_token.txt")
     return 0
 
 

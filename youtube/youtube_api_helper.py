@@ -13,9 +13,13 @@ TOKEN_URL = "https://oauth2.googleapis.com/token"
 
 
 def _get_youtube_token() -> str:
-    token = os.getenv("YOUTUBE_ACCESS_TOKEN")
-    if token:
-        return token
+    try:
+        with open("youtube_access_token.txt", "r") as token_file:
+            token = token_file.read().strip()
+            if token:
+                return token
+    except FileNotFoundError:
+        logger.error("Access token file not found. Ensure youtube_access_token.txt exists.")
     return refresh_youtube_access_token()
 
 
