@@ -545,6 +545,29 @@
                 <p class="muted">Publish to Kaymio website first to unlock Instagram workflows.</p>
               {% endif %}
               <div class="action-group">
+                <h3>Boost prompt</h3>
+                <form method="post" action="{{ url_for('generate_instagram_image') }}">
+                  {% set instagram_boost_pref = values.get('instagram_boost_prompt', '') %}
+                  {% if not instagram_boost_pref %}
+                    {% set instagram_boost_pref = preview_data.instagram_boost_prompt | default('', true) %}
+                  {% endif %}
+                  <label>
+                    <span>Boost prompt</span>
+                    <textarea
+                      name="instagram_boost_prompt"
+                      placeholder="Add safe content guidance (no logos, brand-safe styling cues, etc.)"
+                      rows="3"
+                      {% if instagram_feed_published or instagram_story_published or platforms_locked %}disabled{% endif %}
+                    >{{ instagram_boost_pref }}</textarea>
+                  </label>
+                  <p class="muted">Used for Instagram visuals and Reels generation.</p>
+                  {{ preview_hidden_inputs(preview_data, values) }}
+                  <button type="submit" class="ghost-btn" {% if instagram_feed_published or instagram_story_published or platforms_locked %}disabled{% endif %}>
+                    Save boost prompt
+                  </button>
+                </form>
+              </div>
+              <div class="action-group">
                 <h3>Create visuals</h3>
                 {% if has_preview %}
                   {% set instagram_download_url = preview_data.instagram_image_download_url or preview_data.generated_image_download_url %}
@@ -641,25 +664,12 @@
                 {% endif %}
                 {% if has_preview %}
                   <form method="post" action="{{ url_for('generate_platform_video', platform='instagram') }}">
-                    {% set instagram_boost_pref = values.get('instagram_boost_prompt', '') %}
-                    {% if not instagram_boost_pref %}
-                      {% set instagram_boost_pref = preview_data.instagram_boost_prompt | default('', true) %}
-                    {% endif %}
-                    <label>
-                      <span>Boost prompt</span>
-                      <textarea
-                        name="instagram_boost_prompt"
-                        placeholder="Add safe content guidance (no logos, brand-safe styling cues, etc.)"
-                        rows="3"
-                        {% if instagram_reel_published or platforms_locked %}disabled{% endif %}
-                      >{{ instagram_boost_pref }}</textarea>
-                    </label>
-                    <p class="muted">Tip: add wardrobe, lighting, or mood references to guide the Reel.</p>
-                    {{ preview_hidden_inputs(preview_data, values) }}
-                    <button type="submit" class="ghost-btn" {% if instagram_reel_published or platforms_locked %}disabled{% endif %}>
-                      Generate Instagram Reel
-                    </button>
-                  </form>
+                  <p class="muted">Tip: add wardrobe, lighting, or mood references to guide the Reel.</p>
+                  {{ preview_hidden_inputs(preview_data, values) }}
+                  <button type="submit" class="ghost-btn" {% if instagram_reel_published or platforms_locked %}disabled{% endif %}>
+                    Generate Instagram Reel
+                  </button>
+                </form>
                 {% else %}
                   <p class="muted">Generate a creative first to unlock Reels video generation.</p>
                 {% endif %}

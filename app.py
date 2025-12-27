@@ -1329,8 +1329,19 @@ def generate_instagram_image():
     context_prompt = build_prompt_context({**form_values, "title": raw_form_values.get("title", "")})
     inst_prompt = (
         "Design a high-performing Instagram {variant} visual with trending color grading, "
-        "dynamic lighting, and a magnetic focus on the hero product, but do not add any on-screen text—the output must be a pure image."
+        "dynamic lighting, and a magnetic focus on the hero product. "
+        "Include a short, tasteful CTA on the image (e.g., \"Shop now\", \"Tap to learn more\", \"Limited drop\"). "
+        "Do not include any URLs or affiliate links in the text."
     ).format(variant=variant_label)
+    boost_prompt = (
+        raw_form_values.get("instagram_boost_prompt")
+        or (preview_payload.get("instagram_boost_prompt") if preview_payload else "")
+        or (saved_state.get("form_values") or {}).get("instagram_boost_prompt", "")
+    )
+    if boost_prompt:
+        inst_prompt = (
+            f"{inst_prompt}\n\nAdditional creator guidance (safe content details): {boost_prompt.strip()}"
+        )
 
     try:
         instagram_image = edit_image(
