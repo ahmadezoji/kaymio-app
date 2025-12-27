@@ -28,6 +28,11 @@
         name="youtube_boost_prompt"
         value="{{ (values.get('youtube_boost_prompt') or preview.youtube_boost_prompt or '') | e }}"
       />
+      <input
+        type="hidden"
+        name="instagram_boost_prompt"
+        value="{{ (values.get('instagram_boost_prompt') or preview.instagram_boost_prompt or '') | e }}"
+      />
       <input type="hidden" name="use_affiliate_link_pref" value="{{ values.get('use_affiliate_link', '0') | e }}" />
       <input type="hidden" name="tags" value="{{ preview.tags_payload | e }}" />
       <input type="hidden" name="generated_image_path" value="{{ preview.generated_image_path | e }}" />
@@ -105,6 +110,7 @@
         {% set has_saved_image = preview_data.original_image_path or values.get('original_image_path') %}
         {% set instagram_feed_published = platform_states.get('instagram_feed', {}).get('status') == 'published' %}
         {% set instagram_story_published = platform_states.get('instagram_story', {}).get('status') == 'published' %}
+        {% set instagram_reel_published = platform_states.get('instagram_reel', {}).get('status') == 'published' %}
         {% set youtube_published = platform_states.get('youtube', {}).get('status') == 'published' %}
         {% set tiktok_published = platform_states.get('tiktok', {}).get('status') == 'published' %}
         <form method="post" action="{{ url_for('reset_platform') }}" class="card add-card">
@@ -534,94 +540,161 @@
                 </div>
               {% endif %}
             </div>
-            <div class="preview-actions">
+            <div class="preview-actions instagram-actions">
               {% if platforms_locked %}
                 <p class="muted">Publish to Kaymio website first to unlock Instagram workflows.</p>
               {% endif %}
-              {% if has_preview %}
-                {% set instagram_download_url = preview_data.instagram_image_download_url or preview_data.generated_image_download_url %}
-                {% if instagram_download_url %}
-                  <a class="ghost-btn" href="{{ instagram_download_url }}" download>
-                    Download Instagram image
-                  </a>
+              <div class="action-group">
+                <h3>Create visuals</h3>
+                {% if has_preview %}
+                  {% set instagram_download_url = preview_data.instagram_image_download_url or preview_data.generated_image_download_url %}
+                  {% if instagram_download_url %}
+                    <a class="ghost-btn" href="{{ instagram_download_url }}" download>
+                      Download Instagram image
+                    </a>
+                  {% endif %}
+                  <form method="post" action="{{ url_for('generate_instagram_image') }}">
+                    {{ preview_hidden_inputs(preview_data, values) }}
+                    <input type="hidden" name="instagram_variant" value="feed" />
+                    <button
+                      type="submit"
+                      class="ghost-btn"
+                      {% if instagram_feed_published or platforms_locked %}disabled{% endif %}
+                    >
+                      Generate feed visual
+                    </button>
+                  </form>
+                  <form method="post" action="{{ url_for('generate_instagram_image') }}">
+                    {{ preview_hidden_inputs(preview_data, values) }}
+                    <input type="hidden" name="instagram_variant" value="story" />
+                    <button
+                      type="submit"
+                      class="ghost-btn"
+                      {% if instagram_story_published or platforms_locked %}disabled{% endif %}
+                    >
+                      Generate story visual
+                    </button>
+                  </form>
+                {% else %}
+                  <p class="muted">Generate visuals to unlock Instagram-specific formats.</p>
                 {% endif %}
-              {% endif %}
-              {% if has_preview %}
-                <form method="post" action="{{ url_for('generate_instagram_image') }}">
+              </div>
+              <div class="action-group">
+                <h3>Publish feed or story</h3>
+                <form method="post" action="{{ url_for('publish_instagram') }}">
                   {{ preview_hidden_inputs(preview_data, values) }}
-                  <input type="hidden" name="instagram_variant" value="feed" />
-                  <button
-                    type="submit"
-                    class="ghost-btn"
-                    {% if instagram_feed_published or platforms_locked %}disabled{% endif %}
-                  >
-                    Generate feed visual
-                  </button>
+                  <input type="hidden" name="use_affiliate_link" value="0" />
+                  <label class="checkbox">
+                    <input
+                      type="checkbox"
+                      name="use_affiliate_link"
+                      value="1"
+                      {% if use_affiliate_checked %}checked{% endif %}
+                      {% if platforms_locked %}disabled{% endif %}
+                    />
+                    <span>Use affiliate link</span>
+                  </label>
+                  <div class="button-row">
+                    <button
+                      type="submit"
+                      class="primary"
+                      name="target"
+                      value="feed"
+                      {% if instagram_feed_published or platforms_locked %}disabled{% endif %}
+                    >
+                      Publish to Instagram feed
+                    </button>
+                    <button
+                      type="submit"
+                      class="ghost-btn"
+                      name="target"
+                      value="story"
+                      {% if instagram_story_published or platforms_locked %}disabled{% endif %}
+                    >
+                      Share as story
+                    </button>
+                  </div>
+                  {% if instagram_feed_published or instagram_story_published %}
+                    <p class="muted">
+                      {% if instagram_feed_published and instagram_story_published %}
+                        Instagram feed and story already published.
+                      {% elif instagram_feed_published %}
+                        Instagram feed already published.
+                      {% else %}
+                        Instagram story already published.
+                      {% endif %}
+                    </p>
+                  {% endif %}
+                  {% if not has_preview %}
+                    <p class="muted">Publishing without a generated creative may fail until assets exist.</p>
+                  {% elif platforms_locked %}
+                    <p class="muted">Finish publishing to Kaymio website before posting on Instagram.</p>
+                  {% endif %}
                 </form>
-                <form method="post" action="{{ url_for('generate_instagram_image') }}">
-                  {{ preview_hidden_inputs(preview_data, values) }}
-                  <input type="hidden" name="instagram_variant" value="story" />
-                  <button
-                    type="submit"
-                    class="ghost-btn"
-                    {% if instagram_story_published or platforms_locked %}disabled{% endif %}
-                  >
-                    Generate story visual
-                  </button>
-                </form>
-              {% else %}
-                <p class="muted">Generate visuals to unlock Instagram-specific formats.</p>
-              {% endif %}
-              <form method="post" action="{{ url_for('publish_instagram') }}">
-                {{ preview_hidden_inputs(preview_data, values) }}
-                <input type="hidden" name="use_affiliate_link" value="0" />
-                <label class="checkbox">
-                  <input
-                    type="checkbox"
-                    name="use_affiliate_link"
-                    value="1"
-                    {% if use_affiliate_checked %}checked{% endif %}
-                    {% if platforms_locked %}disabled{% endif %}
-                  />
-                  <span>Use affiliate link</span>
-                </label>
-                <div class="button-row">
-                  <button
-                    type="submit"
-                    class="primary"
-                    name="target"
-                    value="feed"
-                    {% if instagram_feed_published or platforms_locked %}disabled{% endif %}
-                  >
-                    Publish to Instagram feed
-                  </button>
-                  <button
-                    type="submit"
-                    class="ghost-btn"
-                    name="target"
-                    value="story"
-                    {% if instagram_story_published or platforms_locked %}disabled{% endif %}
-                  >
-                    Share as story
-                  </button>
-                </div>
-                {% if instagram_feed_published or instagram_story_published %}
-                  <p class="muted">
-                    {% if instagram_feed_published and instagram_story_published %}
-                      Instagram feed and story already published.
-                    {% elif instagram_feed_published %}
-                      Instagram feed already published.
-                    {% else %}
-                      Instagram story already published.
+              </div>
+              <div class="action-group">
+                <h3>Reels</h3>
+                {% if preview_data.video_url %}
+                  <video controls class="video-preview" src="{{ preview_data.video_url }}"></video>
+                {% else %}
+                  <p class="muted">Generate a Reel-ready video to unlock publishing.</p>
+                {% endif %}
+                {% if has_preview %}
+                  <form method="post" action="{{ url_for('generate_platform_video', platform='instagram') }}">
+                    {% set instagram_boost_pref = values.get('instagram_boost_prompt', '') %}
+                    {% if not instagram_boost_pref %}
+                      {% set instagram_boost_pref = preview_data.instagram_boost_prompt | default('', true) %}
                     {% endif %}
-                  </p>
+                    <label>
+                      <span>Boost prompt</span>
+                      <textarea
+                        name="instagram_boost_prompt"
+                        placeholder="Add safe content guidance (no logos, brand-safe styling cues, etc.)"
+                        rows="3"
+                        {% if instagram_reel_published or platforms_locked %}disabled{% endif %}
+                      >{{ instagram_boost_pref }}</textarea>
+                    </label>
+                    <p class="muted">Tip: add wardrobe, lighting, or mood references to guide the Reel.</p>
+                    {{ preview_hidden_inputs(preview_data, values) }}
+                    <button type="submit" class="ghost-btn" {% if instagram_reel_published or platforms_locked %}disabled{% endif %}>
+                      Generate Instagram Reel
+                    </button>
+                  </form>
+                {% else %}
+                  <p class="muted">Generate a creative first to unlock Reels video generation.</p>
                 {% endif %}
-                {% if not has_preview %}
-                  <p class="muted">Publishing without a generated creative may fail until assets exist.</p>
-                {% elif platforms_locked %}
-                  <p class="muted">Finish publishing to Kaymio website before posting on Instagram.</p>
+                {% if preview_data.video_url %}
+                  <form method="post" action="{{ url_for('publish_instagram_reel_route') }}">
+                    {{ preview_hidden_inputs(preview_data, values) }}
+                    <input type="hidden" name="use_affiliate_link" value="0" />
+                    <label class="checkbox">
+                      <input
+                        type="checkbox"
+                        name="use_affiliate_link"
+                        value="1"
+                        {% if use_affiliate_checked %}checked{% endif %}
+                        {% if platforms_locked %}disabled{% endif %}
+                      />
+                      <span>Use affiliate link</span>
+                    </label>
+                    <button type="submit" class="primary" {% if instagram_reel_published or platforms_locked %}disabled{% endif %}>
+                      Publish Instagram Reel
+                    </button>
+                  </form>
+                  {% if instagram_reel_published %}
+                    <p class="muted">Instagram Reel already published.</p>
+                  {% elif platforms_locked %}
+                    <p class="muted">Finish publishing to Kaymio website before posting on Instagram.</p>
+                  {% endif %}
+                {% else %}
+                  <label class="checkbox">
+                    <input type="checkbox" disabled />
+                    <span>Use affiliate link</span>
+                  </label>
+                  <button type="button" class="primary" disabled>Publish Instagram Reel</button>
+                  <p class="muted">Generate and store a Reel-ready video before publishing.</p>
                 {% endif %}
-              </form>
+              </div>
             </div>
           </div>
         </section>
@@ -832,6 +905,7 @@
   <script>
     (function () {
       const boostInput = document.querySelector('textarea[name="youtube_boost_prompt"]');
+      const instagramBoostInput = document.querySelector('textarea[name="instagram_boost_prompt"]');
       const durationInput = document.querySelector(
         'input[type="number"][name="video_duration_seconds"]'
       );
@@ -845,6 +919,13 @@
       if (boostInput) {
         syncField("youtube_boost_prompt", boostInput.value);
         boostInput.addEventListener("input", () => syncField("youtube_boost_prompt", boostInput.value));
+      }
+
+      if (instagramBoostInput) {
+        syncField("instagram_boost_prompt", instagramBoostInput.value);
+        instagramBoostInput.addEventListener("input", () =>
+          syncField("instagram_boost_prompt", instagramBoostInput.value)
+        );
       }
 
       if (durationInput) {

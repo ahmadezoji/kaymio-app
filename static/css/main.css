@@ -266,16 +266,20 @@ button.primary:disabled {
   box-shadow: none;
 }
 
-button.ghost-btn {
+.ghost-btn {
   border: 1px solid var(--border);
   background: transparent;
   color: var(--muted);
   padding: 0.75rem 1rem;
   border-radius: 0.7rem;
   cursor: pointer;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
-button.ghost-btn[disabled] {
+.ghost-btn[disabled] {
   cursor: not-allowed;
   opacity: 0.65;
 }
@@ -375,6 +379,28 @@ button.ghost-btn[disabled] {
 
 .preview-actions button {
   width: 100%;
+}
+
+.preview-actions .ghost-btn {
+  width: 100%;
+}
+
+.instagram-actions {
+  display: grid;
+  gap: 1rem;
+}
+
+.instagram-actions .action-group {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0.9rem;
+  border-radius: 0.9rem;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.instagram-actions .action-group h3 {
+  margin: 0;
 }
 
 .platform-grid {
