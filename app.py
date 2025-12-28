@@ -521,9 +521,6 @@ def build_product_image_choices(
             if url and url not in seen:
                 choices.append({"value": f"url:{url}", "url": url})
                 seen.add(url)
-        if choices and selected_value not in {choice["value"] for choice in choices}:
-            selected_value = choices[0]["value"]
-        return choices, selected_value
     candidate_relative = ""
     if preview_payload:
         candidate_relative = preview_payload.get("original_image_path", "")
@@ -545,6 +542,7 @@ def resolve_selected_original_image(
     product_id: str,
     preview_payload: Optional[Dict[str, Any]],
 ) -> Optional[tuple[str, Optional[bytes]]]:
+    saved_state = get_product_state(product_id) if product_id else {}
     selected = raw_form_values.get("selected_original_image", "")
     if not selected:
         return None
@@ -559,7 +557,10 @@ def resolve_selected_original_image(
         update_product_state(
             product_id,
             form_values=form_values,
-            assets={"original_image_path": image_relative},
+            assets={
+                "original_image_path": image_relative,
+                "original_image_paths": merge_original_image_paths(saved_state, image_relative),
+            },
         )
         if preview_payload is not None:
             preview_payload["original_image_path"] = image_relative
@@ -568,6 +569,14 @@ def resolve_selected_original_image(
         image_relative = selected[5:]
         if resolve_storage_path(image_relative):
             form_values["original_image_path"] = image_relative
+            update_product_state(
+                product_id,
+                form_values=form_values,
+                assets={
+                    "original_image_path": image_relative,
+                    "original_image_paths": merge_original_image_paths(saved_state, image_relative),
+                },
+            )
             if preview_payload is not None:
                 preview_payload["original_image_path"] = image_relative
             return image_relative, None
@@ -599,6 +608,21 @@ def resolve_original_image_paths(
     return resolved
 
 
+def merge_original_image_paths(
+    saved_state: Dict[str, Any],
+    *paths: Optional[str],
+) -> List[str]:
+    assets = (saved_state.get("assets") or {}) if saved_state else {}
+    existing_paths = assets.get("original_image_paths") or []
+    existing_single = assets.get("original_image_path")
+    candidates: List[str] = []
+    for path in (*paths, existing_single, *existing_paths):
+        if not path or path in candidates:
+            continue
+        candidates.append(path)
+    return candidates
+
+
 def ensure_downloaded_original_image(
     product_id: str,
     form_values: Dict[str, str],
@@ -619,7 +643,10 @@ def ensure_downloaded_original_image(
     update_product_state(
         product_id,
         form_values=form_values,
-        assets={"original_image_path": image_relative},
+        assets={
+            "original_image_path": image_relative,
+            "original_image_paths": merge_original_image_paths(saved_state, image_relative),
+        },
     )
     if preview_payload is not None:
         preview_payload["original_image_path"] = image_relative
@@ -926,6 +953,7 @@ def save_draft():
     raw_form_values = collect_form_values(request.form)
     form_values = extract_form_defaults(raw_form_values)
     product_id = resolve_product_id(form_values)
+    saved_state = get_product_state(product_id) if product_id else {}
 
     if not product_id:
         flash("Provide a SKU or product link before saving your progress.", "error")
@@ -945,6 +973,7 @@ def save_draft():
         form_values["original_image_path"] = original_image_path
         raw_form_values["original_image_path"] = original_image_path
         assets["original_image_path"] = original_image_path
+        assets["original_image_paths"] = merge_original_image_paths(saved_state, original_image_path)
 
     preview_payload = rebuild_preview_payload(raw_form_values)
     update_product_state(
@@ -1190,6 +1219,7 @@ def generate_pinterest():
         },
         assets={
             "original_image_path": original_image_path,
+            "original_image_paths": merge_original_image_paths(saved_state, original_image_path),
             "generated_image_path": generated_image_path,
         },
     )
