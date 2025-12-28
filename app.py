@@ -13,7 +13,11 @@ from flask import Flask, abort, flash, render_template, request, send_from_direc
 
 from amazon.amazon_api import build_affiliate_link, extract_asin, fetch_product_from_canopy
 from gemeni_api_helper import edit_image, generate_video_from_image
-from instagram.instagram_api_helper import publish_instagram_post, publish_instagram_story
+from instagram.instagram_api_helper import (
+    publish_instagram_post,
+    publish_instagram_reel,
+    publish_instagram_story,
+)
 from openai_helper import (
     generate_caption_for_instagram,
     generate_caption_for_tiktok,
@@ -86,6 +90,7 @@ def _hydrate_preview(preview: Optional[Dict[str, Any]]) -> Optional[Dict[str, An
             bytes_data = load_stored_media(image_path)
             hydrated["image_data"] = base64.b64encode(bytes_data).decode("utf-8")
             hydrated.setdefault("generated_image_url", url_for("serve_media", filename=image_path))
+            hydrated.setdefault("generated_image_download_url", url_for("download_media", filename=image_path))
             hydrated.setdefault(
                 "image_public_url", url_for("serve_media", filename=image_path, _external=True)
             )
@@ -97,6 +102,7 @@ def _hydrate_preview(preview: Optional[Dict[str, Any]]) -> Optional[Dict[str, An
             insta_bytes = load_stored_media(insta_path)
             hydrated["instagram_image_data"] = base64.b64encode(insta_bytes).decode("utf-8")
             hydrated.setdefault("instagram_image_url", url_for("serve_media", filename=insta_path))
+            hydrated.setdefault("instagram_image_download_url", url_for("download_media", filename=insta_path))
             hydrated.setdefault(
                 "instagram_image_public_url", url_for("serve_media", filename=insta_path, _external=True)
             )
@@ -105,6 +111,7 @@ def _hydrate_preview(preview: Optional[Dict[str, Any]]) -> Optional[Dict[str, An
     video_path = hydrated.get("generated_video_path")
     if video_path:
         hydrated.setdefault("video_url", url_for("serve_media", filename=video_path))
+        hydrated.setdefault("video_download_url", url_for("download_media", filename=video_path))
         hydrated.setdefault(
             "video_public_url", url_for("serve_media", filename=video_path, _external=True)
         )
@@ -277,6 +284,10 @@ def build_render_payload(entry: Dict[str, Any]):
                 preview_payload["generated_video_path"] = stored_video_path
             if stored_video_path and not preview_payload.get("video_url"):
                 preview_payload["video_url"] = url_for("serve_media", filename=stored_video_path)
+            if stored_video_path and not preview_payload.get("video_download_url"):
+                preview_payload["video_download_url"] = url_for(
+                    "download_media", filename=stored_video_path
+                )
             if stored_video_path and not preview_payload.get("video_public_url"):
                 preview_payload["video_public_url"] = url_for(
                     "serve_media", filename=stored_video_path, _external=True
@@ -307,7 +318,7 @@ def reset_product_platform(product_id: str, platform: str) -> None:
     results = entry.get("results") or {}
 
     if platform == "instagram":
-        for alias in ("instagram_feed", "instagram_story"):
+        for alias in ("instagram_feed", "instagram_story", "instagram_reel"):
             platforms.pop(alias, None)
         for field in (
             "instagram_caption",
@@ -317,6 +328,7 @@ def reset_product_platform(product_id: str, platform: str) -> None:
             "instagram_image_url",
             "instagram_image_public_url",
             "instagram_image_data",
+            "instagram_boost_prompt",
         ):
             preview.pop(field, None)
         assets.pop("instagram_image_path", None)
@@ -661,6 +673,7 @@ def extract_form_defaults(raw_form_values: Dict[str, str]) -> Dict[str, str]:
             "price",
             "website_boost_prompt",
             "youtube_boost_prompt",
+            "instagram_boost_prompt",
             "use_affiliate_link",
             "selected_original_image",
         )
@@ -669,6 +682,12 @@ def extract_form_defaults(raw_form_values: Dict[str, str]) -> Dict[str, str]:
         raw_form_values.get("website_boost_prompt")
         or raw_form_values.get("website_boost_prompt_pref")
         or defaults.get("website_boost_prompt")
+        or ""
+    )
+    defaults["instagram_boost_prompt"] = (
+        raw_form_values.get("instagram_boost_prompt")
+        or raw_form_values.get("instagram_boost_prompt_pref")
+        or defaults.get("instagram_boost_prompt")
         or ""
     )
     prefer_order = [
@@ -727,6 +746,7 @@ def rebuild_preview_payload(raw_form_values: Dict[str, str]):
         "category": raw_form_values.get("category", ""),
         "price": raw_form_values.get("price", ""),
         "website_boost_prompt": raw_form_values.get("website_boost_prompt", ""),
+        "instagram_boost_prompt": raw_form_values.get("instagram_boost_prompt", ""),
         "youtube_boost_prompt": raw_form_values.get("youtube_boost_prompt", ""),
         "use_affiliate_link": (
             raw_form_values.get("use_affiliate_link")
@@ -738,15 +758,20 @@ def rebuild_preview_payload(raw_form_values: Dict[str, str]):
     image_relative = raw_form_values.get("generated_image_path", "")
     if image_relative:
         payload["generated_image_url"] = url_for("serve_media", filename=image_relative)
+        payload["generated_image_download_url"] = url_for(
+            "download_media", filename=image_relative
+        )
         payload["image_public_url"] = url_for("serve_media", filename=image_relative, _external=True)
     
     video_path = raw_form_values.get("generated_video_path", "")
     payload["generated_video_path"] = video_path
     if video_path:
         payload["video_url"] = url_for("serve_media", filename=video_path)
+        payload["video_download_url"] = url_for("download_media", filename=video_path)
         payload["video_public_url"] = url_for("serve_media", filename=video_path, _external=True)
     else:
         payload["video_url"] = ""
+        payload["video_download_url"] = ""
         payload["video_public_url"] = ""
 
     instagram_image_path = raw_form_values.get("instagram_image_path", "")
@@ -755,16 +780,21 @@ def rebuild_preview_payload(raw_form_values: Dict[str, str]):
         try:
             ig_bytes = load_stored_media(instagram_image_path)
             payload["instagram_image_url"] = url_for("serve_media", filename=instagram_image_path)
+            payload["instagram_image_download_url"] = url_for(
+                "download_media", filename=instagram_image_path
+            )
             payload["instagram_image_public_url"] = url_for(
                 "serve_media", filename=instagram_image_path, _external=True
             )
             payload["instagram_image_data"] = base64.b64encode(ig_bytes).decode("utf-8")
         except Exception:
             payload["instagram_image_url"] = ""
+            payload["instagram_image_download_url"] = ""
             payload["instagram_image_public_url"] = ""
             payload["instagram_image_data"] = ""
     else:
         payload["instagram_image_url"] = ""
+        payload["instagram_image_download_url"] = ""
         payload["instagram_image_public_url"] = ""
         payload["instagram_image_data"] = ""
 
@@ -778,6 +808,15 @@ def serve_media(filename: str):
         abort(404)
     relative_path = safe_path.relative_to(STORAGE_ROOT)
     return send_from_directory(STORAGE_ROOT, relative_path.as_posix())
+
+
+@app.route("/media-download/<path:filename>")
+def download_media(filename: str):
+    safe_path = (STORAGE_ROOT / filename).resolve()
+    if not str(safe_path).startswith(str(STORAGE_ROOT.resolve())) or not safe_path.exists():
+        abort(404)
+    relative_path = safe_path.relative_to(STORAGE_ROOT)
+    return send_from_directory(STORAGE_ROOT, relative_path.as_posix(), as_attachment=True)
 
 
 @app.route("/", methods=["GET"])
@@ -1290,8 +1329,19 @@ def generate_instagram_image():
     context_prompt = build_prompt_context({**form_values, "title": raw_form_values.get("title", "")})
     inst_prompt = (
         "Design a high-performing Instagram {variant} visual with trending color grading, "
-        "dynamic lighting, and a magnetic focus on the hero product, but do not add any on-screen text—the output must be a pure image."
+        "dynamic lighting, and a magnetic focus on the hero product. "
+        "Include a short, tasteful CTA on the image (e.g., \"Shop now\", \"Tap to learn more\", \"Limited drop\"). "
+        "Do not include any URLs or affiliate links in the text."
     ).format(variant=variant_label)
+    boost_prompt = (
+        raw_form_values.get("instagram_boost_prompt")
+        or (preview_payload.get("instagram_boost_prompt") if preview_payload else "")
+        or (saved_state.get("form_values") or {}).get("instagram_boost_prompt", "")
+    )
+    if boost_prompt:
+        inst_prompt = (
+            f"{inst_prompt}\n\nAdditional creator guidance (safe content details): {boost_prompt.strip()}"
+        )
 
     try:
         instagram_image = edit_image(
@@ -1379,6 +1429,53 @@ def publish_instagram():
     except Exception as exc:
         app.logger.exception("Instagram publish failed")
         flash(f"Unable to publish to Instagram: {exc}", "error")
+
+    return render_home_view(form_values, preview_payload, product_id=product_id)
+
+
+@app.route("/publish-instagram-reel", methods=["POST"])
+def publish_instagram_reel_route():
+    raw_form_values = collect_form_values(request.form)
+    form_values = extract_form_defaults(raw_form_values)
+    use_affiliate_link_flag = str(form_values.get("use_affiliate_link", "0")).lower() in TRUTHY_VALUES
+    product_id = resolve_product_id(form_values)
+    preview_payload = rebuild_preview_payload(raw_form_values)
+    video_path = raw_form_values.get("generated_video_path")
+
+    if not video_path:
+        flash("Generate the Instagram Reel video first, then publish.", "error")
+        return render_home_view(form_values, preview_payload, product_id=product_id)
+
+    caption = raw_form_values.get("instagram_caption", "")
+    hashtags = parse_tags_payload(raw_form_values.get("instagram_hashtags_payload", "[]"))
+    normalized_tags = [tag.lstrip("#").replace(" ", "") for tag in hashtags if tag]
+    if normalized_tags:
+        tags_block = " ".join(f"#{tag}" for tag in normalized_tags)
+        caption_to_publish = caption.strip()
+        caption_to_publish = (
+            f"{caption_to_publish}\n\n{tags_block}" if caption_to_publish else tags_block
+        )
+    else:
+        caption_to_publish = caption.strip()
+
+    try:
+        media_url = url_for("serve_media", filename=video_path, _external=True)
+        publish_instagram_reel(video_url=media_url, caption=caption_to_publish)
+        flash("Instagram Reel published successfully!", "success")
+        update_product_state(
+            product_id,
+            form_values=form_values,
+            preview=preview_payload,
+            platforms={
+                "instagram_reel": {
+                    "status": "published",
+                    "use_affiliate_link": use_affiliate_link_flag,
+                }
+            },
+        )
+    except Exception as exc:
+        app.logger.exception("Instagram Reel publish failed")
+        flash(f"Unable to publish the Instagram Reel: {exc}", "error")
 
     return render_home_view(form_values, preview_payload, product_id=product_id)
 
@@ -1534,7 +1631,7 @@ def publish_website():
 
 @app.route("/generate-video/<platform>", methods=["POST"])
 def generate_platform_video(platform: str):
-    supported = {"youtube", "tiktok"}
+    supported = {"youtube", "tiktok", "instagram"}
     target = platform.lower()
     if target not in supported:
         abort(404)
@@ -1588,7 +1685,7 @@ def generate_platform_video(platform: str):
     title = raw_form_values.get("title") or form_values.get("title") or "this product"
     prompt_templates = {
         "youtube": (
-            "Create a vertical YouTube Short for 'this product' with upbeat pacing, "
+            "Create a vertical YouTube Short for 'this product' "
             " do not add any on-screen text—the output must be pure video. "
             "Do not include any voiceover or speech; choose and add suitable music only."
         ),
@@ -1597,19 +1694,32 @@ def generate_platform_video(platform: str):
             "and camera moves that highlight the wow factor, but keep the footage clean with no text or overlays. "
             "Do not include any voiceover or speech; choose and add suitable music only."
         ),
+        "instagram": (
+            "Create an Instagram Reels-ready vertical video for 'this product' with smooth pacing, "
+            "natural lighting, and crisp focus on the product details, but do not add any on-screen text or logos. "
+            "Do not include any voiceover or speech; choose and add suitable music only."
+        ),
     }
     prompt = prompt_templates[target].format(title=title)
-    boost_prompt = (
-        raw_form_values.get("youtube_boost_prompt")
-        or (preview_payload.get("youtube_boost_prompt") if preview_payload else "")
-        or (saved_state.get("form_values") or {}).get("youtube_boost_prompt", "")
-    )
+    boost_prompt = ""
     if target == "youtube":
+        boost_prompt = (
+            raw_form_values.get("youtube_boost_prompt")
+            or (preview_payload.get("youtube_boost_prompt") if preview_payload else "")
+            or (saved_state.get("form_values") or {}).get("youtube_boost_prompt", "")
+        )
         form_values["youtube_boost_prompt"] = boost_prompt
-        if boost_prompt:
-            prompt = (
-                f"{prompt}\n\nAdditional creator guidance (safe content details): {boost_prompt.strip()}"
-            )
+    elif target == "instagram":
+        boost_prompt = (
+            raw_form_values.get("instagram_boost_prompt")
+            or (preview_payload.get("instagram_boost_prompt") if preview_payload else "")
+            or (saved_state.get("form_values") or {}).get("instagram_boost_prompt", "")
+        )
+        form_values["instagram_boost_prompt"] = boost_prompt
+    if boost_prompt:
+        prompt = (
+            f"{prompt}\n\nAdditional creator guidance (safe content details): {boost_prompt.strip()}"
+        )
 
     duration_value = (
         raw_form_values.get("video_duration_seconds")
@@ -1622,10 +1732,11 @@ def generate_platform_video(platform: str):
         duration_seconds = VIDEO_DURATION_DEFAULT
     duration_seconds = max(VIDEO_DURATION_MIN, min(VIDEO_DURATION_MAX, duration_seconds))
 
+    fitted_base_bytes = ensure_dimensions(base_bytes, (720, 1280))
     try:
         video_bytes = generate_video_from_image(
             prompt=prompt,
-            image=base_bytes,
+            image=fitted_base_bytes,
             duration_seconds=duration_seconds,
             aspect_ratio="9:16",
             resolution="720p",
@@ -1638,6 +1749,8 @@ def generate_platform_video(platform: str):
     preview_payload = preview_payload or {}
     if target == "youtube":
         preview_payload["youtube_boost_prompt"] = boost_prompt
+    elif target == "instagram":
+        preview_payload["instagram_boost_prompt"] = boost_prompt
     preview_payload["generated_video_path"] = video_path
     preview_payload["video_duration_seconds"] = str(duration_seconds)
     preview_payload["video_url"] = url_for("serve_media", filename=video_path)
@@ -1645,13 +1758,15 @@ def generate_platform_video(platform: str):
         "serve_media", filename=video_path, _external=True
     )
 
-    flash(f"{target.title()} video generated.", "success")
+    target_label = "Instagram" if target == "instagram" else target.title()
+    platform_key = "instagram_reel" if target == "instagram" else target
+    flash(f"{target_label} video generated.", "success")
     update_product_state(
         product_id,
         form_values=form_values,
         preview=preview_payload,
         platforms={
-            target: {
+            platform_key: {
                 "status": "pending",
                 "video_path": video_path,
                 "base_image_path": base_image_path,
