@@ -919,6 +919,12 @@
       const durationInput = document.querySelector(
         'input[type="number"][name="video_duration_seconds"]'
       );
+      const selectedImageRadios = document.querySelectorAll(
+        'input[type="radio"][name="selected_original_image"]'
+      );
+      const selectedImageHidden = document.querySelectorAll(
+        'input[type="hidden"][name="selected_original_image"]'
+      );
 
       function syncField(name, value) {
         document.querySelectorAll(`input[type="hidden"][name="${name}"]`).forEach((input) => {
@@ -941,6 +947,26 @@
       if (durationInput) {
         syncField("video_duration_seconds", durationInput.value);
         durationInput.addEventListener("input", () => syncField("video_duration_seconds", durationInput.value));
+      }
+
+      if (selectedImageRadios.length) {
+        const checked = document.querySelector(
+          'input[type="radio"][name="selected_original_image"]:checked'
+        );
+        if (checked) {
+          selectedImageHidden.forEach((input) => {
+            input.value = checked.value || "";
+          });
+        }
+        selectedImageRadios.forEach((radio) => {
+          radio.addEventListener("change", () => {
+            if (radio.checked) {
+              selectedImageHidden.forEach((input) => {
+                input.value = radio.value || "";
+              });
+            }
+          });
+        });
       }
     })();
   </script>
