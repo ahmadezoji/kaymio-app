@@ -557,12 +557,12 @@
                       name="instagram_boost_prompt"
                       placeholder="Add safe content guidance (no logos, brand-safe styling cues, etc.)"
                       rows="3"
-                      {% if instagram_feed_published or instagram_story_published or platforms_locked %}disabled{% endif %}
+                      {% if platforms_locked %}disabled{% endif %}
                     >{{ instagram_boost_pref }}</textarea>
                   </label>
                   <p class="muted">Used for Instagram visuals and Reels generation.</p>
                   {{ preview_hidden_inputs(preview_data, values) }}
-                  <button type="submit" class="ghost-btn" {% if instagram_feed_published or instagram_story_published or platforms_locked %}disabled{% endif %}>
+                  <button type="submit" class="ghost-btn" {% if platforms_locked %}disabled{% endif %}>
                     Save boost prompt
                   </button>
                 </form>
@@ -662,7 +662,7 @@
                 {% else %}
                   <p class="muted">Generate a Reel-ready video to unlock publishing.</p>
                 {% endif %}
-                {% if has_preview %}
+                {% if has_preview or has_saved_image %}
                   <form method="post" action="{{ url_for('generate_platform_video', platform='instagram') }}">
                   <p class="muted">Tip: add wardrobe, lighting, or mood references to guide the Reel.</p>
                   {{ preview_hidden_inputs(preview_data, values) }}

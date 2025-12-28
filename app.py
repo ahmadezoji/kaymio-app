@@ -1685,7 +1685,7 @@ def generate_platform_video(platform: str):
     title = raw_form_values.get("title") or form_values.get("title") or "this product"
     prompt_templates = {
         "youtube": (
-            "Create a vertical YouTube Short for 'this product' with upbeat pacing, "
+            "Create a vertical YouTube Short for 'this product' "
             " do not add any on-screen text—the output must be pure video. "
             "Do not include any voiceover or speech; choose and add suitable music only."
         ),
