@@ -1,4 +1,4 @@
-"""Instagram Graph helpers for publishing feed posts and stories."""
+"""Instagram Graph helpers for publishing feed posts, stories, and reels."""
 from __future__ import annotations
 
 import json
@@ -67,10 +67,10 @@ def _resolve_local_media_path(media_url: str) -> Optional[str]:
     return str(candidate)
 
 
-def _ensure_public_image_url(image_url: str) -> str:
-    local_path = _resolve_local_media_path(image_url)
+def _ensure_public_media_url(media_url: str) -> str:
+    local_path = _resolve_local_media_path(media_url)
     if not local_path:
-        return image_url
+        return media_url
     try:
         uploaded_url = upload_media_to_wordpress_ext(local_path)
         if uploaded_url:
@@ -78,7 +78,15 @@ def _ensure_public_image_url(image_url: str) -> str:
         logger.warning("WordPress upload failed, falling back to local media URL.")
     except Exception:
         logger.exception("Unable to upload Instagram media to WordPress")
-    return image_url
+    return media_url
+
+
+def _ensure_public_image_url(image_url: str) -> str:
+    return _ensure_public_media_url(image_url)
+
+
+def _ensure_public_video_url(video_url: str) -> str:
+    return _ensure_public_media_url(video_url)
 
 
 def _create_media_container(
@@ -100,6 +108,48 @@ def _create_media_container(
         payload["share_to_story_link"] = share_link
     if media_type.upper() == "STORIES":
         payload["media_type"] = "STORIES"
+
+    creation_url = f"{GRAPH_API_BASE}/{creds['user_id']}/media"
+    response = requests.post(creation_url, data=payload, timeout=30)
+    if response.status_code >= 400:
+        logger.error("Instagram media creation failed: %s - %s", response.status_code, response.text)
+        response.raise_for_status()
+
+    creation_id = response.json().get("id")
+    if not creation_id:
+        raise RuntimeError("Instagram media creation did not return an ID")
+
+    if not _wait_for_media_ready(creation_id, creds["access_token"]):
+        raise RuntimeError("Instagram media is not ready to publish yet.")
+
+    publish_url = f"{GRAPH_API_BASE}/{creds['user_id']}/media_publish"
+    publish_payload = {"creation_id": creation_id, "access_token": creds["access_token"]}
+    publish_response = requests.post(publish_url, data=publish_payload, timeout=30)
+    if publish_response.status_code >= 400:
+        logger.error("Instagram media publish failed: %s - %s", publish_response.status_code, publish_response.text)
+        publish_response.raise_for_status()
+
+    return publish_response.json()
+
+
+def _create_video_container(
+    *,
+    video_url: str,
+    caption: Optional[str],
+    media_type: str = "REELS",
+    share_to_feed: bool = True,
+) -> Dict[str, str]:
+    creds = _get_instagram_credentials()
+    public_video_url = _ensure_public_video_url(video_url)
+    payload = {
+        "access_token": creds["access_token"],
+        "video_url": public_video_url,
+        "media_type": media_type.upper(),
+    }
+    if caption:
+        payload["caption"] = caption[:2200]
+    if media_type.upper() == "REELS":
+        payload["share_to_feed"] = "true" if share_to_feed else "false"
 
     creation_url = f"{GRAPH_API_BASE}/{creds['user_id']}/media"
     response = requests.post(creation_url, data=payload, timeout=30)
@@ -173,4 +223,20 @@ def publish_instagram_story(
         caption=caption,
         share_link=share_link,
         media_type="STORIES",
+    )
+
+
+def publish_instagram_reel(
+    *,
+    video_url: str,
+    caption: Optional[str] = None,
+    share_to_feed: bool = True,
+) -> Dict[str, str]:
+    """Publish an Instagram Reel via the Graph API."""
+
+    return _create_video_container(
+        video_url=video_url,
+        caption=caption,
+        media_type="REELS",
+        share_to_feed=share_to_feed,
     )
