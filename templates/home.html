@@ -104,6 +104,8 @@
         {% set pinterest_state = platform_states.get('pinterest', {}) %}
         {% set pinterest_published = pinterest_state.get('status') == 'published' %}
         {% set pinterest_live_url = pinterest_state.get('pin_url') or (result.pin_url if result else '') %}
+        {% set pinterest_has_live_pin = pinterest_published and pinterest_live_url %}
+        {% set pinterest_needs_retry = pinterest_published and not pinterest_live_url %}
         {% set website_state = platform_states.get('website', {}) %}
         {% set website_published = website_state.get('status') == 'published' %}
         {% set platforms_locked = not website_published %}
@@ -372,7 +374,7 @@
               form="pinterest-input-form"
               formaction="{{ url_for('generate_pinterest') }}"
               formmethod="post"
-              {% if platforms_locked or pinterest_published %}disabled{% endif %}
+              {% if platforms_locked or pinterest_has_live_pin %}disabled{% endif %}
               >
               Generating for Pinterest
               </button>
@@ -409,20 +411,21 @@
                       Download pin image
                     </a>
                   {% endif %}
-                {% elif pinterest_published %}
+                {% elif pinterest_has_live_pin %}
                   <p class="muted">This SKU is already live on Pinterest. Reset the workflow to create another pin.</p>
-                  {% if pinterest_live_url %}
-                    <p>
-                        <a href="{{ pinterest_live_url }}" target="_blank" rel="noopener">View published pin</a>
-                      </p>
+                  <p>
+                    <a href="{{ pinterest_live_url }}" target="_blank" rel="noopener">View published pin</a>
+                  </p>
+                  <button type="button" class="primary" disabled>Published to Pinterest</button>
+                  {% if preview_data.generated_image_download_url %}
+                    <a class="ghost-btn" href="{{ preview_data.generated_image_download_url }}" download>
+                      Download pin image
+                    </a>
+                  {% endif %}
+                {% else %}
+                    {% if pinterest_needs_retry %}
+                      <p class="muted">Pinterest shows as published, but no pin link was saved. You can publish again.</p>
                     {% endif %}
-                    <button type="button" class="primary" {% if pinterest_published %}disabled{% endif %}>Published to Pinterest</button>
-                    {% if preview_data.generated_image_download_url %}
-                      <a class="ghost-btn" href="{{ preview_data.generated_image_download_url }}" download>
-                        Download pin image
-                      </a>
-                    {% endif %}
-                  {% else %}
                     <form method="post" action="{{ url_for('generate_pinterest') }}">
                       <input type="hidden" name="market" value="{{ values.get('market', '') }}" />
                       <input type="hidden" name="sku_or_url" value="{{ values.get('sku_or_url', '') }}" />
@@ -486,7 +489,7 @@
             {% endif %}
           {% else %}
             <p class="muted">Generate a product visual to unlock publishing on Pinterest, Instagram, TikTok, and YouTube.</p>
-            {% if pinterest_published and pinterest_live_url %}
+            {% if pinterest_has_live_pin %}
               <p>
                 <a href="{{ pinterest_live_url }}" target="_blank" rel="noopener">View published pin</a>
               </p>

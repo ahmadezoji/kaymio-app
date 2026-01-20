@@ -45,7 +45,7 @@ GENERATED_DIR = STORAGE_ROOT / "generated"
 VIDEOS_DIR = STORAGE_ROOT / "videos"
 for directory in (ORIGINALS_DIR, GENERATED_DIR, VIDEOS_DIR):
     directory.mkdir(parents=True, exist_ok=True)
-STATE_DIR = Path(app.root_path) / "Data"
+STATE_DIR = Path(app.root_path) / "data"
 STATE_DIR.mkdir(parents=True, exist_ok=True)
 STATE_FILE = STATE_DIR / "app_state.json"
 MARKET_OPTIONS = [
