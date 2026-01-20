@@ -21,7 +21,7 @@ def create_pinterest_pin(
 ) -> Dict[str, str]:
     """Upload a pin to Pinterest using the v5 API."""
 
-    with open("access_token.txt", 'r') as f:
+    with open("pintrest_access_token.txt", 'r') as f:
         access_token = f.read().strip()
 
     if not access_token:
@@ -86,7 +86,7 @@ def create_pinterest_pin(
 def get_default_board_id():
     
     try:
-        with open("access_token.txt", 'r') as f:
+        with open("pintrest_access_token.txt", 'r') as f:
             access_token = f.read().strip()
 
         if not access_token:
