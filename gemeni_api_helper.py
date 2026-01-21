@@ -277,7 +277,7 @@ def _generate_video_with_modern_sdk(
             duration_seconds=duration_seconds,
         )
 
-    model_name = os.getenv("GEMINI_VIDEO_MODEL", "veo-3.1-fast-generate-001")
+    model_name = os.getenv("GEMINI_VIDEO_MODEL", "veo-3.1-generate-preview")
     model_client = getattr(client, "models", None)
     if model_client is None or not hasattr(model_client, "generate_videos"):
         raise RuntimeError("google.genai client does not expose video generation endpoint")
@@ -336,7 +336,7 @@ def _generate_video_with_legacy_sdk(
         duration_seconds=duration_seconds,
     )
 
-    model_name = os.getenv("GEMINI_VIDEO_MODEL", "veo-3.1-fast-generate-001")
+    model_name = os.getenv("GEMINI_VIDEO_MODEL", "veo-3.1-generate-preview")
     model_client = getattr(client, "models", None)
     if model_client is None or not hasattr(model_client, "generate_videos"):
         raise RuntimeError("Gemini client does not expose video generation endpoint")
