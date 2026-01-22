@@ -195,11 +195,13 @@ def generate_video_from_image(
     if not api_key:
         raise RuntimeError("GOOGLE_API_KEY or GEMINI_API_KEY is required for video generation")
 
+    prepared_image = _prepare_video_image_bytes(image)
+
     if google_genai is not None and hasattr(google_genai, "Client"):
         return _generate_video_with_modern_sdk(
             api_key=api_key,
             prompt=prompt,
-            image=image,
+            image=prepared_image,
             duration_seconds=duration_seconds,
             aspect_ratio=aspect_ratio,
             resolution=resolution,
@@ -221,7 +223,7 @@ def generate_video_from_image(
     return _generate_video_with_legacy_sdk(
         api_key=api_key,
         prompt=prompt,
-        image=image,
+        image=prepared_image,
         duration_seconds=duration_seconds,
         aspect_ratio=aspect_ratio,
         resolution=resolution,
@@ -230,6 +232,25 @@ def generate_video_from_image(
         types_module=types_module,
         client_cls=client_cls,
     )
+
+
+def _prepare_video_image_bytes(image: Union[bytes, Image.Image, str]) -> bytes:
+    """Downscale + compress the input image to avoid Veo base64 size limits."""
+
+    image_bytes = _coerce_image_bytes(image)
+    if Image is None:
+        return image_bytes
+
+    try:
+        with Image.open(io.BytesIO(image_bytes)) as img:
+            img = img.convert("RGB")
+            max_size = (720, 1280)
+            img.thumbnail(max_size, Image.LANCZOS)
+            output = io.BytesIO()
+            img.save(output, format="JPEG", quality=82, optimize=True)
+            return output.getvalue()
+    except Exception:
+        return image_bytes
 
 
 def _generate_video_with_modern_sdk(
