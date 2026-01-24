@@ -47,7 +47,7 @@ for directory in (ORIGINALS_DIR, GENERATED_DIR, VIDEOS_DIR):
     directory.mkdir(parents=True, exist_ok=True)
 STATE_DIR = Path(app.root_path) / "data"
 STATE_DIR.mkdir(parents=True, exist_ok=True)
-STATE_FILE = STATE_DIR / "app_state_new.json"
+STATE_FILE = STATE_DIR / "app_state.json"
 MARKET_OPTIONS = [
     "Shein",
     "Amazon",
@@ -1019,6 +1019,12 @@ def home() -> str:
 def reset_platform():
     raw_form_values = collect_form_values(request.form)
     platform = (raw_form_values.get("platform") or "").lower()
+    if platform == "workflow":
+        state = load_app_state()
+        state["last_product_id"] = ""
+        save_app_state(state)
+        flash("Workflow reset. Ready for a new product.", "info")
+        return render_home_view({}, None, None, product_id="")
     state = load_app_state()
     product_id = state.get("last_product_id") or ""
 
