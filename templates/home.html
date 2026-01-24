@@ -110,9 +110,10 @@
         {% set website_published = website_state.get('status') == 'published' %}
         {% set platforms_locked = not website_published %}
         {% set has_saved_image = preview_data.original_image_path or values.get('original_image_path') %}
-        {% set instagram_feed_published = platform_states.get('instagram_feed', {}).get('status') == 'published' %}
-        {% set instagram_story_published = platform_states.get('instagram_story', {}).get('status') == 'published' %}
-        {% set instagram_reel_published = platform_states.get('instagram_reel', {}).get('status') == 'published' %}
+        {% set instagram_state = platform_states.get('instagram', {}) %}
+        {% set instagram_feed_published = instagram_state.get('instagram_feed', {}).get('status') == 'published' %}
+        {% set instagram_story_published = instagram_state.get('instagram_story', {}).get('status') == 'published' %}
+        {% set instagram_reel_published = instagram_state.get('instagram_reel', {}).get('status') == 'published' %}
         {% set youtube_published = platform_states.get('youtube', {}).get('status') == 'published' %}
         {% set tiktok_published = platform_states.get('tiktok', {}).get('status') == 'published' %}
         <form method="post" action="{{ url_for('reset_platform') }}" class="card add-card">
