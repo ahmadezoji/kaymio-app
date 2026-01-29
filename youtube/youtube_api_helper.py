@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import os
+from pathlib import Path
 from typing import Dict, Iterable, Optional
 
 import requests
@@ -12,14 +13,28 @@ UPLOAD_URL = "https://www.googleapis.com/upload/youtube/v3/videos"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 
 
-def _get_youtube_token() -> str:
+def _read_token_file(path: Path) -> Optional[str]:
     try:
-        with open("youtube_access_token.txt", "r") as token_file:
-            token = token_file.read().strip()
-            if token:
-                return token
+        token = path.read_text().strip()
+        return token or None
     except FileNotFoundError:
-        logger.error("Access token file not found. Ensure youtube_access_token.txt exists.")
+        return None
+
+
+def _persist_access_token(token: str) -> None:
+    module_path = Path(__file__).resolve().parent / "youtube_access_token.txt"
+    root_path = Path.cwd() / "youtube_access_token.txt"
+    module_path.write_text(token)
+    root_path.write_text(token)
+
+
+def _get_youtube_token() -> str:
+    module_token = _read_token_file(Path(__file__).resolve().parent / "youtube_access_token.txt")
+    if module_token:
+        return module_token
+    root_token = _read_token_file(Path.cwd() / "youtube_access_token.txt")
+    if root_token:
+        return root_token
     return refresh_youtube_access_token()
 
 
@@ -52,8 +67,8 @@ def refresh_youtube_access_token() -> str:
     if not access_token:
         raise RuntimeError("YouTube token response did not include an access_token")
 
-    # Cache on the process env so subsequent calls reuse it.
-    os.environ["YOUTUBE_ACCESS_TOKEN"] = access_token
+    # Persist for future requests.
+    _persist_access_token(access_token)
     return access_token
 
 
