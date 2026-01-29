@@ -1,6 +1,7 @@
 """YouTube Data API helper for uploading Shorts."""
 from __future__ import annotations
 
+import json
 import logging
 import os
 from pathlib import Path
@@ -13,29 +14,50 @@ UPLOAD_URL = "https://www.googleapis.com/upload/youtube/v3/videos"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 
 
-def _read_token_file(path: Path) -> Optional[str]:
+def _read_token_file(path: Path) -> Optional[Dict[str, str]]:
     try:
-        token = path.read_text().strip()
-        return token or None
+        raw = path.read_text().strip()
+        if not raw:
+            return None
+        data = json.loads(raw)
+        if not isinstance(data, dict):
+            return None
+        return {
+            "access_token": str(data.get("access_token") or ""),
+            "refresh_token": str(data.get("refresh_token") or ""),
+        }
     except FileNotFoundError:
+        return None
+    except json.JSONDecodeError:
         return None
 
 
-def _persist_access_token(token: str) -> None:
+def _persist_access_token(token: str, refresh_token: str) -> None:
     module_path = Path(__file__).resolve().parent / "youtube_access_token.txt"
     root_path = Path.cwd() / "youtube_access_token.txt"
-    module_path.write_text(token)
-    root_path.write_text(token)
+    payload = json.dumps({"access_token": token, "refresh_token": refresh_token})
+    module_path.write_text(payload)
+    root_path.write_text(payload)
 
 
 def _get_youtube_token() -> str:
     module_token = _read_token_file(Path(__file__).resolve().parent / "youtube_access_token.txt")
-    if module_token:
-        return module_token
+    if module_token and module_token.get("access_token"):
+        return module_token["access_token"]
     root_token = _read_token_file(Path.cwd() / "youtube_access_token.txt")
-    if root_token:
-        return root_token
+    if root_token and root_token.get("access_token"):
+        return root_token["access_token"]
     return refresh_youtube_access_token()
+
+
+def _get_refresh_token() -> Optional[str]:
+    module_token = _read_token_file(Path(__file__).resolve().parent / "youtube_access_token.txt")
+    if module_token and module_token.get("refresh_token"):
+        return module_token["refresh_token"]
+    root_token = _read_token_file(Path.cwd() / "youtube_access_token.txt")
+    if root_token and root_token.get("refresh_token"):
+        return root_token["refresh_token"]
+    return None
 
 
 def refresh_youtube_access_token() -> str:
@@ -43,7 +65,7 @@ def refresh_youtube_access_token() -> str:
 
     client_id = os.getenv("YOUTUBE_CLIENT_ID")
     client_secret = os.getenv("YOUTUBE_CLIENT_SECRET")
-    refresh_token = os.getenv("YOUTUBE_REFRESH_TOKEN")
+    refresh_token = _get_refresh_token()
     if not all([client_id, client_secret, refresh_token]):
         raise RuntimeError(
             "Missing YOUTUBE_CLIENT_ID, YOUTUBE_CLIENT_SECRET, or YOUTUBE_REFRESH_TOKEN in environment"
@@ -68,7 +90,7 @@ def refresh_youtube_access_token() -> str:
         raise RuntimeError("YouTube token response did not include an access_token")
 
     # Persist for future requests.
-    _persist_access_token(access_token)
+    _persist_access_token(access_token, refresh_token)
     return access_token
 
 
