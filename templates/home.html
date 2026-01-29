@@ -116,6 +116,29 @@
         {% set instagram_reel_published = instagram_state.get('instagram_reel', {}).get('status') == 'published' %}
         {% set youtube_published = platform_states.get('youtube', {}).get('status') == 'published' %}
         {% set tiktok_published = platform_states.get('tiktok', {}).get('status') == 'published' %}
+        {% if product_ids %}
+          <form method="post" action="{{ url_for('select_product') }}" class="card">
+            <div class="card-header">
+              <h2>Switch product</h2>
+              <p>Select a saved product to load its data.</p>
+            </div>
+            <div class="field-grid">
+              <label>
+                <span>Saved products</span>
+                <div class="input-shell">
+                  <select name="product_id" onchange="this.form.submit()">
+                    <option value="">Choose a product</option>
+                    {% for pid in product_ids %}
+                      <option value="{{ pid }}" {% if pid == last_product_id %}selected{% endif %}>
+                        {{ pid }}
+                      </option>
+                    {% endfor %}
+                  </select>
+                </div>
+              </label>
+            </div>
+          </form>
+        {% endif %}
         <form method="post" action="{{ url_for('reset_platform') }}" class="card add-card">
           <input type="hidden" name="platform" value="workflow" />
           <div class="card-header add-header">

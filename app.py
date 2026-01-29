@@ -9,7 +9,7 @@ from uuid import uuid4
 
 import requests
 from dotenv import load_dotenv
-from flask import Flask, abort, flash, render_template, request, send_from_directory, url_for
+from flask import Flask, abort, flash, redirect, render_template, request, send_from_directory, url_for
 
 from amazon.amazon_api import build_affiliate_link, extract_asin, fetch_product_from_canopy
 from gemeni_api_helper import edit_image, generate_video_from_image
@@ -420,6 +420,9 @@ def render_home_view(
     website_result: Optional[Dict[str, Any]] = None,
     platform_states: Optional[Dict[str, Any]] = None,
 ):
+    state = load_app_state()
+    product_ids = list((state.get("products") or {}).keys())
+    last_product_id = state.get("last_product_id") or ""
     state_entry: Optional[Dict[str, Any]] = None
     if product_id and (website_result is None or platform_states is None):
         state_entry = get_product_state(product_id)
@@ -446,6 +449,8 @@ def render_home_view(
         platform_states=platform_states or {},
         product_image_choices=product_image_choices,
         selected_original_image=selected_original_image,
+        product_ids=product_ids,
+        last_product_id=last_product_id,
     )
 
 
@@ -1047,6 +1052,18 @@ def reset_platform():
         website_result=website_result,
         platform_states=(saved_state.get("platforms") or {}),
     )
+
+
+@app.route("/select-product", methods=["POST"])
+def select_product():
+    raw_form_values = collect_form_values(request.form)
+    selected_product = (raw_form_values.get("product_id") or "").strip()
+    state = load_app_state()
+    products = state.get("products") or {}
+    if selected_product and selected_product in products:
+        state["last_product_id"] = selected_product
+        save_app_state(state)
+    return redirect(url_for("home"))
 
 
 @app.route("/fetch-amazon-product", methods=["POST"])
