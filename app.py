@@ -80,6 +80,80 @@ def _sanitize_preview(preview: Dict[str, Any]) -> Dict[str, Any]:
     return _json_safe(sanitized)
 
 
+PINTEREST_PREVIEW_KEYS = {
+    "title",
+    "description",
+    "tags",
+    "tags_payload",
+    "generated_image_path",
+    "original_image_path",
+    "affiliate_link",
+    "market",
+    "sku_or_url",
+    "pinterest_extra",
+    "title_input",
+    "description_input",
+    "generated_image_url",
+    "image_public_url",
+    "category",
+    "price",
+    "website_boost_prompt",
+    "youtube_boost_prompt",
+    "use_affiliate_link",
+    "video_prompt",
+    "generated_video_path",
+    "video_url",
+    "video_public_url",
+    "video_duration_seconds",
+}
+
+INSTAGRAM_PREVIEW_KEYS = {
+    "instagram_caption",
+    "instagram_hashtags",
+    "instagram_hashtags_payload",
+    "instagram_image_path",
+    "instagram_image_url",
+    "instagram_image_public_url",
+    "instagram_image_data",
+    "instagram_boost_prompt",
+}
+
+TIKTOK_PREVIEW_KEYS = {"tiktok_caption", "tiktok_hashtags", "tiktok_hashtags_payload"}
+
+YOUTUBE_PREVIEW_KEYS = {
+    "youtube_title",
+    "youtube_description",
+    "youtube_keywords",
+    "youtube_keywords_payload",
+    "generated_video_path",
+    "video_url",
+    "video_public_url",
+    "video_download_url",
+    "video_duration_seconds",
+    "youtube_boost_prompt",
+    "video_prompt",
+}
+
+WEBSITE_PREVIEW_KEYS = {"title", "description", "tags", "category", "price", "website_boost_prompt"}
+
+FORM_COMMON_KEYS = {
+    "market",
+    "sku_or_url",
+    "title",
+    "description",
+    "affiliate_link",
+    "category",
+    "price",
+    "pinterest_extra",
+    "website_boost_prompt",
+    "youtube_boost_prompt",
+    "instagram_boost_prompt",
+    "use_affiliate_link",
+    "selected_original_image",
+    "original_image_path",
+}
+
+
 def _hydrate_preview(preview: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     if not preview:
         return preview
@@ -158,8 +232,7 @@ def get_platform_result(product_id: str, platform: str) -> Optional[Dict[str, An
     if not product_id:
         return None
     entry = get_product_state(product_id)
-    results = entry.get("results") or {}
-    return results.get(platform)
+    return get_platform_state(entry, platform)
 
 
 def get_website_result(product_id: str) -> Optional[Dict[str, Any]]:
@@ -171,6 +244,92 @@ def get_website_product_url(product_id: str) -> Optional[str]:
     if not website_result:
         return None
     return website_result.get("product_url")
+
+
+def get_platform_state(entry: Dict[str, Any], platform: str) -> Dict[str, Any]:
+    platforms = entry.get("platforms") or {}
+    if platform.startswith("instagram_"):
+        instagram = platforms.get("instagram") or {}
+        return instagram.get(platform) or {}
+    return platforms.get(platform) or {}
+
+
+def set_platform_state(entry: Dict[str, Any], platform: str, payload: Dict[str, Any]) -> None:
+    platforms = entry.setdefault("platforms", {})
+    if platform.startswith("instagram_"):
+        instagram = platforms.get("instagram") or {}
+        current = instagram.get(platform) or {}
+        current.update(_json_safe(payload))
+        instagram[platform] = current
+        platforms["instagram"] = instagram
+    else:
+        current = platforms.get(platform) or {}
+        current.update(_json_safe(payload))
+        platforms[platform] = current
+    entry["platforms"] = platforms
+
+
+def _merge_platform_payloads(entry: Dict[str, Any], payloads: Dict[str, Dict[str, Any]]) -> None:
+    for name, payload in payloads.items():
+        if not payload:
+            continue
+        set_platform_state(entry, name, payload)
+
+
+def _build_form_values_from_platforms(entry: Dict[str, Any]) -> Dict[str, str]:
+    platforms = entry.get("platforms") or {}
+    pinterest = platforms.get("pinterest") or {}
+    website = platforms.get("website") or {}
+    source = pinterest or website
+    form_values: Dict[str, str] = {}
+    for key in FORM_COMMON_KEYS:
+        value = source.get(key)
+        if value is not None:
+            form_values[key] = value
+    return form_values
+
+
+def _build_preview_from_platforms(entry: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    platforms = entry.get("platforms") or {}
+    preview: Dict[str, Any] = {}
+
+    website = platforms.get("website") or {}
+    for key in WEBSITE_PREVIEW_KEYS:
+        if key in website:
+            preview[key] = website.get(key)
+
+    pinterest = platforms.get("pinterest") or {}
+    for key in PINTEREST_PREVIEW_KEYS:
+        if key in pinterest:
+            preview[key] = pinterest.get(key)
+
+    instagram = platforms.get("instagram") or {}
+    instagram_feed = instagram.get("instagram_feed") or {}
+    for key in INSTAGRAM_PREVIEW_KEYS:
+        if key in instagram_feed:
+            preview[key] = instagram_feed.get(key)
+
+    youtube = platforms.get("youtube") or {}
+    for key in YOUTUBE_PREVIEW_KEYS:
+        if key in youtube:
+            preview[key] = youtube.get(key)
+
+    tiktok = platforms.get("tiktok") or {}
+    for key in TIKTOK_PREVIEW_KEYS:
+        if key in tiktok:
+            preview[key] = tiktok.get(key)
+
+    return _hydrate_preview(preview)
+
+
+def _get_instagram_state(entry: Dict[str, Any]) -> Dict[str, Any]:
+    instagram = (entry.get("platforms") or {}).get("instagram") or {}
+    return (
+        instagram.get("instagram_feed")
+        or instagram.get("instagram_story")
+        or instagram.get("instagram_reel")
+        or {}
+    )
 
 
 def update_product_state(
@@ -186,26 +345,46 @@ def update_product_state(
         return
     state = load_app_state()
     products = state.setdefault("products", {})
-    entry = products.get(product_id, {"platforms": {}, "assets": {}, "results": {}})
-    if form_values is not None:
-        entry["form_values"] = _json_safe(form_values)
-    if preview is not None:
-        entry["preview"] = _sanitize_preview(preview)
+    entry = products.get(product_id, {"platforms": {}, "assets": {}})
     if assets:
         stored_assets = entry.get("assets", {})
         stored_assets.update(_json_safe(assets))
         entry["assets"] = stored_assets
     if results:
-        stored_results = entry.get("results", {})
-        stored_results.update(_json_safe(results))
-        entry["results"] = stored_results
+        _merge_platform_payloads(entry, _json_safe(results))
     if platforms:
-        stored_platforms = entry.get("platforms", {})
-        for platform_name, payload in platforms.items():
-            snapshot = stored_platforms.get(platform_name, {})
-            snapshot.update(_json_safe(payload))
-            stored_platforms[platform_name] = snapshot
-        entry["platforms"] = stored_platforms
+        _merge_platform_payloads(entry, _json_safe(platforms))
+    if form_values or preview:
+        safe_preview = _sanitize_preview(preview or {})
+        safe_form = _json_safe(form_values or {})
+        # Pinterest
+        pinterest_payload = {k: safe_preview.get(k) for k in PINTEREST_PREVIEW_KEYS if k in safe_preview}
+        pinterest_payload.update({k: safe_form.get(k) for k in FORM_COMMON_KEYS if k in safe_form})
+        _merge_platform_payloads(entry, {"pinterest": pinterest_payload})
+        # Instagram
+        instagram_payload = {k: safe_preview.get(k) for k in INSTAGRAM_PREVIEW_KEYS if k in safe_preview}
+        instagram_payload.update({k: safe_form.get(k) for k in FORM_COMMON_KEYS if k in safe_form})
+        if instagram_payload:
+            _merge_platform_payloads(
+                entry,
+                {
+                    "instagram_feed": instagram_payload,
+                    "instagram_story": instagram_payload,
+                    "instagram_reel": instagram_payload,
+                },
+            )
+        # YouTube
+        youtube_payload = {k: safe_preview.get(k) for k in YOUTUBE_PREVIEW_KEYS if k in safe_preview}
+        youtube_payload.update({k: safe_form.get(k) for k in FORM_COMMON_KEYS if k in safe_form})
+        _merge_platform_payloads(entry, {"youtube": youtube_payload})
+        # TikTok
+        tiktok_payload = {k: safe_preview.get(k) for k in TIKTOK_PREVIEW_KEYS if k in safe_preview}
+        tiktok_payload.update({k: safe_form.get(k) for k in FORM_COMMON_KEYS if k in safe_form})
+        _merge_platform_payloads(entry, {"tiktok": tiktok_payload})
+        # Website
+        website_payload = {k: safe_preview.get(k) for k in WEBSITE_PREVIEW_KEYS if k in safe_preview}
+        website_payload.update({k: safe_form.get(k) for k in FORM_COMMON_KEYS if k in safe_form})
+        _merge_platform_payloads(entry, {"website": website_payload})
     products[product_id] = entry
     state["last_product_id"] = product_id
     save_app_state(state)
@@ -246,7 +425,7 @@ def render_home_view(
         state_entry = get_product_state(product_id)
     if website_result is None:
         if state_entry:
-            website_result = (state_entry.get("results") or {}).get("website")
+            website_result = get_platform_state(state_entry, "website")
         elif product_id:
             website_result = get_website_result(product_id)
     if platform_states is None:
@@ -273,27 +452,23 @@ def render_home_view(
 def build_render_payload(entry: Dict[str, Any]):
     if not entry:
         return {}, None, None
-    form_values = entry.get("form_values") or {}
-    preview_payload = entry.get("preview")
-    if preview_payload:
-        preview_payload = _hydrate_preview(preview_payload)
-        assets_snapshot = entry.get("assets") or {}
-        if assets_snapshot:
-            stored_video_path = assets_snapshot.get("generated_video_path")
-            if stored_video_path and not preview_payload.get("generated_video_path"):
-                preview_payload["generated_video_path"] = stored_video_path
-            if stored_video_path and not preview_payload.get("video_url"):
-                preview_payload["video_url"] = url_for("serve_media", filename=stored_video_path)
-            if stored_video_path and not preview_payload.get("video_download_url"):
-                preview_payload["video_download_url"] = url_for(
-                    "download_media", filename=stored_video_path
-                )
-            if stored_video_path and not preview_payload.get("video_public_url"):
-                preview_payload["video_public_url"] = url_for(
-                    "serve_media", filename=stored_video_path, _external=True
-                )
-    results = entry.get("results") or {}
-    return form_values, preview_payload, results.get("pinterest")
+    form_values = _build_form_values_from_platforms(entry)
+    preview_payload = _build_preview_from_platforms(entry)
+    assets_snapshot = entry.get("assets") or {}
+    if preview_payload and assets_snapshot:
+        stored_video_path = assets_snapshot.get("generated_video_path")
+        if stored_video_path and not preview_payload.get("generated_video_path"):
+            preview_payload["generated_video_path"] = stored_video_path
+        if stored_video_path and not preview_payload.get("video_url"):
+            preview_payload["video_url"] = url_for("serve_media", filename=stored_video_path)
+        if stored_video_path and not preview_payload.get("video_download_url"):
+            preview_payload["video_download_url"] = url_for("download_media", filename=stored_video_path)
+        if stored_video_path and not preview_payload.get("video_public_url"):
+            preview_payload["video_public_url"] = url_for(
+                "serve_media", filename=stored_video_path, _external=True
+            )
+    pinterest_state = get_platform_state(entry, "pinterest")
+    return form_values, preview_payload, pinterest_state
 
 
 def reset_product_platform(product_id: str, platform: str) -> None:
@@ -306,56 +481,32 @@ def reset_product_platform(product_id: str, platform: str) -> None:
         return
     platform = platform.lower()
     if platform == "pinterest":
-        products.pop(product_id, None)
-        if state.get("last_product_id") == product_id:
-            state["last_product_id"] = ""
+        platforms = entry.get("platforms") or {}
+        platforms.pop("pinterest", None)
+        entry["platforms"] = platforms
+        products[product_id] = entry
         save_app_state(state)
         return
 
     platforms = entry.setdefault("platforms", {})
     assets = entry.setdefault("assets", {})
-    preview = entry.get("preview") or {}
-    results = entry.get("results") or {}
 
     if platform == "instagram":
+        instagram = platforms.get("instagram") or {}
         for alias in ("instagram_feed", "instagram_story", "instagram_reel"):
-            platforms.pop(alias, None)
-        for field in (
-            "instagram_caption",
-            "instagram_hashtags",
-            "instagram_hashtags_payload",
-            "instagram_image_path",
-            "instagram_image_url",
-            "instagram_image_public_url",
-            "instagram_image_data",
-            "instagram_boost_prompt",
-        ):
-            preview.pop(field, None)
+            instagram.pop(alias, None)
+        if instagram:
+            platforms["instagram"] = instagram
+        else:
+            platforms.pop("instagram", None)
         assets.pop("instagram_image_path", None)
     elif platform == "youtube":
         platforms.pop("youtube", None)
-        results.pop("youtube", None)
-        for field in (
-            "youtube_title",
-            "youtube_description",
-            "youtube_keywords",
-            "youtube_keywords_payload",
-        ):
-            preview.pop(field, None)
     elif platform == "tiktok":
         platforms.pop("tiktok", None)
-        results.pop("tiktok", None)
-        for field in (
-            "tiktok_caption",
-            "tiktok_hashtags",
-            "tiktok_hashtags_payload",
-        ):
-            preview.pop(field, None)
 
     entry["platforms"] = platforms
     entry["assets"] = assets
-    entry["preview"] = preview
-    entry["results"] = results
     products[product_id] = entry
     save_app_state(state)
 
@@ -852,7 +1003,7 @@ def home() -> str:
     last_product_id = state.get("last_product_id") or ""
     saved_state = state.get("products", {}).get(last_product_id, {})
     form_values, preview_payload, pinterest_result = build_render_payload(saved_state)
-    website_result = (saved_state.get("results") or {}).get("website") if saved_state else None
+    website_result = get_platform_state(saved_state, "website") if saved_state else None
     platform_states = saved_state.get("platforms") or {}
     return render_home_view(
         form_values,
@@ -868,11 +1019,17 @@ def home() -> str:
 def reset_platform():
     raw_form_values = collect_form_values(request.form)
     platform = (raw_form_values.get("platform") or "").lower()
-    form_values = extract_form_defaults(raw_form_values)
-    product_id = resolve_product_id(form_values)
+    if platform == "workflow":
+        state = load_app_state()
+        state["last_product_id"] = ""
+        save_app_state(state)
+        flash("Workflow reset. Ready for a new product.", "info")
+        return render_home_view({}, None, None, product_id="")
+    state = load_app_state()
+    product_id = state.get("last_product_id") or ""
 
     if not product_id:
-        flash("Provide a SKU or product link before resetting a platform.", "error")
+        flash("Select a product before resetting a platform.", "error")
     elif not platform or platform not in RESETTABLE_PLATFORMS:
         flash("Choose a valid platform to reset.", "error")
     else:
@@ -881,7 +1038,7 @@ def reset_platform():
 
     saved_state = get_product_state(product_id) if product_id else {}
     form_values, preview_payload, pinterest_result = build_render_payload(saved_state)
-    website_result = (saved_state.get("results") or {}).get("website") if saved_state else None
+    website_result = get_platform_state(saved_state, "website") if saved_state else None
     return render_home_view(
         form_values,
         preview_payload,
@@ -985,7 +1142,7 @@ def save_draft():
     flash("Draft saved. You can return later to continue.", "success")
     saved_state = get_product_state(product_id)
     form_values, preview_payload, pinterest_result = build_render_payload(saved_state)
-    website_result = (saved_state.get("results") or {}).get("website") if saved_state else None
+    website_result = get_platform_state(saved_state, "website") if saved_state else None
     return render_home_view(
         form_values,
         preview_payload,
@@ -1366,7 +1523,7 @@ def generate_instagram_image():
     boost_prompt = (
         raw_form_values.get("instagram_boost_prompt")
         or (preview_payload.get("instagram_boost_prompt") if preview_payload else "")
-        or (saved_state.get("form_values") or {}).get("instagram_boost_prompt", "")
+        or _get_instagram_state(saved_state).get("instagram_boost_prompt", "")
     )
     if boost_prompt:
         inst_prompt = (
@@ -1523,13 +1680,13 @@ def publish_website():
         if fallback_id:
             product_id = fallback_id
             saved_state = state.get("products", {}).get(product_id, {})
-            fallback_values = saved_state.get("form_values") or {}
+            fallback_values = _build_form_values_from_platforms(saved_state)
             for key, value in fallback_values.items():
                 if not form_values.get(key):
                     form_values[key] = value
 
-    if not preview_payload and saved_state.get("preview"):
-        preview_payload = _hydrate_preview(saved_state.get("preview"))
+    if not preview_payload and saved_state:
+        preview_payload = _build_preview_from_platforms(saved_state)
 
     if not product_id:
         flash("Provide a SKU or product link before publishing to Kaymio.", "error")
@@ -1736,14 +1893,14 @@ def generate_platform_video(platform: str):
         boost_prompt = (
             raw_form_values.get("youtube_boost_prompt")
             or (preview_payload.get("youtube_boost_prompt") if preview_payload else "")
-            or (saved_state.get("form_values") or {}).get("youtube_boost_prompt", "")
+            or get_platform_state(saved_state, "youtube").get("youtube_boost_prompt", "")
         )
         form_values["youtube_boost_prompt"] = boost_prompt
     elif target == "instagram":
         boost_prompt = (
             raw_form_values.get("instagram_boost_prompt")
             or (preview_payload.get("instagram_boost_prompt") if preview_payload else "")
-            or (saved_state.get("form_values") or {}).get("instagram_boost_prompt", "")
+            or _get_instagram_state(saved_state).get("instagram_boost_prompt", "")
         )
         form_values["instagram_boost_prompt"] = boost_prompt
     if boost_prompt:
