@@ -130,7 +130,11 @@
                     <option value="">Choose a product</option>
                     {% for pid in product_ids %}
                       <option value="{{ pid }}" {% if pid == last_product_id %}selected{% endif %}>
-                        {{ pid }}
+                        {% if pid|length > 50 %}
+                          {{ pid[:50] }}...
+                        {% else %}
+                          {{ pid }}
+                        {% endif %}
                       </option>
                     {% endfor %}
                   </select>
