@@ -110,14 +110,41 @@
         {% set website_published = website_state.get('status') == 'published' %}
         {% set platforms_locked = not website_published %}
         {% set has_saved_image = preview_data.original_image_path or values.get('original_image_path') %}
-        {% set instagram_feed_published = platform_states.get('instagram_feed', {}).get('status') == 'published' %}
-        {% set instagram_story_published = platform_states.get('instagram_story', {}).get('status') == 'published' %}
-        {% set instagram_reel_published = platform_states.get('instagram_reel', {}).get('status') == 'published' %}
+        {% set instagram_state = platform_states.get('instagram', {}) %}
+        {% set instagram_feed_published = instagram_state.get('instagram_feed', {}).get('status') == 'published' %}
+        {% set instagram_story_published = instagram_state.get('instagram_story', {}).get('status') == 'published' %}
+        {% set instagram_reel_published = instagram_state.get('instagram_reel', {}).get('status') == 'published' %}
         {% set youtube_published = platform_states.get('youtube', {}).get('status') == 'published' %}
         {% set tiktok_published = platform_states.get('tiktok', {}).get('status') == 'published' %}
+        {% if product_ids %}
+          <form method="post" action="{{ url_for('select_product') }}" class="card">
+            <div class="card-header">
+              <h2>Switch product</h2>
+              <p>Select a saved product to load its data.</p>
+            </div>
+            <div class="field-grid">
+              <label>
+                <span>Saved products</span>
+                <div class="input-shell">
+                  <select name="product_id" onchange="this.form.submit()">
+                    <option value="">Choose a product</option>
+                    {% for pid in product_ids %}
+                      <option value="{{ pid }}" {% if pid == last_product_id %}selected{% endif %}>
+                        {% if pid|length > 50 %}
+                          {{ pid[:50] }}...
+                        {% else %}
+                          {{ pid }}
+                        {% endif %}
+                      </option>
+                    {% endfor %}
+                  </select>
+                </div>
+              </label>
+            </div>
+          </form>
+        {% endif %}
         <form method="post" action="{{ url_for('reset_platform') }}" class="card add-card">
-          <input type="hidden" name="platform" value="pinterest" />
-          <input type="hidden" name="sku_or_url" value="{{ values.get('sku_or_url', '') }}" />
+          <input type="hidden" name="platform" value="workflow" />
           <div class="card-header add-header">
             <button type="submit" class="ghost-btn add-btn">
               Add +

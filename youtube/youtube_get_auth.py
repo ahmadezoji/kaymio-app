@@ -9,6 +9,7 @@ copy into your environment (.env or host secrets manager).
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 import urllib.parse
@@ -61,10 +62,11 @@ def exchange_code_for_tokens(
     return resp.json()
 
 
-def write_access_token_to_file(access_token: str):
-    """Write the access token to a file."""
+def write_access_token_to_file(access_token: str, refresh_token: str):
+    """Write access and refresh tokens to a file in JSON format."""
+    payload = {"access_token": access_token, "refresh_token": refresh_token}
     with open("youtube_access_token.txt", "w") as token_file:
-        token_file.write(access_token)
+        token_file.write(json.dumps(payload))
 
 
 def main() -> int:
@@ -110,7 +112,7 @@ def main() -> int:
     print("\nOnly the refresh token needs to persist long term; the service will refresh access tokens automatically.")
 
     # Write the access token to a file
-    write_access_token_to_file(access_token)
+    write_access_token_to_file(access_token, refresh_token)
     print("\nAccess token written to youtube_access_token.txt")
     return 0
 
