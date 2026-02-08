@@ -46,6 +46,7 @@
       <input type="hidden" name="youtube_keywords_payload" value="{{ preview.youtube_keywords_payload | e }}" />
       <input type="hidden" name="generated_video_path" value="{{ preview.generated_video_path | e }}" />
       <input type="hidden" name="video_prompt" value="{{ preview.video_prompt | e }}" />
+      <input type="hidden" name="video_hook_style" value="{{ (values.get('video_hook_style') or preview.video_hook_style or '') | e }}" />
       <input type="hidden" name="instagram_image_path" value="{{ preview.instagram_image_path | e }}" />
       <input
         type="hidden"
@@ -695,6 +696,22 @@
                 {% if has_preview or has_saved_image %}
                   <form method="post" action="{{ url_for('generate_platform_video', platform='instagram') }}">
                   <p class="muted">Tip: add wardrobe, lighting, or mood references to guide the Reel.</p>
+                  <label>
+                    <span>Hook style</span>
+                    <select name="video_hook_style" {% if instagram_reel_published or platforms_locked %}disabled{% endif %}>
+                      {% set hook_pref = values.get('video_hook_style', '') %}
+                      {% if not hook_pref %}
+                        {% set hook_pref = preview_data.video_hook_style | default('', true) %}
+                      {% endif %}
+                      <option value="" {% if not hook_pref %}selected{% endif %}>Auto (randomized)</option>
+                      <option value="curiosity" {% if hook_pref == 'curiosity' %}selected{% endif %}>Curiosity</option>
+                      <option value="problem" {% if hook_pref == 'problem' %}selected{% endif %}>Problem</option>
+                      <option value="comparison" {% if hook_pref == 'comparison' %}selected{% endif %}>Comparison</option>
+                      <option value="transformation" {% if hook_pref == 'transformation' %}selected{% endif %}>Transformation</option>
+                      <option value="demo" {% if hook_pref == 'demo' %}selected{% endif %}>Instant demo</option>
+                      <option value="aesthetic" {% if hook_pref == 'aesthetic' %}selected{% endif %}>Aesthetic</option>
+                    </select>
+                  </label>
                   {{ preview_hidden_inputs(preview_data, values) }}
                   <button type="submit" class="ghost-btn" {% if instagram_reel_published or platforms_locked %}disabled{% endif %}>
                     Generate Instagram Reel
@@ -779,7 +796,23 @@
               {% endif %}
               {% if has_preview %}
                 <form method="post" action="{{ url_for('generate_platform_video', platform='youtube') }}">
-                  <label>
+                                    <label>
+                    <span>Hook style</span>
+                    <select name="video_hook_style" {% if youtube_published or platforms_locked %}disabled{% endif %}>
+                      {% set hook_pref = values.get('video_hook_style', '') %}
+                      {% if not hook_pref %}
+                        {% set hook_pref = preview_data.video_hook_style | default('', true) %}
+                      {% endif %}
+                      <option value="" {% if not hook_pref %}selected{% endif %}>Auto (randomized)</option>
+                      <option value="curiosity" {% if hook_pref == 'curiosity' %}selected{% endif %}>Curiosity</option>
+                      <option value="problem" {% if hook_pref == 'problem' %}selected{% endif %}>Problem</option>
+                      <option value="comparison" {% if hook_pref == 'comparison' %}selected{% endif %}>Comparison</option>
+                      <option value="transformation" {% if hook_pref == 'transformation' %}selected{% endif %}>Transformation</option>
+                      <option value="demo" {% if hook_pref == 'demo' %}selected{% endif %}>Instant demo</option>
+                      <option value="aesthetic" {% if hook_pref == 'aesthetic' %}selected{% endif %}>Aesthetic</option>
+                    </select>
+                  </label>
+<label>
                     <span>Short duration (seconds)</span>
                     <input
                       type="number"
@@ -889,6 +922,22 @@
               {% if has_preview %}
                 <form method="post" action="{{ url_for('generate_platform_video', platform='tiktok') }}">
                   {{ preview_hidden_inputs(preview_data, values) }}
+                  <label>
+                    <span>Hook style</span>
+                    <select name="video_hook_style" {% if tiktok_published or platforms_locked %}disabled{% endif %}>
+                      {% set hook_pref = values.get('video_hook_style', '') %}
+                      {% if not hook_pref %}
+                        {% set hook_pref = preview_data.video_hook_style | default('', true) %}
+                      {% endif %}
+                      <option value="" {% if not hook_pref %}selected{% endif %}>Auto (randomized)</option>
+                      <option value="curiosity" {% if hook_pref == 'curiosity' %}selected{% endif %}>Curiosity</option>
+                      <option value="problem" {% if hook_pref == 'problem' %}selected{% endif %}>Problem</option>
+                      <option value="comparison" {% if hook_pref == 'comparison' %}selected{% endif %}>Comparison</option>
+                      <option value="transformation" {% if hook_pref == 'transformation' %}selected{% endif %}>Transformation</option>
+                      <option value="demo" {% if hook_pref == 'demo' %}selected{% endif %}>Instant demo</option>
+                      <option value="aesthetic" {% if hook_pref == 'aesthetic' %}selected{% endif %}>Aesthetic</option>
+                    </select>
+                  </label>
                   <button type="submit" class="ghost-btn" {% if tiktok_published or platforms_locked %}disabled{% endif %}>
                     Generate TikTok video
                   </button>
