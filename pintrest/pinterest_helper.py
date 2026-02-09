@@ -40,8 +40,7 @@ def fetch_pinterest_analytics(days: int = 30) -> Dict[str, object]:
         "ENGAGEMENT",
         "OUTBOUND_CLICK",
         "SAVE",
-        "TOTAL_AUDIENCE",
-        "ENGAGED_AUDIENCE",
+        "PIN_CLICK",
     ]
     params = {
         "start_date": start_date.isoformat(),
