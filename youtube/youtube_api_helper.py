@@ -1,6 +1,7 @@
 """YouTube Data API helper for uploading Shorts."""
 from __future__ import annotations
 
+import datetime as dt
 import json
 import logging
 import os
@@ -169,3 +170,81 @@ def publish_short_video(
         }
 
     raise RuntimeError("Unable to publish to YouTube after refreshing the access token")
+
+
+YOUTUBE_ANALYTICS_API = "https://youtubeanalytics.googleapis.com/v2/reports"
+
+
+def _get_access_token_from_file() -> Optional[str]:
+    token_path = Path("youtube_access_token.txt")
+    try:
+        raw = token_path.read_text().strip()
+    except FileNotFoundError:
+        return None
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+        return data.get("access_token")
+    except json.JSONDecodeError:
+        return raw
+
+
+def fetch_youtube_analytics(days: int = 28) -> Dict[str, object]:
+    # token = _get_access_token_from_file() or _get_youtube_token()
+    token = _get_youtube_token()
+    if not token:
+        return {"error": "Missing YouTube access token."}
+
+    end_date = dt.date.today()
+    start_date = end_date - dt.timedelta(days=days)
+    params = {
+        "ids": "channel==MINE",
+        "startDate": start_date.isoformat(),
+        "endDate": end_date.isoformat(),
+        "metrics": "views,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,likes,subscribersGained",
+    }
+    headers = {"Authorization": f"Bearer {token}"}
+
+    def _query(params_override: Dict) -> Optional[Dict]:
+        query_params = {**params, **params_override}
+        response = requests.get(YOUTUBE_ANALYTICS_API, headers=headers, params=query_params, timeout=30)
+        if response.status_code == 401:
+            refresh_youtube_access_token()
+            new_token = _get_youtube_token()
+            if new_token:
+                headers["Authorization"] = f"Bearer {new_token}"
+                response = requests.get(YOUTUBE_ANALYTICS_API, headers=headers, params=query_params, timeout=30)
+        if response.status_code >= 400:
+            logger.warning("YouTube analytics error: %s - %s", response.status_code, response.text)
+            return None
+        return response.json()
+
+    summary = _query({})
+    if not summary:
+        return {"error": "Unable to fetch YouTube analytics."}
+
+    row = (summary.get("rows") or [])[0] if summary.get("rows") else []
+    metrics = summary.get("columnHeaders") or []
+    metric_map: Dict[str, object] = {}
+    for idx, header in enumerate(metrics):
+        name = header.get("name")
+        metric_map[name] = row[idx] if idx < len(row) else None
+
+    trend_payload = _query({"dimensions": "day", "metrics": "views", "sort": "day"})
+    trend = []
+    if trend_payload and trend_payload.get("rows"):
+        trend = [item[1] for item in trend_payload["rows"] if len(item) > 1]
+
+    return {
+        "period": f"Last {days} days",
+        "metrics": {
+            "Views": metric_map.get("views"),
+            "Watch time (min)": metric_map.get("estimatedMinutesWatched"),
+            "Avg view duration": metric_map.get("averageViewDuration"),
+            "Avg % viewed": metric_map.get("averageViewPercentage"),
+            "Likes": metric_map.get("likes"),
+            "Subscribers gained": metric_map.get("subscribersGained"),
+        },
+        "trend": trend,
+    }
