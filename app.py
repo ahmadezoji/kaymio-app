@@ -1507,8 +1507,8 @@ def publish_pinterest_video():
         return render_home_view(form_values, preview_payload, product_id=product_id)
 
     try:
-        # Validate video exists before publishing.
-        load_stored_media(video_path)
+        # Load local generated video for Pinterest media upload.
+        video_bytes = load_stored_media(video_path)
     except Exception:
         flash("Unable to load the generated video. Please regenerate it.", "error")
         return render_home_view(form_values, preview_payload, product_id=product_id)
@@ -1521,15 +1521,16 @@ def publish_pinterest_video():
         raw_form_values.get("affiliate_link", form_values.get("affiliate_link", "")),
         use_affiliate_link_flag,
     )
-    public_video_url = url_for("serve_media", filename=video_path, _external=True)
+    cover_image_url = preview_payload.get("image_public_url") if preview_payload else None
 
     try:
         pin_response = create_pinterest_video_pin(
-            video_url=public_video_url,
+            video_bytes=video_bytes,
             title=title,
             description=description,
             affiliate_link=destination_link,
             tags=tags,
+            cover_image_url=cover_image_url,
         )
         flash("Pinterest video published successfully!", "success")
         update_product_state(

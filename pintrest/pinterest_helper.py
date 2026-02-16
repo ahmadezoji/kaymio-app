@@ -5,6 +5,7 @@ import base64
 import datetime as dt
 import logging
 import os
+import time
 from pathlib import Path
 from typing import Dict, Iterable, Optional
 
@@ -12,6 +13,7 @@ import requests
 
 logger = logging.getLogger(__name__)
 API_URL = "https://api.pinterest.com/v5/pins"
+MEDIA_URL = "https://api.pinterest.com/v5/media"
 
 
 PINTEREST_ANALYTICS_URL = "https://api.pinterest.com/v5/user_account/analytics"
@@ -159,13 +161,14 @@ def create_pinterest_pin(
 
 
 def create_pinterest_video_pin(
-    video_url: str,
+    video_bytes: bytes,
     title: str,
     description: str,
     affiliate_link: Optional[str],
     tags: Optional[Iterable[str]] = None,
+    cover_image_url: Optional[str] = None,
 ) -> Dict[str, str]:
-    """Create a Pinterest video pin from a publicly reachable video URL."""
+    """Create a Pinterest video pin via Pinterest media upload + video_id pin flow."""
     access_token = _load_pinterest_access_token()
     if not access_token:
         logger.warning("Pinterest access token not found")
@@ -182,17 +185,82 @@ def create_pinterest_video_pin(
         if hashtag_block:
             description = f"{description} {hashtag_block}".strip()
 
+    # 1) Register video upload and receive signed upload URL/fields.
+    register_resp = requests.post(
+        MEDIA_URL,
+        headers={"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"},
+        json={"media_type": "video"},
+        timeout=30,
+    )
+    if register_resp.status_code >= 400:
+        logger.error(
+            "Pinterest media register failed: %s - %s",
+            register_resp.status_code,
+            register_resp.text,
+        )
+        register_resp.raise_for_status()
+    media_payload = register_resp.json()
+    media_id = media_payload.get("media_id")
+    upload_url = media_payload.get("upload_url")
+    upload_parameters = media_payload.get("upload_parameters") or {}
+    if not media_id or not upload_url:
+        raise RuntimeError("Pinterest did not return media_id/upload_url for video upload.")
+
+    # 2) Upload raw video bytes to signed storage endpoint.
+    upload_data = dict(upload_parameters)
+    upload_data.pop("Content-Type", None)
+    upload_resp = requests.post(
+        upload_url,
+        data=upload_data,
+        files={"file": ("video.mp4", video_bytes, "video/mp4")},
+        timeout=120,
+    )
+    if upload_resp.status_code >= 400:
+        logger.error(
+            "Pinterest media upload failed: %s - %s",
+            upload_resp.status_code,
+            upload_resp.text,
+        )
+        upload_resp.raise_for_status()
+
+    # 3) Poll media status until succeeded.
+    media_status = "registered"
+    for _ in range(20):
+        status_resp = requests.get(
+            f"{MEDIA_URL}/{media_id}",
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=15,
+        )
+        if status_resp.status_code >= 400:
+            logger.error(
+                "Pinterest media status check failed: %s - %s",
+                status_resp.status_code,
+                status_resp.text,
+            )
+            status_resp.raise_for_status()
+        media_status = (status_resp.json() or {}).get("status") or media_status
+        if media_status == "succeeded":
+            break
+        if media_status == "failed":
+            raise RuntimeError("Pinterest video processing failed.")
+        time.sleep(3)
+    if media_status != "succeeded":
+        raise RuntimeError(f"Pinterest video still not ready (status: {media_status}).")
+
+    # 4) Create pin using source_type=video_id.
     payload = {
         "board_id": board_id,
         "title": (title or "Video pin")[:100],
         "description": (description or "")[:500],
         "link": affiliate_link,
         "media_source": {
-            "source_type": "video_url",
-            "url": video_url,
+            "source_type": "video_id",
+            "media_id": media_id,
         },
         "alt_text": (description or "")[:500],
     }
+    if cover_image_url:
+        payload["media_source"]["cover_image_url"] = cover_image_url
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json",
