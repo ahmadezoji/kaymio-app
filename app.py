@@ -3,6 +3,7 @@ import json
 import os
 from io import BytesIO
 from pathlib import Path
+import random
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 from uuid import uuid4
@@ -108,6 +109,7 @@ PINTEREST_PREVIEW_KEYS = {
 }
 
 INSTAGRAM_PREVIEW_KEYS = {
+    "video_hook_style",
     "instagram_caption",
     "instagram_hashtags",
     "instagram_hashtags_payload",
@@ -118,9 +120,15 @@ INSTAGRAM_PREVIEW_KEYS = {
     "instagram_boost_prompt",
 }
 
-TIKTOK_PREVIEW_KEYS = {"tiktok_caption", "tiktok_hashtags", "tiktok_hashtags_payload"}
+TIKTOK_PREVIEW_KEYS = {
+    "video_hook_style",
+    "tiktok_caption",
+    "tiktok_hashtags",
+    "tiktok_hashtags_payload",
+}
 
 YOUTUBE_PREVIEW_KEYS = {
+    "video_hook_style",
     "youtube_title",
     "youtube_description",
     "youtube_keywords",
@@ -151,6 +159,7 @@ FORM_COMMON_KEYS = {
     "use_affiliate_link",
     "selected_original_image",
     "original_image_path",
+    "video_hook_style",
 }
 
 
@@ -930,6 +939,7 @@ def rebuild_preview_payload(raw_form_values: Dict[str, str]):
         "price": raw_form_values.get("price", ""),
         "website_boost_prompt": raw_form_values.get("website_boost_prompt", ""),
         "instagram_boost_prompt": raw_form_values.get("instagram_boost_prompt", ""),
+        "video_hook_style": raw_form_values.get("video_hook_style", ""),
         "youtube_boost_prompt": raw_form_values.get("youtube_boost_prompt", ""),
         "use_affiliate_link": (
             raw_form_values.get("use_affiliate_link")
@@ -1887,24 +1897,84 @@ def generate_platform_video(platform: str):
             return render_home_view(form_values, preview_payload, product_id=product_id)
 
     title = raw_form_values.get("title") or form_values.get("title") or "this product"
+    product_context = title
+    category = form_values.get("category") or raw_form_values.get("category")
+    price = form_values.get("price") or raw_form_values.get("price")
+    if category or price:
+        details = ", ".join([item for item in [category, price] if item])
+        product_context = f"{title} ({details})"
+
+    hook_style_raw = (
+        raw_form_values.get("video_hook_style")
+        or (preview_payload.get("video_hook_style") if preview_payload else "")
+        or get_platform_state(saved_state, target if target != "instagram" else "instagram_reel").get(
+            "video_hook_style", ""
+        )
+    )
+    hook_styles = {
+        "curiosity": "Open with a surprising detail that makes viewers ask 'why is that happening?'",
+        "problem": "Open by showing a common pain point or frustration the product solves.",
+        "comparison": "Open with a quick side-by-side contrast (before/after or old vs new).",
+        "transformation": "Open with an instant transformation moment (messy -> clean, dull -> shiny).",
+        "demo": "Open by immediately demonstrating the core feature in action.",
+        "aesthetic": "Open with a beautiful, cinematic hero shot that feels premium and real.",
+    }
+    hook_style = hook_style_raw.strip().lower() if hook_style_raw else "auto"
+    if hook_style not in hook_styles:
+        hook_style = "auto"
+    if hook_style == "auto":
+        hook_style = random.choice(list(hook_styles.keys()))
+    hook_note = hook_styles[hook_style]
+    form_values["video_hook_style"] = hook_style
+
+    camera_moves = ["push-in", "whip-pan", "macro detail", "over-shoulder", "handheld orbit", "top-down"]
+    settings = [
+        "bright kitchen counter",
+        "cozy bedroom corner",
+        "natural window light desk",
+        "street-style outdoor scene",
+        "clean studio tabletop",
+        "bathroom vanity",
+    ]
+    lighting = ["soft daylight", "warm tungsten", "high-contrast dramatic", "even diffused"]
+    cut_styles = [
+        "6-9 quick cuts",
+        "5-7 fast cuts with a speed ramp",
+        "7-10 cuts with a slow-motion payoff",
+    ]
+    move_list = ", ".join(random.sample(camera_moves, k=3))
+    setting_choice = random.choice(settings)
+    lighting_choice = random.choice(lighting)
+    cut_style = random.choice(cut_styles)
+
     prompt_templates = {
         "youtube": (
-            "Create a vertical YouTube Short for 'this product' "
-            " do not add any on-screen text—the output must be pure video. "
-            "Do not include any voiceover or speech; choose and add suitable music only."
+            "Create a vertical YouTube Short for {product}. Make it feel like authentic UGC, not an ad. "
+            "Hook: {hook}. Setting: {setting}. Lighting: {lighting}. "
+            "Show a clear problem -> use -> satisfying result. Use {cut_style} and vary camera moves: {moves}. "
+            "No on-screen text, no logos, no voiceover, no speech. Choose suitable music only."
         ),
         "tiktok": (
-            "Create a TikTok-ready vertical video for 'this product', "
-            "and camera moves that highlight the wow factor, but keep the footage clean with no text or overlays. "
-            "Do not include any voiceover or speech; choose and add suitable music only."
+            "Create a TikTok-ready vertical video for {product}. Hook: {hook}. "
+            "Use {cut_style}, tactile close-ups, and fast angle changes with camera moves: {moves}. "
+            "Include a quick before/after or transformation moment. Setting: {setting}. Lighting: {lighting}. "
+            "Keep it clean with no text or overlays. No voiceover or speech; choose suitable music only."
         ),
         "instagram": (
-            "Create an Instagram Reels-ready vertical video for 'this product' with smooth pacing, "
-            "natural lighting, and crisp focus on the product details, but do not add any on-screen text or logos. "
-            "Do not include any voiceover or speech; choose and add suitable music only."
+            "Create an Instagram Reels-ready vertical video for {product}. Hook: {hook}. "
+            "Lead with a thumb-stopping opening frame, then show close-ups, usage, and lifestyle context. "
+            "Use {cut_style} and varied camera moves: {moves}. Setting: {setting}. Lighting: {lighting}. "
+            "No on-screen text or logos. No voiceover or speech; choose suitable music only."
         ),
     }
-    prompt = prompt_templates[target].format(title=title)
+    prompt = prompt_templates[target].format(
+        product=product_context,
+        hook=hook_note,
+        setting=setting_choice,
+        lighting=lighting_choice,
+        cut_style=cut_style,
+        moves=move_list,
+    )
     boost_prompt = ""
     if target == "youtube":
         boost_prompt = (
