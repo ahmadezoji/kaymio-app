@@ -109,6 +109,8 @@
         {% set pinterest_state = platform_states.get('pinterest', {}) %}
         {% set pinterest_published = pinterest_state.get('status') == 'published' %}
         {% set pinterest_live_url = pinterest_state.get('pin_url') or (result.pin_url if result else '') %}
+        {% set pinterest_video_published = pinterest_state.get('video_status') == 'published' %}
+        {% set pinterest_video_live_url = pinterest_state.get('video_pin_url') %}
         {% set pinterest_has_live_pin = pinterest_published and pinterest_live_url %}
         {% set pinterest_needs_retry = pinterest_published and not pinterest_live_url %}
         {% set website_state = platform_states.get('website', {}) %}
@@ -492,6 +494,48 @@
                         Download pin image
                       </a>
                     {% endif %}
+                {% endif %}
+              </div>
+              <div class="preview-actions" style="margin-top: 18px;">
+                <h3>Pinterest video</h3>
+                {% if preview_data.video_url %}
+                  <video controls class="video-preview" src="{{ preview_data.video_url }}"></video>
+                {% else %}
+                  <p class="muted">Generate a Pinterest-ready video from the current visual.</p>
+                {% endif %}
+                {% if has_preview %}
+                  <form method="post" action="{{ url_for('generate_platform_video', platform='pinterest') }}">
+                    {{ preview_hidden_inputs(preview_data, values) }}
+                    <button type="submit" class="ghost-btn" {% if platforms_locked %}disabled{% endif %}>
+                      Generate Pinterest video
+                    </button>
+                  </form>
+                {% endif %}
+                {% if preview_data.video_url %}
+                  <form method="post" action="{{ url_for('publish_pinterest_video') }}">
+                    {{ preview_hidden_inputs(preview_data, values) }}
+                    <input type="hidden" name="use_affiliate_link" value="0" />
+                    <label class="checkbox">
+                      <input
+                        type="checkbox"
+                        name="use_affiliate_link"
+                        value="1"
+                        {% if use_affiliate_checked %}checked{% endif %}
+                        {% if platforms_locked %}disabled{% endif %}
+                      />
+                      <span>Use affiliate link</span>
+                    </label>
+                    <button type="submit" class="primary" {% if pinterest_video_published or platforms_locked %}disabled{% endif %}>
+                      Publish video to Pinterest
+                    </button>
+                  </form>
+                  {% if pinterest_video_live_url %}
+                    <p>
+                      <a href="{{ pinterest_video_live_url }}" target="_blank" rel="noopener">View published video pin</a>
+                    </p>
+                  {% elif pinterest_video_published %}
+                    <p class="muted">Pinterest video already published.</p>
+                  {% endif %}
                 {% endif %}
               </div>
             </div>

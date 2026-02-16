@@ -28,7 +28,7 @@ from openai_helper import (
     generate_text,
     generate_youtube_metadata,
 )
-from pintrest.pinterest_helper import create_pinterest_pin
+from pintrest.pinterest_helper import create_pinterest_pin, create_pinterest_video_pin
 from tiktok.tiktok_api_helper import publish_tiktok_post
 from youtube.youtube_api_helper import publish_short_video
 from kaymio.kaymio import create_woocommerce_product, find_wordpress_nearest_category
@@ -1493,6 +1493,65 @@ def confirm_pinterest():
     return render_home_view(form_values, pinterest_result=result, product_id=product_id)
 
 
+@app.route("/publish-pinterest-video", methods=["POST"])
+def publish_pinterest_video():
+    raw_form_values = collect_form_values(request.form)
+    form_values = extract_form_defaults(raw_form_values)
+    use_affiliate_link_flag = str(form_values.get("use_affiliate_link", "0")).lower() in TRUTHY_VALUES
+    product_id = resolve_product_id(form_values)
+    preview_payload = rebuild_preview_payload(raw_form_values)
+    video_path = raw_form_values.get("generated_video_path")
+
+    if not video_path:
+        flash("Generate the Pinterest video first, then publish.", "error")
+        return render_home_view(form_values, preview_payload, product_id=product_id)
+
+    try:
+        # Validate video exists before publishing.
+        load_stored_media(video_path)
+    except Exception:
+        flash("Unable to load the generated video. Please regenerate it.", "error")
+        return render_home_view(form_values, preview_payload, product_id=product_id)
+
+    title = raw_form_values.get("title") or form_values.get("title", "")
+    description = raw_form_values.get("description") or form_values.get("description", "")
+    tags = parse_tags_payload(raw_form_values.get("tags_payload") or raw_form_values.get("tags", "[]"))
+    destination_link = resolve_destination_url(
+        product_id,
+        raw_form_values.get("affiliate_link", form_values.get("affiliate_link", "")),
+        use_affiliate_link_flag,
+    )
+    public_video_url = url_for("serve_media", filename=video_path, _external=True)
+
+    try:
+        pin_response = create_pinterest_video_pin(
+            video_url=public_video_url,
+            title=title,
+            description=description,
+            affiliate_link=destination_link,
+            tags=tags,
+        )
+        flash("Pinterest video published successfully!", "success")
+        update_product_state(
+            product_id,
+            form_values=form_values,
+            preview=preview_payload,
+            platforms={
+                "pinterest": {
+                    "video_status": "published",
+                    "video_pin_id": pin_response.get("id"),
+                    "video_pin_url": pin_response.get("url"),
+                    "use_affiliate_link": use_affiliate_link_flag,
+                }
+            },
+        )
+    except Exception as exc:
+        app.logger.exception("Pinterest video publish failed")
+        flash(f"Unable to publish video to Pinterest: {exc}", "error")
+
+    return render_home_view(form_values, preview_payload, product_id=product_id)
+
+
 @app.route("/generate-instagram-image", methods=["POST"])
 def generate_instagram_image():
     raw_form_values = collect_form_values(request.form)
@@ -1847,7 +1906,7 @@ def publish_website():
 
 @app.route("/generate-video/<platform>", methods=["POST"])
 def generate_platform_video(platform: str):
-    supported = {"youtube", "tiktok", "instagram"}
+    supported = {"youtube", "tiktok", "instagram", "pinterest"}
     target = platform.lower()
     if target not in supported:
         abort(404)
@@ -1950,6 +2009,12 @@ def generate_platform_video(platform: str):
     cut_style = random.choice(cut_styles)
 
     prompt_templates = {
+        "pinterest": (
+            "Create a Pinterest-optimized vertical product video for {product}. Hook: {hook}. "
+            "Lead with an eye-catching opening shot, then show clear lifestyle use-cases and close-up details. "
+            "Use {cut_style} and varied camera moves: {moves}. Setting: {setting}. Lighting: {lighting}. "
+            "No on-screen text, no logos, no voiceover, no speech. Choose suitable music only."
+        ),
         "youtube": (
             "Create a vertical YouTube Short for {product}. Make it feel like authentic UGC, not an ad. "
             "Hook: {hook}. Setting: {setting}. Lighting: {lighting}. "
@@ -1985,6 +2050,13 @@ def generate_platform_video(platform: str):
             or get_platform_state(saved_state, "youtube").get("youtube_boost_prompt", "")
         )
         form_values["youtube_boost_prompt"] = boost_prompt
+    elif target == "pinterest":
+        boost_prompt = (
+            raw_form_values.get("pinterest_extra")
+            or (preview_payload.get("pinterest_extra") if preview_payload else "")
+            or get_platform_state(saved_state, "pinterest").get("pinterest_extra", "")
+        )
+        form_values["pinterest_extra"] = boost_prompt
     elif target == "instagram":
         boost_prompt = (
             raw_form_values.get("instagram_boost_prompt")
@@ -2036,19 +2108,22 @@ def generate_platform_video(platform: str):
 
     target_label = "Instagram" if target == "instagram" else target.title()
     platform_key = "instagram_reel" if target == "instagram" else target
+    platform_payload = {
+        "status": "pending",
+        "video_path": video_path,
+        "base_image_path": base_image_path,
+        "use_affiliate_link": use_affiliate_link_flag,
+    }
+    if target == "pinterest":
+        # Keep image pin publication status intact; track video state separately.
+        platform_payload.pop("status", None)
+        platform_payload["video_status"] = "pending"
     flash(f"{target_label} video generated.", "success")
     update_product_state(
         product_id,
         form_values=form_values,
         preview=preview_payload,
-        platforms={
-            platform_key: {
-                "status": "pending",
-                "video_path": video_path,
-                "base_image_path": base_image_path,
-                "use_affiliate_link": use_affiliate_link_flag,
-            }
-        },
+        platforms={platform_key: platform_payload},
         assets={"generated_video_path": video_path},
     )
     return render_home_view(form_values, preview_payload, product_id=product_id)

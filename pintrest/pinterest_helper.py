@@ -158,6 +158,62 @@ def create_pinterest_pin(
     }
 
 
+def create_pinterest_video_pin(
+    video_url: str,
+    title: str,
+    description: str,
+    affiliate_link: Optional[str],
+    tags: Optional[Iterable[str]] = None,
+) -> Dict[str, str]:
+    """Create a Pinterest video pin from a publicly reachable video URL."""
+    access_token = _load_pinterest_access_token()
+    if not access_token:
+        logger.warning("Pinterest access token not found")
+        return {"status": "skipped", "id": None, "url": None}
+
+    board_id = os.getenv("PINTEREST_BOARD_ID") or get_default_board_id()
+    if not board_id:
+        logger.warning("Pinterest board id missing; returning local-only payload.")
+        return {"status": "skipped", "id": None, "url": None}
+
+    tags = list(tags or [])
+    if tags:
+        hashtag_block = " ".join(f"#{kw.replace(' ', '')}" for kw in tags if kw)
+        if hashtag_block:
+            description = f"{description} {hashtag_block}".strip()
+
+    payload = {
+        "board_id": board_id,
+        "title": (title or "Video pin")[:100],
+        "description": (description or "")[:500],
+        "link": affiliate_link,
+        "media_source": {
+            "source_type": "video_url",
+            "url": video_url,
+        },
+        "alt_text": (description or "")[:500],
+    }
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json",
+    }
+    response = requests.post(API_URL, headers=headers, json=payload, timeout=30)
+    if response.status_code >= 400:
+        logger.error("Pinterest video API error: %s - %s", response.status_code, response.text)
+        response.raise_for_status()
+
+    data = response.json()
+    pin_id = data.get("id") or data.get("pin_id")
+    pin_url = data.get("url")
+    if not pin_url and pin_id:
+        pin_url = f"https://www.pinterest.com/pin/{pin_id}/"
+    return {
+        "status": data.get("status") or "created",
+        "id": pin_id,
+        "url": pin_url,
+    }
+
+
 def get_default_board_id():
     try:
         access_token = _load_pinterest_access_token()
