@@ -208,7 +208,6 @@ def create_pinterest_video_pin(
 
     # 2) Upload raw video bytes to signed storage endpoint.
     upload_data = dict(upload_parameters)
-    upload_data.pop("Content-Type", None)
     upload_resp = requests.post(
         upload_url,
         data=upload_data,
