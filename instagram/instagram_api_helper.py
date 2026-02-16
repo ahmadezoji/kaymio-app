@@ -39,8 +39,8 @@ def _get_instagram_credentials() -> Dict[str, str]:
     access_token = os.getenv("INSTAGRAM_ACCESS_TOKEN")
     user_id = os.getenv("INSTAGRAM_USER_ID")
     token_payload = _load_token_file()
-    access_token = token_payload.get("INSTAGRAM_ACCESS_TOKEN")
-    user_id = token_payload.get("INSTAGRAM_USER_ID")
+    access_token = token_payload.get("INSTAGRAM_ACCESS_TOKEN", access_token)
+    user_id = token_payload.get("INSTAGRAM_USER_ID", user_id)
     if not access_token or not user_id:
         raise RuntimeError(
             "INSTAGRAM_ACCESS_TOKEN and INSTAGRAM_USER_ID must be configured "
@@ -240,3 +240,67 @@ def publish_instagram_reel(
         media_type="REELS",
         share_to_feed=share_to_feed,
     )
+
+
+def _get_latest_media_id(access_token: str, user_id: str) -> Optional[str]:
+    response = requests.get(
+        f"{GRAPH_API_BASE}/{user_id}/media",
+        params={"fields": "id,media_type,timestamp", "limit": 1, "access_token": access_token},
+        timeout=30,
+    )
+    if response.status_code >= 400:
+        logger.warning("Instagram media list failed: %s - %s", response.status_code, response.text)
+        return None
+    data = response.json().get("data", [])
+    if not data:
+        return None
+    return data[0].get("id")
+
+
+def fetch_instagram_analytics() -> Dict[str, object]:
+    creds = _get_instagram_credentials()
+    access_token = creds.get("access_token")
+    user_id = creds.get("user_id")
+    if not access_token or not user_id:
+        return {"error": "Missing Instagram access token or user id."}
+
+    media_id = _get_latest_media_id(access_token, user_id)
+    if not media_id:
+        return {"error": "Unable to resolve latest Instagram media id."}
+
+    metrics = ["views", "reach", "engagement", "saved", "shares", "likes", "comments"]
+    try:
+        response = requests.get(
+            f"{GRAPH_API_BASE}/{media_id}/insights",
+            params={"metric": ",".join(metrics), "access_token": access_token},
+            timeout=30,
+        )
+        if response.status_code >= 400:
+            return {"error": f"Instagram insights error: {response.status_code} - {response.text}"}
+        data = response.json().get("data", [])
+    except Exception as exc:
+        return {"error": f"Instagram insights request failed: {exc}"}
+
+    metrics_map: Dict[str, object] = {}
+    for metric in data:
+        name = metric.get("name")
+        values = metric.get("values", [])
+        if name and values:
+            metrics_map[name] = values[0].get("value")
+
+    views = metrics_map.get("views") or metrics_map.get("engagement") or 0
+    trend = [0, views]
+
+    return {
+        "period": "Latest post",
+        "metrics": {
+            "Views": metrics_map.get("views"),
+            "Reach": metrics_map.get("reach"),
+            "Engagement": metrics_map.get("engagement"),
+            "Saves": metrics_map.get("saved"),
+            "Shares": metrics_map.get("shares"),
+            "Likes": metrics_map.get("likes"),
+            "Comments": metrics_map.get("comments"),
+        },
+        "trend": trend,
+    }

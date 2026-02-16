@@ -82,6 +82,7 @@
           <span>Gemini visuals</span>
           <span>Pinterest automation</span>
         </div>
+        <a class="ghost-btn" href="{{ url_for('analytics.analytics_view') }}">View analytics</a>
       </header>
 
       {% with messages = get_flashed_messages(with_categories=true) %}
@@ -95,6 +96,9 @@
       {% endwith %}
 
       <main class="layout">
+        <div class="card-header-actions" style="margin-bottom: 16px;">
+          <a class="ghost-btn" href="{{ url_for('analytics.analytics_view') }}">Analytics dashboard</a>
+        </div>
         {% set values = form_values or {} %}
         {% set preview_data = preview or {} %}
         {% set has_preview = preview is not none %}

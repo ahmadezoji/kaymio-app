@@ -33,10 +33,12 @@ from tiktok.tiktok_api_helper import publish_tiktok_post
 from youtube.youtube_api_helper import publish_short_video
 from kaymio.kaymio import create_woocommerce_product, find_wordpress_nearest_category
 from PIL import Image, ImageOps
+from analytics_view import analytics_bp
 
 load_dotenv()
 
 app = Flask(__name__)
+app.register_blueprint(analytics_bp)
 app.config["SECRET_KEY"] = os.getenv("FLASK_SECRET_KEY", "dev-secret-key")
 app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024  # 20MB uploads
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp"}

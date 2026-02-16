@@ -2,14 +2,90 @@
 from __future__ import annotations
 
 import base64
+import datetime as dt
 import logging
 import os
+from pathlib import Path
 from typing import Dict, Iterable, Optional
 
 import requests
 
 logger = logging.getLogger(__name__)
 API_URL = "https://api.pinterest.com/v5/pins"
+
+
+PINTEREST_ANALYTICS_URL = "https://api.pinterest.com/v5/user_account/analytics"
+
+
+def _load_pinterest_access_token() -> Optional[str]:
+    for candidate in ("pintrest/access_token.txt", "pintrest_access_token.txt", "access_token.txt"):
+        try:
+            token = Path(candidate).read_text().strip()
+            if token:
+                return token
+        except FileNotFoundError:
+            continue
+    return None
+
+
+def fetch_pinterest_analytics(days: int = 30) -> Dict[str, object]:
+    token = _load_pinterest_access_token()
+    if not token:
+        return {"error": "Missing Pinterest access token."}
+
+    end_date = dt.date.today()
+    start_date = end_date - dt.timedelta(days=days)
+    metrics = [
+        "IMPRESSION",
+        "ENGAGEMENT",
+        "OUTBOUND_CLICK",
+        "SAVE",
+        "PIN_CLICK",
+    ]
+    params = {
+        "start_date": start_date.isoformat(),
+        "end_date": end_date.isoformat(),
+        "from_claimed_content": "BOTH",
+        "pin_format": "ALL",
+        "app_types": "ALL",
+        "content_type": "ALL",
+        "source": "ALL",
+        "metric_types": ",".join(metrics),
+        "split_field": "NO_SPLIT",
+    }
+    headers = {"Authorization": f"Bearer {token}"}
+    try:
+        response = requests.get(PINTEREST_ANALYTICS_URL, params=params, headers=headers, timeout=30)
+        if response.status_code >= 400:
+            return {"error": f"Pinterest API error: {response.status_code} - {response.text}"}
+        payload = response.json()
+    except Exception as exc:
+        return {"error": f"Pinterest request failed: {exc}"}
+
+    daily = payload.get("all", {}).get("daily_metrics", [])
+    totals = {name: 0 for name in metrics}
+    trend = []
+    for row in daily:
+        metric_values = row.get("metrics", {})
+        for name in metrics:
+            value = metric_values.get(name)
+            if isinstance(value, (int, float)):
+                totals[name] += value
+        if "IMPRESSION" in metric_values:
+            trend.append(metric_values.get("IMPRESSION") or 0)
+
+    return {
+        "period": f"Last {days} days",
+        "metrics": {
+            "Impressions": totals.get("IMPRESSION"),
+            "Engagements": totals.get("ENGAGEMENT"),
+            "Outbound clicks": totals.get("OUTBOUND_CLICK"),
+            "Saves": totals.get("SAVE"),
+            "Total audience": totals.get("TOTAL_AUDIENCE"),
+            "Engaged audience": totals.get("ENGAGED_AUDIENCE"),
+        },
+        "trend": trend,
+    }
 
 
 def create_pinterest_pin(
@@ -21,11 +97,10 @@ def create_pinterest_pin(
 ) -> Dict[str, str]:
     """Upload a pin to Pinterest using the v5 API."""
 
-    with open("pintrest_access_token.txt", 'r') as f:
-        access_token = f.read().strip()
+    access_token = _load_pinterest_access_token()
 
     if not access_token:
-        print("Pinterest access token not found")
+        logger.warning("Pinterest access token not found")
         return None
     
     board_id = os.getenv("PINTEREST_BOARD_ID") or get_default_board_id()
@@ -84,13 +159,10 @@ def create_pinterest_pin(
 
 
 def get_default_board_id():
-    
     try:
-        with open("pintrest_access_token.txt", 'r') as f:
-            access_token = f.read().strip()
-
+        access_token = _load_pinterest_access_token()
         if not access_token:
-            print("Pinterest access token not found")
+            logger.warning("Pinterest access token not found")
             return None
         response = requests.get(
             'https://api.pinterest.com/v5/boards',
@@ -105,5 +177,5 @@ def get_default_board_id():
         return None
 
     except Exception as e:
-        print(f"Error getting boards: {e}")
+        logger.warning("Error getting boards: %s", e)
         return None
