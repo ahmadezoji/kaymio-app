@@ -1,6 +1,9 @@
 import base64
+import datetime as dt
 import json
 import os
+import threading
+import time
 from io import BytesIO
 from pathlib import Path
 import random
@@ -15,7 +18,10 @@ from flask import Flask, abort, flash, redirect, render_template, request, send_
 from amazon.amazon_api import build_affiliate_link, extract_asin, fetch_product_from_canopy
 from gemeni_api_helper import edit_image, generate_video_from_image
 from instagram.instagram_api_helper import (
+    get_latest_instagram_media_id,
+    list_story_media_candidates,
     publish_instagram_post,
+    publish_random_profile_story,
     publish_instagram_reel,
     publish_instagram_story,
 )
@@ -66,10 +72,138 @@ TRUTHY_VALUES = {"1", "true", "yes", "on"}
 VIDEO_DURATION_DEFAULT = 8
 VIDEO_DURATION_MIN = 4
 VIDEO_DURATION_MAX = 60
+STORY_AUTOPUBLISH_TIME = os.getenv("INSTAGRAM_STORY_AUTOPUBLISH_TIME", "11:45")
+STORY_AUTOPUBLISH_COUNT = int(os.getenv("INSTAGRAM_STORY_AUTOPUBLISH_COUNT", "2"))
+STORY_AUTOPUBLISH_ENABLED = os.getenv("INSTAGRAM_STORY_AUTOPUBLISH_ENABLED", "1") in TRUTHY_VALUES
+STORY_AUTOPUBLISH_STATE_FILE = STATE_DIR / "instagram_story_scheduler.json"
 
 
 def _empty_app_state() -> Dict[str, Any]:
     return {"products": {}, "last_product_id": ""}
+
+
+def _load_story_scheduler_state() -> Dict[str, Any]:
+    if not STORY_AUTOPUBLISH_STATE_FILE.exists():
+        return {}
+    try:
+        payload = json.loads(STORY_AUTOPUBLISH_STATE_FILE.read_text())
+        return payload if isinstance(payload, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_story_scheduler_state(payload: Dict[str, Any]) -> None:
+    STORY_AUTOPUBLISH_STATE_FILE.write_text(json.dumps(payload))
+
+
+def _random_affiliate_link_from_state() -> Optional[str]:
+    state = load_app_state()
+    products = state.get("products", {})
+    links: List[str] = []
+    for entry in products.values():
+        platforms = entry.get("platforms") or {}
+        for platform_name in ("pinterest", "website", "instagram_reel", "youtube", "tiktok"):
+            p_state = platforms.get(platform_name) or {}
+            candidate = p_state.get("affiliate_link")
+            if candidate:
+                links.append(candidate)
+    return random.choice(links) if links else None
+
+
+def _affiliate_link_for_instagram_media(media_id: str) -> Optional[str]:
+    if not media_id:
+        return None
+    state = load_app_state()
+    products = state.get("products", {}) or {}
+    for entry in products.values():
+        platforms = entry.get("platforms") or {}
+        instagram_group = platforms.get("instagram") or {}
+        for key in ("instagram_feed", "instagram_reel"):
+            p_state = instagram_group.get(key) or {}
+            stored_media_id = str(p_state.get("instagram_media_id") or p_state.get("media_id") or "")
+            if stored_media_id and stored_media_id == str(media_id):
+                affiliate = p_state.get("affiliate_link")
+                if affiliate:
+                    return affiliate
+        # Backward-compatible fallback for older flat structure.
+        for key in ("instagram_feed", "instagram_story", "instagram_reel"):
+            p_state = platforms.get(key) or {}
+            stored_media_id = str(p_state.get("instagram_media_id") or p_state.get("media_id") or "")
+            if stored_media_id and stored_media_id == str(media_id):
+                affiliate = p_state.get("affiliate_link")
+                if affiliate:
+                    return affiliate
+    return None
+
+
+def _publish_scheduled_instagram_stories() -> None:
+    posted = 0
+    candidates = list_story_media_candidates(limit=50)
+    if not candidates:
+        app.logger.warning("No Instagram media candidates found for scheduled stories.")
+        return
+    random.shuffle(candidates)
+    used_media: set[str] = set()
+    while posted < STORY_AUTOPUBLISH_COUNT:
+        try:
+            candidate = None
+            for item in candidates:
+                media_id = str(item.get("media_id") or "")
+                if media_id not in used_media:
+                    candidate = item
+                    used_media.add(media_id)
+                    break
+            if not candidate:
+                break
+            # 17892045201283167
+            affiliate_link = _affiliate_link_for_instagram_media(str(candidate.get("media_id") or ""))
+            # affiliate_link = "https://www.amazon.com/dp/B0987JNH24?tag=kaymio-20"
+            response = publish_instagram_story(
+                image_url=candidate.get("image_url", ""),
+                caption=None,
+                share_link=affiliate_link or candidate.get("permalink"),
+            )
+            app.logger.info("Scheduled Instagram story published: %s", response)
+            posted += 1
+            time.sleep(8)
+        except Exception as exc:
+            app.logger.exception("Scheduled Instagram story publish failed: %s", exc)
+            break
+
+
+def _instagram_story_scheduler_loop() -> None:
+    app.logger.info("Instagram story scheduler started for %s", STORY_AUTOPUBLISH_TIME)
+    while True:
+        try:
+            now = dt.datetime.now()
+            target_hour, target_minute = [int(part) for part in STORY_AUTOPUBLISH_TIME.split(":", 1)]
+            state = _load_story_scheduler_state()
+            last_run_date = state.get("last_run_date")
+            today = now.date().isoformat()
+            should_run = (
+                now.hour == target_hour
+                and now.minute >= target_minute
+                and last_run_date != today
+            )
+            if should_run:
+                _publish_scheduled_instagram_stories()
+                _save_story_scheduler_state({"last_run_date": today})
+            time.sleep(20)
+        except Exception:
+            app.logger.exception("Instagram scheduler loop error")
+            time.sleep(30)
+
+
+def start_instagram_story_scheduler() -> None:
+    if not STORY_AUTOPUBLISH_ENABLED:
+        app.logger.info("Instagram story scheduler disabled.")
+        return
+    thread = threading.Thread(
+        target=_instagram_story_scheduler_loop,
+        name="instagram-story-scheduler",
+        daemon=True,
+    )
+    thread.start()
 
 
 def _json_safe(data: Any) -> Any:
@@ -1691,16 +1825,24 @@ def publish_instagram():
     try:
         media_url = url_for("serve_media", filename=generated_image_path, _external=True)
         if target == "story":
-            publish_instagram_story(image_url=media_url, caption=caption.strip())
+            response = publish_instagram_story(image_url=media_url, caption=caption.strip())
         else:
-            publish_instagram_post(image_url=media_url, caption=caption_to_publish)
+            response = publish_instagram_post(image_url=media_url, caption=caption_to_publish)
+        media_id = response.get("id") or get_latest_instagram_media_id()
         flash("Instagram content published successfully!", "success")
         platform_name = f"instagram_{target.lower()}"
         update_product_state(
             product_id,
             form_values=form_values,
             preview=preview_payload,
-            platforms={platform_name: {"status": "published", "use_affiliate_link": use_affiliate_link_flag}},
+            platforms={
+                platform_name: {
+                    "status": "published",
+                    "use_affiliate_link": use_affiliate_link_flag,
+                    "instagram_media_id": media_id,
+                    "affiliate_link": form_values.get("affiliate_link"),
+                }
+            },
         )
     except Exception as exc:
         app.logger.exception("Instagram publish failed")
@@ -1736,7 +1878,8 @@ def publish_instagram_reel_route():
 
     try:
         media_url = url_for("serve_media", filename=video_path, _external=True)
-        publish_instagram_reel(video_url=media_url, caption=caption_to_publish)
+        response = publish_instagram_reel(video_url=media_url, caption=caption_to_publish)
+        media_id = response.get("id") or get_latest_instagram_media_id()
         flash("Instagram Reel published successfully!", "success")
         update_product_state(
             product_id,
@@ -1746,6 +1889,8 @@ def publish_instagram_reel_route():
                 "instagram_reel": {
                     "status": "published",
                     "use_affiliate_link": use_affiliate_link_flag,
+                    "instagram_media_id": media_id,
+                    "affiliate_link": form_values.get("affiliate_link"),
                 }
             },
         )
@@ -2264,4 +2409,8 @@ def publish_tiktok():
 
 
 if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
+    debug_enabled = True
+    # Avoid duplicate scheduler thread when Flask debug reloader spawns parent process.
+    if not debug_enabled or os.getenv("WERKZEUG_RUN_MAIN") == "true":
+        start_instagram_story_scheduler()
+    app.run(debug=debug_enabled, host="0.0.0.0", port=int(os.getenv("PORT", 5000)))

@@ -4,9 +4,10 @@ from __future__ import annotations
 import json
 import logging
 import os
+import random
 import time
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 from urllib.parse import urlparse, unquote
 
 import requests
@@ -217,13 +218,23 @@ def publish_instagram_story(
     share_link: Optional[str] = None,
 ) -> Dict[str, str]:
     """Publish an Instagram story asset (STORIES media type)."""
-
-    return _create_media_container(
-        image_url=image_url,
-        caption=caption,
-        share_link=share_link,
-        media_type="STORIES",
-    )
+    # Story publishing is strict: caption support is limited and share link can
+    # be rejected for some accounts/app configurations. Retry once without link.
+    try:
+        return _create_media_container(
+            image_url=image_url,
+            caption=None,
+            share_link=share_link,
+            media_type="STORIES",
+        )
+    except Exception:
+        logger.warning("Instagram story publish with share link failed; retrying without share link.")
+        return _create_media_container(
+            image_url=image_url,
+            caption=None,
+            share_link=None,
+            media_type="STORIES",
+        )
 
 
 def publish_instagram_reel(
@@ -242,6 +253,68 @@ def publish_instagram_reel(
     )
 
 
+def list_story_media_candidates(limit: int = 25) -> List[Dict[str, str]]:
+    """Fetch recent REELS media and return thumbnail candidates for stories."""
+    creds = _get_instagram_credentials()
+    params = {
+        "fields": (
+            "id,media_type,media_product_type,media_url,thumbnail_url,permalink,caption"
+        ),
+        "limit": str(max(1, min(limit, 50))),
+        "access_token": creds["access_token"],
+    }
+    response = requests.get(f"{GRAPH_API_BASE}/{creds['user_id']}/media", params=params, timeout=30)
+    if response.status_code >= 400:
+        logger.error("Instagram media list failed: %s - %s", response.status_code, response.text)
+        response.raise_for_status()
+
+    data = response.json().get("data", [])
+    candidates: List[Dict[str, str]] = []
+    for item in data:
+        if (item.get("media_product_type") or "").upper() != "REELS":
+            continue
+        media_type = item.get("media_type")
+        permalink = item.get("permalink") or ""
+        caption = item.get("caption") or ""
+        if media_type == "IMAGE" and item.get("media_url"):
+            candidates.append(
+                {
+                    "media_id": item.get("id") or "",
+                    "image_url": item["media_url"],
+                    "permalink": permalink,
+                    "caption": caption,
+                }
+            )
+            continue
+        if media_type == "VIDEO" and item.get("thumbnail_url"):
+            candidates.append(
+                {
+                    "media_id": item.get("id") or "",
+                    "image_url": item["thumbnail_url"],
+                    "permalink": permalink,
+                    "caption": caption,
+                }
+            )
+    return candidates
+
+
+def publish_random_profile_story(
+    *,
+    share_link: Optional[str] = None,
+    caption: Optional[str] = None,
+) -> Dict[str, str]:
+    """Pick a random profile media candidate and publish it as a story."""
+    candidates = list_story_media_candidates()
+    if not candidates:
+        raise RuntimeError("No recent Instagram media candidates found for story sharing.")
+    selected = random.choice(candidates)
+    return publish_instagram_story(
+        image_url=selected["image_url"],
+        caption=caption or selected.get("caption"),
+        share_link=share_link or selected.get("permalink"),
+    )
+
+
 def _get_latest_media_id(access_token: str, user_id: str) -> Optional[str]:
     response = requests.get(
         f"{GRAPH_API_BASE}/{user_id}/media",
@@ -255,6 +328,16 @@ def _get_latest_media_id(access_token: str, user_id: str) -> Optional[str]:
     if not data:
         return None
     return data[0].get("id")
+
+
+def get_latest_instagram_media_id() -> Optional[str]:
+    """Return latest media id for the authenticated Instagram account."""
+    creds = _get_instagram_credentials()
+    access_token = creds.get("access_token")
+    user_id = creds.get("user_id")
+    if not access_token or not user_id:
+        return None
+    return _get_latest_media_id(access_token, user_id)
 
 
 def fetch_instagram_analytics() -> Dict[str, object]:

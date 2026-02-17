@@ -23,10 +23,10 @@ GRAPH_VERSION = "v21.0"
 AUTH_URL = f"https://www.facebook.com/{GRAPH_VERSION}/dialog/oauth"
 TOKEN_URL = f"https://graph.facebook.com/{GRAPH_VERSION}/oauth/access_token"
 DEFAULT_REDIRECT_URI = "https://kaymio.mardomvpn.store/instagram/callback"
+# "instagram_manage_insights",
 SCOPES = [
     "instagram_basic",
     "instagram_content_publish",
-    "instagram_manage_insights",
     "pages_show_list",
     "pages_read_engagement",
 ]
