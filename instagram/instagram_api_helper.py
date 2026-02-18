@@ -254,7 +254,7 @@ def publish_instagram_reel(
 
 
 def list_story_media_candidates(limit: int = 25) -> List[Dict[str, str]]:
-    """Fetch recent REELS media and return thumbnail candidates for stories."""
+    """Fetch recent FEED posts and return story media candidates."""
     creds = _get_instagram_credentials()
     params = {
         "fields": (
@@ -271,7 +271,7 @@ def list_story_media_candidates(limit: int = 25) -> List[Dict[str, str]]:
     data = response.json().get("data", [])
     candidates: List[Dict[str, str]] = []
     for item in data:
-        if (item.get("media_product_type") or "").upper() != "REELS":
+        if (item.get("media_product_type") or "").upper() != "FEED":
             continue
         media_type = item.get("media_type")
         permalink = item.get("permalink") or ""
@@ -291,6 +291,7 @@ def list_story_media_candidates(limit: int = 25) -> List[Dict[str, str]]:
                 {
                     "media_id": item.get("id") or "",
                     "image_url": item["thumbnail_url"],
+                    "video_url": item.get("media_url") or "",
                     "permalink": permalink,
                     "caption": caption,
                 }
