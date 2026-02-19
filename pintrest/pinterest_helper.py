@@ -63,6 +63,14 @@ def _extract_metric_total(payload: Dict[str, object], metric_name: str) -> float
     return 0.0
 
 
+def _short_pin_label(value: str) -> str:
+    text = (value or "").strip()
+    if not text:
+        return "Pin"
+    word = text.split()[0].strip(".,:;!?()[]{}\"'`")
+    return word[:20] if word else "Pin"
+
+
 def _fetch_pin_insights(
     token: str,
     pin: Dict[str, object],
@@ -91,7 +99,7 @@ def _fetch_pin_insights(
     payload = response.json() or {}
     views = int(_extract_metric_total(payload, "IMPRESSION"))
     engagement = int(_extract_metric_total(payload, "ENGAGEMENT"))
-    title = str(pin.get("title") or pin_id)
+    title = _short_pin_label(str(pin.get("title") or pin_id))
     return {
         "pin_id": pin_id,
         "label": title[:60],
