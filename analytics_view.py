@@ -1,7 +1,7 @@
 """Analytics view model + routes."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, List
 
 from flask import Blueprint, render_template
@@ -25,6 +25,12 @@ class PlatformAnalytics:
     metrics: List[Metric]
     sparkline: str
     period: str
+    compare_a_points: str = ""
+    compare_b_points: str = ""
+    compare_a_label: str = ""
+    compare_b_label: str = ""
+    compare_b_accent: str = "#22d3ee"
+    rows: List[Dict[str, str]] = field(default_factory=list)
 
 
 analytics_bp = Blueprint("analytics", __name__)
@@ -67,6 +73,11 @@ def _build_platform_cards(raw: Dict) -> List[PlatformAnalytics]:
     for platform in raw.get("platforms", []):
         trend = platform.get("trend", [])
         sparkline = _sparkline_points(trend)
+        series = platform.get("series") or {}
+        compare_a_values = series.get("views") or []
+        compare_b_values = series.get("engagement") or []
+        compare_a_points = _sparkline_points(compare_a_values) if compare_a_values else ""
+        compare_b_points = _sparkline_points(compare_b_values) if compare_b_values else ""
         platforms.append(
             PlatformAnalytics(
                 name=platform.get("name", ""),
@@ -75,6 +86,12 @@ def _build_platform_cards(raw: Dict) -> List[PlatformAnalytics]:
                 metrics=_build_metric_list(platform.get("metrics", [])),
                 sparkline=sparkline,
                 period=platform.get("period", "Last 30 days"),
+                compare_a_points=compare_a_points,
+                compare_b_points=compare_b_points,
+                compare_a_label=series.get("label_a", "Views"),
+                compare_b_label=series.get("label_b", "Engagement"),
+                compare_b_accent=series.get("accent_b", "#22d3ee"),
+                rows=platform.get("rows", []),
             )
         )
     return platforms
@@ -103,16 +120,67 @@ def build_analytics_view_model() -> Dict:
     if instagram.get("error"):
         errors.append(f"Instagram: {instagram['error']}")
     else:
-        platforms_raw.append({
-            "name": "Instagram",
-            "subtitle": "Latest post insights",
-            "accent": "#f97316",
-            "period": instagram.get("period", "Latest post"),
-            "metrics": [
-                {"label": k, "value": v} for k, v in (instagram.get("metrics") or {}).items()
-            ],
-            "trend": instagram.get("trend", []),
-        })
+        segments = instagram.get("segments") or {}
+        feed_segment = segments.get("feed") or {}
+        reels_segment = segments.get("reels") or {}
+
+        if feed_segment:
+            feed_metrics = feed_segment.get("metrics") or {}
+            platforms_raw.append({
+                "name": "Instagram Feed",
+                "subtitle": "Posts insights",
+                "accent": "#f97316",
+                "period": feed_segment.get("period", "Last 5 feed posts"),
+                "metrics": [
+                    {"label": "Views", "value": feed_metrics.get("Views")},
+                    {"label": "Engagement", "value": feed_metrics.get("Engagement")},
+                ],
+                "trend": feed_segment.get("trend", []),
+                "series": {
+                    "views": (feed_segment.get("series") or {}).get("views", []),
+                    "engagement": (feed_segment.get("series") or {}).get("engagement", []),
+                    "label_a": "Views",
+                    "label_b": "Engagement",
+                    "accent_b": "#22d3ee",
+                },
+                "rows": [
+                    {
+                        "label": f"Post {idx}",
+                        "views": str(int(post.get("views") or 0)),
+                        "engagement": str(int(post.get("engagement") or 0)),
+                    }
+                    for idx, post in enumerate(feed_segment.get("posts") or [], start=1)
+                ],
+            })
+
+        if reels_segment:
+            reels_metrics = reels_segment.get("metrics") or {}
+            platforms_raw.append({
+                "name": "Instagram Reels",
+                "subtitle": "Reels insights",
+                "accent": "#ec4899",
+                "period": reels_segment.get("period", "Last 5 reels"),
+                "metrics": [
+                    {"label": "Views", "value": reels_metrics.get("Views")},
+                    {"label": "Engagement", "value": reels_metrics.get("Engagement")},
+                ],
+                "trend": reels_segment.get("trend", []),
+                "series": {
+                    "views": (reels_segment.get("series") or {}).get("views", []),
+                    "engagement": (reels_segment.get("series") or {}).get("engagement", []),
+                    "label_a": "Views",
+                    "label_b": "Engagement",
+                    "accent_b": "#22d3ee",
+                },
+                "rows": [
+                    {
+                        "label": f"Reel {idx}",
+                        "views": str(int(post.get("views") or 0)),
+                        "engagement": str(int(post.get("engagement") or 0)),
+                    }
+                    for idx, post in enumerate(reels_segment.get("posts") or [], start=1)
+                ],
+            })
 
     # youtube = fetch_youtube_analytics()
     # if youtube.get("error"):
