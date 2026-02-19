@@ -229,6 +229,42 @@ def _build_instagram_cards() -> tuple[List[Dict[str, object]], List[str]]:
     return card_dicts, errors
 
 
+def _build_youtube_cards() -> tuple[List[Dict[str, object]], List[str]]:
+    errors: List[str] = []
+    youtube = fetch_youtube_analytics()
+    if youtube.get("error"):
+        errors.append(f"YouTube: {youtube['error']}")
+        return [], errors
+
+    shorts = youtube.get("shorts") or {}
+    short_metrics = shorts.get("metrics") or {}
+    raw = {
+        "platforms": [
+            {
+                "name": "YouTube",
+                "subtitle": "Shorts performance",
+                "accent": "#ef4444",
+                "period": shorts.get("period", "Last 5 Shorts"),
+                "metrics": [
+                    {"label": "Views", "value": short_metrics.get("Views")},
+                    {"label": "Engagement", "value": short_metrics.get("Engagement")},
+                ],
+                "trend": (shorts.get("series") or {}).get("views", []),
+                "series": {
+                    "views": (shorts.get("series") or {}).get("views", []),
+                    "engagement": (shorts.get("series") or {}).get("engagement", []),
+                    "label_a": "Views",
+                    "label_b": "Engagement",
+                    "accent_b": "#22d3ee",
+                },
+                "rows": shorts.get("rows", []),
+            }
+        ]
+    }
+    cards = _build_platform_cards(raw)
+    return [_platform_card_to_dict(cards[0], key="youtube")] if cards else [], errors
+
+
 def build_analytics_view_model() -> Dict:
     headline = "Live analytics snapshot"
     updated_at = "Loading live from platform APIs"
@@ -254,5 +290,8 @@ def analytics_platform(platform: str):
         return jsonify({"cards": cards, "errors": errors})
     if platform_key == "instagram":
         cards, errors = _build_instagram_cards()
+        return jsonify({"cards": cards, "errors": errors})
+    if platform_key == "youtube":
+        cards, errors = _build_youtube_cards()
         return jsonify({"cards": cards, "errors": errors})
     return jsonify({"cards": [], "errors": [f"Unsupported platform: {platform_key}"]}), 404

@@ -298,6 +298,12 @@
             <div>Loading Instagram reels insights...</div>
           </div>
         </article>
+        <article id="card-youtube" class="platform-card">
+          <div class="loading-wrap">
+            <div class="spinner"></div>
+            <div>Loading YouTube insights...</div>
+          </div>
+        </article>
       </section>
 
       <p class="footer-note">
@@ -307,7 +313,8 @@
     <script>
       const endpoints = {
         pinterest: "{{ url_for('analytics.analytics_platform', platform='pinterest') }}",
-        instagram: "{{ url_for('analytics.analytics_platform', platform='instagram') }}"
+        instagram: "{{ url_for('analytics.analytics_platform', platform='instagram') }}",
+        youtube: "{{ url_for('analytics.analytics_platform', platform='youtube') }}"
       };
 
       function escapeHtml(value) {
@@ -444,6 +451,7 @@
         instagram_feed: "card-instagram-feed",
         instagram_reels: "card-instagram-reels"
       });
+      loadPlatform(endpoints.youtube, { youtube: "card-youtube" });
     </script>
   </body>
 </html>
