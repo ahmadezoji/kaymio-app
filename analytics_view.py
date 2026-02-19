@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, List
 
-from flask import Blueprint, render_template
+from flask import Blueprint, jsonify, render_template
 
 from analytics_providers import fetch_instagram_analytics, fetch_pinterest_analytics, fetch_youtube_analytics
 
@@ -97,36 +97,72 @@ def _build_platform_cards(raw: Dict) -> List[PlatformAnalytics]:
     return platforms
 
 
-def build_analytics_view_model() -> Dict:
-    platforms_raw = []
-    errors = []
+def _platform_card_to_dict(card: PlatformAnalytics, key: str) -> Dict[str, object]:
+    return {
+        "key": key,
+        "name": card.name,
+        "subtitle": card.subtitle,
+        "accent": card.accent,
+        "period": card.period,
+        "sparkline": card.sparkline,
+        "compare_a_points": card.compare_a_points,
+        "compare_b_points": card.compare_b_points,
+        "compare_a_label": card.compare_a_label,
+        "compare_b_label": card.compare_b_label,
+        "compare_b_accent": card.compare_b_accent,
+        "metrics": [
+            {
+                "label": metric.label,
+                "value": metric.value,
+                "delta": metric.delta,
+                "trend": metric.trend,
+            }
+            for metric in card.metrics
+        ],
+        "rows": card.rows,
+    }
 
+
+def _build_pinterest_cards() -> tuple[List[Dict[str, object]], List[str]]:
+    errors: List[str] = []
     pinterest = fetch_pinterest_analytics()
     if pinterest.get("error"):
         errors.append(f"Pinterest: {pinterest['error']}")
-    else:
-        platforms_raw.append({
-            "name": "Pinterest",
-            "subtitle": "Account overview",
-            "accent": "#e11d48",
-            "period": pinterest.get("period", "Last 30 days"),
-            "metrics": [
-                {"label": k, "value": v} for k, v in (pinterest.get("metrics") or {}).items()
-            ],
-            "trend": pinterest.get("trend", []),
-        })
+        return [], errors
+    raw = {
+        "platforms": [
+            {
+                "name": "Pinterest",
+                "subtitle": "Account overview",
+                "accent": "#e11d48",
+                "period": pinterest.get("period", "Last 30 days"),
+                "metrics": [
+                    {"label": k, "value": v} for k, v in (pinterest.get("metrics") or {}).items()
+                ],
+                "trend": pinterest.get("trend", []),
+            }
+        ]
+    }
+    cards = _build_platform_cards(raw)
+    return [_platform_card_to_dict(cards[0], key="pinterest")] if cards else [], errors
 
+
+def _build_instagram_cards() -> tuple[List[Dict[str, object]], List[str]]:
+    errors: List[str] = []
+    platforms_raw: List[Dict[str, object]] = []
     instagram = fetch_instagram_analytics()
     if instagram.get("error"):
         errors.append(f"Instagram: {instagram['error']}")
-    else:
-        segments = instagram.get("segments") or {}
-        feed_segment = segments.get("feed") or {}
-        reels_segment = segments.get("reels") or {}
+        return [], errors
 
-        if feed_segment:
-            feed_metrics = feed_segment.get("metrics") or {}
-            platforms_raw.append({
+    segments = instagram.get("segments") or {}
+    feed_segment = segments.get("feed") or {}
+    reels_segment = segments.get("reels") or {}
+
+    if feed_segment:
+        feed_metrics = feed_segment.get("metrics") or {}
+        platforms_raw.append(
+            {
                 "name": "Instagram Feed",
                 "subtitle": "Posts insights",
                 "accent": "#f97316",
@@ -151,11 +187,13 @@ def build_analytics_view_model() -> Dict:
                     }
                     for idx, post in enumerate(feed_segment.get("posts") or [], start=1)
                 ],
-            })
+            }
+        )
 
-        if reels_segment:
-            reels_metrics = reels_segment.get("metrics") or {}
-            platforms_raw.append({
+    if reels_segment:
+        reels_metrics = reels_segment.get("metrics") or {}
+        platforms_raw.append(
+            {
                 "name": "Instagram Reels",
                 "subtitle": "Reels insights",
                 "accent": "#ec4899",
@@ -180,31 +218,25 @@ def build_analytics_view_model() -> Dict:
                     }
                     for idx, post in enumerate(reels_segment.get("posts") or [], start=1)
                 ],
-            })
+            }
+        )
 
-    # youtube = fetch_youtube_analytics()
-    # if youtube.get("error"):
-    #     errors.append(f"YouTube: {youtube['error']}")
-    # else:
-    #     platforms_raw.append({
-    #         "name": "YouTube",
-    #         "subtitle": "Channel overview",
-    #         "accent": "#ef4444",
-    #         "period": youtube.get("period", "Last 28 days"),
-    #         "metrics": [
-    #             {"label": k, "value": v} for k, v in (youtube.get("metrics") or {}).items()
-    #         ],
-    #         "trend": youtube.get("trend", []),
-    #     })
+    cards = _build_platform_cards({"platforms": platforms_raw})
+    card_dicts: List[Dict[str, object]] = []
+    for card in cards:
+        key = "instagram_feed" if card.name == "Instagram Feed" else "instagram_reels"
+        card_dicts.append(_platform_card_to_dict(card, key=key))
+    return card_dicts, errors
 
-    platforms = _build_platform_cards({"platforms": platforms_raw})
+
+def build_analytics_view_model() -> Dict:
     headline = "Live analytics snapshot"
-    updated_at = "Pulled from platform APIs"
+    updated_at = "Loading live from platform APIs"
     return {
         "headline": headline,
         "updated_at": updated_at,
-        "platforms": platforms,
-        "errors": errors,
+        "platforms": [],
+        "errors": [],
     }
 
 
@@ -212,3 +244,15 @@ def build_analytics_view_model() -> Dict:
 def analytics_view():
     context = build_analytics_view_model()
     return render_template("analytics.html", **context)
+
+
+@analytics_bp.route("/analytics/platform/<platform>", methods=["GET"])
+def analytics_platform(platform: str):
+    platform_key = (platform or "").strip().lower()
+    if platform_key == "pinterest":
+        cards, errors = _build_pinterest_cards()
+        return jsonify({"cards": cards, "errors": errors})
+    if platform_key == "instagram":
+        cards, errors = _build_instagram_cards()
+        return jsonify({"cards": cards, "errors": errors})
+    return jsonify({"cards": [], "errors": [f"Unsupported platform: {platform_key}"]}), 404
