@@ -6,8 +6,9 @@ import datetime as dt
 import logging
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Dict, Iterable, Optional
+from typing import Dict, Iterable, List, Optional
 
 import requests
 
@@ -28,6 +29,76 @@ def _load_pinterest_access_token() -> Optional[str]:
         except FileNotFoundError:
             continue
     return None
+
+
+def _extract_metric_total(payload: Dict[str, object], metric_name: str) -> float:
+    all_block = payload.get("all", {}) if isinstance(payload, dict) else {}
+    if isinstance(all_block, dict):
+        summary_metrics = all_block.get("summary_metrics", {})
+        if isinstance(summary_metrics, dict):
+            value = summary_metrics.get(metric_name)
+            if isinstance(value, (int, float)):
+                return float(value)
+        daily_metrics = all_block.get("daily_metrics", [])
+        if isinstance(daily_metrics, list):
+            total = 0.0
+            found = False
+            for row in daily_metrics:
+                if not isinstance(row, dict):
+                    continue
+                metrics = row.get("metrics", {})
+                if not isinstance(metrics, dict):
+                    continue
+                value = metrics.get(metric_name)
+                if isinstance(value, (int, float)):
+                    total += float(value)
+                    found = True
+            if found:
+                return total
+    summary_metrics = payload.get("summary_metrics", {}) if isinstance(payload, dict) else {}
+    if isinstance(summary_metrics, dict):
+        value = summary_metrics.get(metric_name)
+        if isinstance(value, (int, float)):
+            return float(value)
+    return 0.0
+
+
+def _fetch_pin_insights(
+    token: str,
+    pin: Dict[str, object],
+    start_date: dt.date,
+    end_date: dt.date,
+) -> Optional[Dict[str, object]]:
+    pin_id = str(pin.get("id") or "")
+    if not pin_id:
+        return None
+    params = {
+        "start_date": start_date.isoformat(),
+        "end_date": end_date.isoformat(),
+        "metric_types": "IMPRESSION,ENGAGEMENT",
+        "split_field": "NO_SPLIT",
+    }
+    headers = {"Authorization": f"Bearer {token}"}
+    response = requests.get(
+        f"{API_URL}/{pin_id}/analytics",
+        params=params,
+        headers=headers,
+        timeout=30,
+    )
+    if response.status_code >= 400:
+        logger.warning("Pinterest pin analytics failed for %s: %s - %s", pin_id, response.status_code, response.text)
+        return None
+    payload = response.json() or {}
+    views = int(_extract_metric_total(payload, "IMPRESSION"))
+    engagement = int(_extract_metric_total(payload, "ENGAGEMENT"))
+    title = str(pin.get("title") or pin_id)
+    return {
+        "pin_id": pin_id,
+        "label": title[:60],
+        "created_at": str(pin.get("created_at") or ""),
+        "views": views,
+        "engagement": engagement,
+    }
 
 
 def fetch_pinterest_analytics(days: int = 30) -> Dict[str, object]:
@@ -76,6 +147,35 @@ def fetch_pinterest_analytics(days: int = 30) -> Dict[str, object]:
         if "IMPRESSION" in metric_values:
             trend.append(metric_values.get("IMPRESSION") or 0)
 
+    pin_rows: List[Dict[str, object]] = []
+    try:
+        pins_resp = requests.get(
+            API_URL,
+            params={"page_size": "25"},
+            headers=headers,
+            timeout=30,
+        )
+        if pins_resp.status_code < 400:
+            items = (pins_resp.json() or {}).get("items") or []
+            pins = [item for item in items if isinstance(item, dict)]
+            pins.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
+            candidates = pins[:5]
+            with ThreadPoolExecutor(max_workers=5) as executor:
+                futures = [
+                    executor.submit(_fetch_pin_insights, token, pin, start_date, end_date)
+                    for pin in candidates
+                ]
+                for future in as_completed(futures):
+                    row = future.result()
+                    if row:
+                        pin_rows.append(row)
+            pin_rows.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
+    except Exception:
+        logger.exception("Pinterest last-5 pin insights fetch failed.")
+
+    pin_views_series = [int(row.get("views") or 0) for row in reversed(pin_rows)]
+    pin_engagement_series = [int(row.get("engagement") or 0) for row in reversed(pin_rows)]
+
     return {
         "period": f"Last {days} days",
         "metrics": {
@@ -87,6 +187,25 @@ def fetch_pinterest_analytics(days: int = 30) -> Dict[str, object]:
             "Engaged audience": totals.get("ENGAGED_AUDIENCE"),
         },
         "trend": trend,
+        "pins": {
+            "period": f"Last {len(pin_rows)} pins" if pin_rows else "Last 5 pins",
+            "metrics": {
+                "Views": sum(int(row.get("views") or 0) for row in pin_rows),
+                "Engagement": sum(int(row.get("engagement") or 0) for row in pin_rows),
+            },
+            "series": {
+                "views": pin_views_series,
+                "engagement": pin_engagement_series,
+            },
+            "rows": [
+                {
+                    "label": str(row.get("label") or f"Pin {idx}"),
+                    "views": str(int(row.get("views") or 0)),
+                    "engagement": str(int(row.get("engagement") or 0)),
+                }
+                for idx, row in enumerate(pin_rows, start=1)
+            ],
+        },
     }
 
 

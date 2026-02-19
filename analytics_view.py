@@ -129,17 +129,28 @@ def _build_pinterest_cards() -> tuple[List[Dict[str, object]], List[str]]:
     if pinterest.get("error"):
         errors.append(f"Pinterest: {pinterest['error']}")
         return [], errors
+    pins = pinterest.get("pins") or {}
+    pin_metrics = pins.get("metrics") or {}
     raw = {
         "platforms": [
             {
                 "name": "Pinterest",
-                "subtitle": "Account overview",
+                "subtitle": "Last 5 pins performance",
                 "accent": "#e11d48",
-                "period": pinterest.get("period", "Last 30 days"),
+                "period": pins.get("period", "Last 5 pins"),
                 "metrics": [
-                    {"label": k, "value": v} for k, v in (pinterest.get("metrics") or {}).items()
+                    {"label": "Views", "value": pin_metrics.get("Views")},
+                    {"label": "Engagement", "value": pin_metrics.get("Engagement")},
                 ],
-                "trend": pinterest.get("trend", []),
+                "trend": (pins.get("series") or {}).get("views", []),
+                "series": {
+                    "views": (pins.get("series") or {}).get("views", []),
+                    "engagement": (pins.get("series") or {}).get("engagement", []),
+                    "label_a": "Views",
+                    "label_b": "Engagement",
+                    "accent_b": "#22d3ee",
+                },
+                "rows": pins.get("rows", []),
             }
         ]
     }
