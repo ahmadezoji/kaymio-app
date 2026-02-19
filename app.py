@@ -40,6 +40,7 @@ from youtube.youtube_api_helper import publish_short_video
 from kaymio.kaymio import create_woocommerce_product, find_wordpress_nearest_category
 from PIL import Image, ImageOps
 from analytics_view import analytics_bp
+from widgets.story_qr_widget import StoryQrWidgetConfig, compose_story_image_with_affiliate_qr
 
 load_dotenv()
 
@@ -76,6 +77,18 @@ STORY_AUTOPUBLISH_TIME = os.getenv("INSTAGRAM_STORY_AUTOPUBLISH_TIME", "11:45")
 STORY_AUTOPUBLISH_COUNT = int(os.getenv("INSTAGRAM_STORY_AUTOPUBLISH_COUNT", "2"))
 STORY_AUTOPUBLISH_ENABLED = os.getenv("INSTAGRAM_STORY_AUTOPUBLISH_ENABLED", "1") in TRUTHY_VALUES
 STORY_AUTOPUBLISH_STATE_FILE = STATE_DIR / "instagram_story_scheduler.json"
+STORY_QR_WATERMARK = os.getenv("INSTAGRAM_STORY_QR_WATERMARK", "https://kaymio.com")
+STORY_QR_SAFE_RIGHT_RATIO = float(os.getenv("INSTAGRAM_STORY_QR_SAFE_RIGHT_RATIO", "0.08"))
+STORY_QR_SAFE_BOTTOM_RATIO = float(os.getenv("INSTAGRAM_STORY_QR_SAFE_BOTTOM_RATIO", "0.12"))
+STORY_QR_MIN_SIZE_PX = int(os.getenv("INSTAGRAM_STORY_QR_MIN_SIZE_PX", "100"))
+STORY_QR_SIZE_RATIO = float(os.getenv("INSTAGRAM_STORY_QR_SIZE_RATIO", "0.18"))
+STORY_QR_WIDGET_CONFIG = StoryQrWidgetConfig(
+    watermark_text=STORY_QR_WATERMARK,
+    safe_right_ratio=STORY_QR_SAFE_RIGHT_RATIO,
+    safe_bottom_ratio=STORY_QR_SAFE_BOTTOM_RATIO,
+    min_qr_size_px=STORY_QR_MIN_SIZE_PX,
+    qr_size_ratio=STORY_QR_SIZE_RATIO,
+)
 
 
 def _empty_app_state() -> Dict[str, Any]:
@@ -158,8 +171,20 @@ def _publish_scheduled_instagram_stories() -> None:
             # 17892045201283167
             affiliate_link = _affiliate_link_for_instagram_media(str(candidate.get("media_id") or ""))
             # affiliate_link = "https://www.amazon.com/dp/B0987JNH24?tag=kaymio-20"
+            image_url = candidate.get("image_url", "")
+            if affiliate_link and image_url:
+                try:
+                    story_image = compose_story_image_with_affiliate_qr(
+                        source_image_url=image_url,
+                        affiliate_link=affiliate_link,
+                        config=STORY_QR_WIDGET_CONFIG,
+                    )
+                    image_url = f"/media/{save_generated_image(story_image)}"
+                except Exception:
+                    app.logger.exception("Unable to compose scheduled story image with affiliate QR.")
+            
             response = publish_instagram_story(
-                image_url=candidate.get("image_url", ""),
+                image_url=image_url,
                 caption=None,
                 share_link=affiliate_link or candidate.get("permalink"),
             )
