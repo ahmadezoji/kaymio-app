@@ -6,6 +6,7 @@ import logging
 import os
 import random
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Dict, List, Optional
 from urllib.parse import urlparse, unquote
@@ -21,6 +22,11 @@ TEMPLATE_IMAGES_ROOT = Path(__file__).resolve().parents[1] / "template_images"
 TOKEN_FILE = Path(__file__).with_name("instagram_token.json")
 PUBLISH_STATUS_TIMEOUT_SECONDS = 60
 PUBLISH_STATUS_POLL_SECONDS = 3
+INSTAGRAM_ANALYTICS_CACHE_TTL_SECONDS = int(os.getenv("INSTAGRAM_ANALYTICS_CACHE_TTL_SECONDS", "180"))
+INSTAGRAM_ANALYTICS_MAX_MEDIA = int(os.getenv("INSTAGRAM_ANALYTICS_MAX_MEDIA", "15"))
+INSTAGRAM_ANALYTICS_MAX_PER_TYPE = int(os.getenv("INSTAGRAM_ANALYTICS_MAX_PER_TYPE", "5"))
+INSTAGRAM_ANALYTICS_WORKERS = int(os.getenv("INSTAGRAM_ANALYTICS_WORKERS", "6"))
+_INSTAGRAM_ANALYTICS_CACHE: Dict[str, object] = {"expires_at": 0.0, "payload": None}
 
 
 def _load_token_file() -> Dict[str, str]:
@@ -343,6 +349,26 @@ def _extract_metric_value(metric_item: Dict[str, object]) -> Optional[float]:
 
 def _fetch_media_insights(access_token: str, media_id: str, metrics: List[str]) -> Dict[str, Optional[float]]:
     results: Dict[str, Optional[float]] = {metric: None for metric in metrics}
+    bulk_response = requests.get(
+        f"{GRAPH_API_BASE}/{media_id}/insights",
+        params={"metric": ",".join(metrics), "access_token": access_token},
+        timeout=30,
+    )
+    if bulk_response.status_code < 400:
+        payload = bulk_response.json().get("data", [])
+        for metric_item in payload:
+            metric_name = metric_item.get("name")
+            if metric_name in results:
+                results[metric_name] = _extract_metric_value(metric_item)
+        return results
+
+    logger.warning(
+        "Instagram bulk insights failed for %s: %s - %s; retrying metric-by-metric.",
+        media_id,
+        bulk_response.status_code,
+        bulk_response.text,
+    )
+
     for metric in metrics:
         response = requests.get(
             f"{GRAPH_API_BASE}/{media_id}/insights",
@@ -405,6 +431,11 @@ def get_latest_instagram_media_id() -> Optional[str]:
 
 
 def fetch_instagram_analytics() -> Dict[str, object]:
+    cache_payload = _INSTAGRAM_ANALYTICS_CACHE.get("payload")
+    cache_expires_at = float(_INSTAGRAM_ANALYTICS_CACHE.get("expires_at") or 0)
+    if cache_payload and time.time() < cache_expires_at:
+        return cache_payload  # type: ignore[return-value]
+
     creds = _get_instagram_credentials()
     access_token = creds.get("access_token")
     user_id = creds.get("user_id")
@@ -417,7 +448,7 @@ def fetch_instagram_analytics() -> Dict[str, object]:
             f"{GRAPH_API_BASE}/{user_id}/media",
             params={
                 "fields": "id,caption,timestamp,media_type,media_product_type,permalink",
-                "limit": "25",
+                "limit": str(max(5, INSTAGRAM_ANALYTICS_MAX_MEDIA)),
                 "access_token": access_token,
             },
             timeout=30,
@@ -434,6 +465,11 @@ def fetch_instagram_analytics() -> Dict[str, object]:
 
     feed_rows: List[Dict[str, object]] = []
     reels_rows: List[Dict[str, object]] = []
+    candidates: List[Dict[str, object]] = []
+    feed_candidate_count = 0
+    reels_candidate_count = 0
+    max_per_type = max(1, INSTAGRAM_ANALYTICS_MAX_PER_TYPE)
+
     for media in media_items:
         media_id = str(media.get("id") or "")
         if not media_id:
@@ -441,23 +477,45 @@ def fetch_instagram_analytics() -> Dict[str, object]:
         media_product_type = str(media.get("media_product_type") or "").upper()
         if media_product_type not in {"FEED", "REELS"}:
             continue
-        try:
-            metrics_map = _fetch_media_insights(access_token, media_id, metrics)
-        except Exception:
-            logger.exception("Instagram insights request failed for media %s", media_id)
+        if media_product_type == "FEED" and feed_candidate_count >= max_per_type:
             continue
+        if media_product_type == "REELS" and reels_candidate_count >= max_per_type:
+            continue
+        candidates.append(media)
+        if media_product_type == "FEED":
+            feed_candidate_count += 1
+        else:
+            reels_candidate_count += 1
+        if feed_candidate_count >= max_per_type and reels_candidate_count >= max_per_type:
+            break
 
-        likes = metrics_map.get("likes") or 0
-        comments = metrics_map.get("comments") or 0
-        saves = metrics_map.get("saved") or 0
-        shares = metrics_map.get("shares") or 0
-        engagement_value = float(likes) + float(comments) + float(saves) + float(shares)
-        views_value = metrics_map.get("views")
-        if views_value is None:
-            views_value = 0.0
+    workers = max(1, INSTAGRAM_ANALYTICS_WORKERS)
+    futures = {}
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        for media in candidates:
+            media_id = str(media.get("id") or "")
+            futures[executor.submit(_fetch_media_insights, access_token, media_id, metrics)] = media
 
-        row = (
-            {
+        for future in as_completed(futures):
+            media = futures[future]
+            media_id = str(media.get("id") or "")
+            media_product_type = str(media.get("media_product_type") or "").upper()
+            try:
+                metrics_map = future.result()
+            except Exception:
+                logger.exception("Instagram insights request failed for media %s", media_id)
+                continue
+
+            likes = metrics_map.get("likes") or 0
+            comments = metrics_map.get("comments") or 0
+            saves = metrics_map.get("saved") or 0
+            shares = metrics_map.get("shares") or 0
+            engagement_value = float(likes) + float(comments) + float(saves) + float(shares)
+            views_value = metrics_map.get("views")
+            if views_value is None:
+                views_value = 0.0
+
+            row = {
                 "media_id": media_id,
                 "timestamp": media.get("timestamp"),
                 "media_product_type": media_product_type,
@@ -469,11 +527,13 @@ def fetch_instagram_analytics() -> Dict[str, object]:
                 "saved": saves,
                 "shares": shares,
             }
-        )
-        if media_product_type == "FEED":
-            feed_rows.append(row)
-        elif media_product_type == "REELS":
-            reels_rows.append(row)
+            if media_product_type == "FEED":
+                feed_rows.append(row)
+            elif media_product_type == "REELS":
+                reels_rows.append(row)
+
+    feed_rows.sort(key=lambda item: str(item.get("timestamp") or ""), reverse=True)
+    reels_rows.sort(key=lambda item: str(item.get("timestamp") or ""), reverse=True)
 
     if not feed_rows and not reels_rows:
         return {"error": "Unable to load Instagram FEED/REELS insights for latest posts."}
@@ -487,7 +547,10 @@ def fetch_instagram_analytics() -> Dict[str, object]:
     if reels_segment:
         segments["reels"] = reels_segment
 
-    return {
+    payload = {
         "period": "Last 5 per type",
         "segments": segments,
     }
+    _INSTAGRAM_ANALYTICS_CACHE["payload"] = payload
+    _INSTAGRAM_ANALYTICS_CACHE["expires_at"] = time.time() + max(10, INSTAGRAM_ANALYTICS_CACHE_TTL_SECONDS)
+    return payload
