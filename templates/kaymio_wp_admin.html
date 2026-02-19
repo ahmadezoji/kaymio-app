@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Kaymio WooCommerce Admin</title>
+    <style>
+      body {
+        margin: 0;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #0f172a;
+        color: #e2e8f0;
+      }
+      .wrap {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 24px;
+      }
+      h1 {
+        margin: 0 0 8px;
+        font-size: 1.6rem;
+      }
+      .muted {
+        color: #94a3b8;
+        margin: 0 0 16px;
+      }
+      .toolbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 16px;
+      }
+      .btn {
+        border: 1px solid #334155;
+        background: #1e293b;
+        color: #e2e8f0;
+        padding: 8px 12px;
+        border-radius: 8px;
+        text-decoration: none;
+        cursor: pointer;
+      }
+      .btn-danger {
+        background: #7f1d1d;
+        border-color: #991b1b;
+      }
+      .btn:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        background: #111827;
+        border-radius: 10px;
+        overflow: hidden;
+      }
+      th, td {
+        padding: 10px 12px;
+        border-bottom: 1px solid #1f2937;
+        text-align: left;
+        vertical-align: middle;
+      }
+      th {
+        background: #1f2937;
+        font-size: 0.85rem;
+      }
+      .thumb {
+        width: 52px;
+        height: 52px;
+        object-fit: cover;
+        border-radius: 6px;
+        border: 1px solid #334155;
+      }
+      .product-url {
+        max-width: 360px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        display: inline-block;
+      }
+      .flash {
+        padding: 10px 12px;
+        border-radius: 8px;
+        margin-bottom: 12px;
+      }
+      .flash.success { background: #14532d; }
+      .flash.error { background: #7f1d1d; }
+      .pagination {
+        margin-top: 14px;
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      .loading {
+        padding: 16px;
+        border: 1px solid #1f2937;
+        border-radius: 10px;
+        background: #111827;
+        color: #94a3b8;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="toolbar">
+        <div>
+          <h1>WooCommerce Products</h1>
+          <p id="summary" class="muted">Check duplicates quickly by image, name, and URL.</p>
+        </div>
+        <a class="btn" href="{{ url_for('home') }}">Back</a>
+      </div>
+
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          {% for category, message in messages %}
+            <div class="flash {{ category }}">{{ message }}</div>
+          {% endfor %}
+        {% endif %}
+      {% endwith %}
+
+      <div id="error-box" class="flash error" style="display:none;"></div>
+      <div id="loading" class="loading">Loading WooCommerce products...</div>
+      <div id="table-container" style="display:none;"></div>
+      <div id="pagination" class="pagination" style="display:none;"></div>
+    </div>
+    <script>
+      const currentPage = Number(new URLSearchParams(window.location.search).get("page") || "{{ page }}") || 1;
+      const dataUrl = `{{ url_for('kaymio_wp_admin.kaymio_wp_admin_data') }}?page=${currentPage}`;
+      const loadingNode = document.getElementById("loading");
+      const tableContainer = document.getElementById("table-container");
+      const pagination = document.getElementById("pagination");
+      const errorBox = document.getElementById("error-box");
+      const summary = document.getElementById("summary");
+
+      function esc(value) {
+        return String(value ?? "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#39;");
+      }
+
+      function buildRow(item, page) {
+        const image = item.image_src
+          ? `<img src="${esc(item.image_src)}" alt="product image" class="thumb" />`
+          : "-";
+        const url = item.product_url
+          ? `<a href="${esc(item.product_url)}" target="_blank" rel="noopener noreferrer" class="product-url">${esc(item.product_url)}</a>`
+          : "-";
+        return `
+          <tr>
+            <td>${esc(item.id)}</td>
+            <td>${image}</td>
+            <td>${esc(item.name)}</td>
+            <td>${url}</td>
+            <td>
+              <form method="post" action="{{ url_for('kaymio_wp_admin.kaymio_wp_admin_delete') }}" onsubmit="return confirm('Delete this product permanently?');">
+                <input type="hidden" name="product_id" value="${esc(item.id)}" />
+                <input type="hidden" name="page" value="${esc(page)}" />
+                <button type="submit" class="btn btn-danger">Remove</button>
+              </form>
+            </td>
+          </tr>
+        `;
+      }
+
+      function buildTable(items, page) {
+        const rows = items.map((item) => buildRow(item, page)).join("");
+        return `
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Image</th>
+                <th>Name</th>
+                <th>Product URL</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        `;
+      }
+
+      function pageUrl(page) {
+        return `{{ url_for('kaymio_wp_admin.kaymio_wp_admin_view') }}?page=${page}`;
+      }
+
+      fetch(dataUrl, { headers: { Accept: "application/json" } })
+        .then((r) => r.json())
+        .then((data) => {
+          loadingNode.style.display = "none";
+          if (data.error) {
+            errorBox.style.display = "block";
+            errorBox.textContent = data.error;
+            return;
+          }
+          summary.textContent = `Check duplicates quickly by image, name, and URL. Total: ${data.total}`;
+          tableContainer.innerHTML = buildTable(data.items || [], data.page || currentPage);
+          tableContainer.style.display = "block";
+          const page = Number(data.page || currentPage);
+          const totalPages = Number(data.total_pages || 1);
+          pagination.innerHTML = `
+            <a class="btn" href="${pageUrl(page - 1)}" style="${page <= 1 ? "pointer-events:none;opacity:.45" : ""}">Prev</a>
+            <span>Page ${page} / ${totalPages}</span>
+            <a class="btn" href="${pageUrl(page + 1)}" style="${page >= totalPages ? "pointer-events:none;opacity:.45" : ""}">Next</a>
+          `;
+          pagination.style.display = "flex";
+        })
+        .catch((err) => {
+          loadingNode.style.display = "none";
+          errorBox.style.display = "block";
+          errorBox.textContent = `Failed to load products: ${err}`;
+        });
+    </script>
+  </body>
+</html>

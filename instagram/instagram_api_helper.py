@@ -13,7 +13,7 @@ from urllib.parse import urlparse, unquote
 
 import requests
 
-from kaymio.kaymio import upload_media_to_wordpress_ext
+from kaymio.wordpress.wordpress_api_helper import upload_media_to_wordpress_ext
 
 logger = logging.getLogger(__name__)
 GRAPH_API_BASE = "https://graph.facebook.com/v21.0"

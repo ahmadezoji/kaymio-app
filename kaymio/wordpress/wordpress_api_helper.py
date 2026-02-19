@@ -401,8 +401,57 @@ def update_affiliate_links():
         print(f"Error updating affiliate links: {e}")
 
 
+def list_woocommerce_products(page: int = 1, per_page: int = 100):
+    """Return paginated WooCommerce products with total headers."""
+    if not all([wc_url, consumer_key, consumer_secret]):
+        return {"error": "WooCommerce API credentials are missing."}
+    try:
+        response = requests.get(
+            f"{wc_url}/wp-json/wc/v3/products",
+            params={"page": max(1, int(page)), "per_page": max(1, min(int(per_page), 100))},
+            auth=(consumer_key, consumer_secret),
+            headers={"Content-Type": "application/json"},
+            timeout=30,
+        )
+    except Exception as exc:
+        return {"error": f"Unable to fetch WooCommerce products: {exc}"}
+
+    if response.status_code >= 400:
+        return {"error": f"WooCommerce products list failed: {response.status_code} - {response.text}"}
+
+    items = response.json() if isinstance(response.json(), list) else []
+    total = int(response.headers.get("X-WP-Total", "0") or 0)
+    total_pages = int(response.headers.get("X-WP-TotalPages", "1") or 1)
+    return {
+        "items": items,
+        "page": max(1, int(page)),
+        "per_page": max(1, min(int(per_page), 100)),
+        "total": total,
+        "total_pages": max(1, total_pages),
+    }
+
+
+def delete_woocommerce_product(product_id: int):
+    """Delete WooCommerce product permanently."""
+    if not all([wc_url, consumer_key, consumer_secret]):
+        return {"error": "WooCommerce API credentials are missing."}
+    try:
+        response = requests.delete(
+            f"{wc_url}/wp-json/wc/v3/products/{int(product_id)}",
+            params={"force": "true"},
+            auth=(consumer_key, consumer_secret),
+            headers={"Content-Type": "application/json"},
+            timeout=30,
+        )
+    except Exception as exc:
+        return {"error": f"Unable to delete WooCommerce product: {exc}"}
+
+    if response.status_code >= 400:
+        return {"error": f"WooCommerce product delete failed: {response.status_code} - {response.text}"}
+    return {"ok": True, "product_id": int(product_id)}
+
+
 if __name__ == "__main__":
     # ppid  = get_category_id_by_name("🧒 Kids & Baby")
     print(f"Category ID for '🧒 Kids & Baby':")
     # update_affiliate_links()
-

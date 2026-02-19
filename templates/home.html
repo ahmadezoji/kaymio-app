@@ -82,7 +82,10 @@
           <span>Gemini visuals</span>
           <span>Pinterest automation</span>
         </div>
-        <a class="ghost-btn" href="{{ url_for('analytics.analytics_view') }}">View analytics</a>
+        <div class="card-header-actions">
+          <a class="ghost-btn" href="{{ url_for('analytics.analytics_view') }}">View analytics</a>
+          <a class="ghost-btn" href="{{ url_for('kaymio_wp_admin.kaymio_wp_admin_view') }}">WP Admin</a>
+        </div>
       </header>
 
       {% with messages = get_flashed_messages(with_categories=true) %}
@@ -98,6 +101,7 @@
       <main class="layout">
         <div class="card-header-actions" style="margin-bottom: 16px;">
           <a class="ghost-btn" href="{{ url_for('analytics.analytics_view') }}">Analytics dashboard</a>
+          <a class="ghost-btn" href="{{ url_for('kaymio_wp_admin.kaymio_wp_admin_view') }}">WooCommerce admin</a>
         </div>
         {% set values = form_values or {} %}
         {% set preview_data = preview or {} %}

@@ -37,15 +37,17 @@ from openai_helper import (
 from pintrest.pinterest_helper import create_pinterest_pin, create_pinterest_video_pin
 from tiktok.tiktok_api_helper import publish_tiktok_post
 from youtube.youtube_api_helper import publish_short_video
-from kaymio.kaymio import create_woocommerce_product, find_wordpress_nearest_category
+from kaymio.wordpress.wordpress_api_helper import create_woocommerce_product, find_wordpress_nearest_category
 from PIL import Image, ImageOps
 from analytics_view import analytics_bp
+from kaymio_wp_admin_view import kaymio_wp_admin_bp
 from widgets.story_qr_widget import StoryQrWidgetConfig, compose_story_image_with_affiliate_qr
 
 load_dotenv()
 
 app = Flask(__name__)
 app.register_blueprint(analytics_bp)
+app.register_blueprint(kaymio_wp_admin_bp)
 app.config["SECRET_KEY"] = os.getenv("FLASK_SECRET_KEY", "dev-secret-key")
 app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024  # 20MB uploads
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp"}
