@@ -311,6 +311,7 @@ def fetch_youtube_analytics(days: int = 28) -> Dict[str, object]:
                     {
                         "video_id": video_id,
                         "label": str(meta.get("title") or video_id)[:60],
+                        "url": f"https://www.youtube.com/watch?v={video_id}",
                         "views": views,
                         "engagement": likes + comments,
                     }
@@ -330,6 +331,7 @@ def fetch_youtube_analytics(days: int = 28) -> Dict[str, object]:
                     {
                         "video_id": video_id,
                         "label": str(meta.get("title") or video_id)[:60],
+                        "url": f"https://www.youtube.com/watch?v={video_id}",
                         "views": views,
                         "engagement": likes + comments,
                     }
@@ -365,6 +367,7 @@ def fetch_youtube_analytics(days: int = 28) -> Dict[str, object]:
                     "label": row["label"],
                     "views": str(row["views"]),
                     "engagement": str(row["engagement"]),
+                    "url": row.get("url") or "",
                 }
                 for row in short_rows
             ],

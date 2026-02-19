@@ -104,6 +104,7 @@ def _fetch_pin_insights(
         "pin_id": pin_id,
         "label": title[:60],
         "created_at": str(pin.get("created_at") or ""),
+        "url": str(pin.get("url") or f"https://www.pinterest.com/pin/{pin_id}/"),
         "views": views,
         "engagement": engagement,
     }
@@ -210,6 +211,7 @@ def fetch_pinterest_analytics(days: int = 30) -> Dict[str, object]:
                     "label": str(row.get("label") or f"Pin {idx}"),
                     "views": str(int(row.get("views") or 0)),
                     "engagement": str(int(row.get("engagement") or 0)),
+                    "url": str(row.get("url") or ""),
                 }
                 for idx, row in enumerate(pin_rows, start=1)
             ],

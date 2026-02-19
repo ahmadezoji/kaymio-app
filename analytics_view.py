@@ -195,6 +195,7 @@ def _build_instagram_cards() -> tuple[List[Dict[str, object]], List[str]]:
                         "label": f"Post {idx}",
                         "views": str(int(post.get("views") or 0)),
                         "engagement": str(int(post.get("engagement") or 0)),
+                        "url": str(post.get("url") or ""),
                     }
                     for idx, post in enumerate(feed_segment.get("posts") or [], start=1)
                 ],
@@ -226,6 +227,7 @@ def _build_instagram_cards() -> tuple[List[Dict[str, object]], List[str]]:
                         "label": f"Reel {idx}",
                         "views": str(int(post.get("views") or 0)),
                         "engagement": str(int(post.get("engagement") or 0)),
+                        "url": str(post.get("url") or ""),
                     }
                     for idx, post in enumerate(reels_segment.get("posts") or [], start=1)
                 ],

@@ -519,6 +519,7 @@ def fetch_instagram_analytics() -> Dict[str, object]:
                 "media_id": media_id,
                 "timestamp": media.get("timestamp"),
                 "media_product_type": media_product_type,
+                "url": media.get("permalink") or f"https://www.instagram.com/p/{media_id}/",
                 "views": views_value,
                 "engagement": engagement_value,
                 "reach": metrics_map.get("reach"),

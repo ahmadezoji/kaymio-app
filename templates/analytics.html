@@ -193,6 +193,20 @@
       .mini-table td {
         color: var(--text);
       }
+      .link-btn {
+        display: inline-block;
+        padding: 5px 9px;
+        border-radius: 8px;
+        border: 1px solid rgba(255, 255, 255, 0.22);
+        color: var(--text);
+        text-decoration: none;
+        font-size: 0.78rem;
+        line-height: 1;
+      }
+      .link-btn.disabled {
+        opacity: 0.45;
+        pointer-events: none;
+      }
 
       .delta.up {
         color: #22c55e;
@@ -365,6 +379,11 @@
             <td>${escapeHtml(row.label)}</td>
             <td>${escapeHtml(row.views)}</td>
             <td>${escapeHtml(row.engagement)}</td>
+            <td>
+              ${row.url
+                ? `<a class="link-btn" href="${escapeHtml(row.url)}" target="_blank" rel="noopener noreferrer">Link</a>`
+                : `<span class="link-btn disabled">Link</span>`}
+            </td>
           </tr>
         `).join("");
 
@@ -372,7 +391,7 @@
           ? `
             <table class="mini-table" aria-label="${escapeHtml(card.name)} last 5 performance">
               <thead>
-                <tr><th>Item</th><th>Views</th><th>Engagement</th></tr>
+                <tr><th>Item</th><th>Views</th><th>Engagement</th><th>Link</th></tr>
               </thead>
               <tbody>${rows}</tbody>
             </table>
