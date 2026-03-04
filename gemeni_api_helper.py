@@ -299,6 +299,8 @@ def _generate_video_with_modern_sdk(
         )
 
     model_name = os.getenv("GEMINI_VIDEO_MODEL", "veo-3.1-generate-preview")
+    print(f"Using Gemini video model: {model_name}")
+    raise NotImplementedError("Modern google.genai SDK support is in progress. Please use the legacy path for now.")
     model_client = getattr(client, "models", None)
     if model_client is None or not hasattr(model_client, "generate_videos"):
         raise RuntimeError("google.genai client does not expose video generation endpoint")
