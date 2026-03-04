@@ -358,6 +358,8 @@ def _generate_video_with_legacy_sdk(
     )
 
     model_name = os.getenv("GEMINI_VIDEO_MODEL", "veo-3.1-generate-preview")
+    print(f"Using Gemini video model: {model_name}")
+    raise RuntimeError("Legacy video generation path is deprecated. Please upgrade to the latest google-genai SDK.") 
     model_client = getattr(client, "models", None)
     if model_client is None or not hasattr(model_client, "generate_videos"):
         raise RuntimeError("Gemini client does not expose video generation endpoint")
