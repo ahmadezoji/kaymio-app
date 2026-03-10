@@ -26,8 +26,8 @@ class StoryCtaWidgetConfig:
     max_width_ratio: float = 0.78
     min_height_ratio: float = 0.12
     max_height_ratio: float = 0.22
-    title_font_ratio: float = 0.035
-    body_font_ratio: float = 0.024
+    title_font_ratio: float = 0.22
+    body_font_ratio: float = 0.12
     request_timeout_seconds: int = 30
 
 
@@ -92,6 +92,16 @@ def _truncate_lines(lines: list[str], limit: int) -> list[str]:
     kept = lines[:limit]
     kept[-1] = kept[-1].rstrip(" .,!?:;") + "..."
     return kept
+
+
+def _load_font(size: int, *, bold: bool = False) -> ImageFont.ImageFont:
+    font_candidates = ["Arial Bold.ttf", "DejaVuSans-Bold.ttf"] if bold else ["Arial.ttf", "DejaVuSans.ttf"]
+    for font_name in font_candidates:
+        try:
+            return ImageFont.truetype(font_name, size)
+        except Exception:
+            continue
+    return ImageFont.load_default()
 
 
 def compose_story_image_with_affiliate_qr(
@@ -177,18 +187,11 @@ def compose_story_image_with_cta(
             width=max(1, int(panel_h * 0.01)),
         )
 
-        try:
-            title_font = ImageFont.truetype("Arial Bold.ttf", max(18, int(height * cfg.title_font_ratio)))
-        except Exception:
-            title_font = ImageFont.load_default()
-        try:
-            body_font = ImageFont.truetype("Arial.ttf", max(14, int(height * cfg.body_font_ratio)))
-        except Exception:
-            body_font = ImageFont.load_default()
-
         inner_padding_x = max(18, int(panel_w * 0.06))
         inner_padding_y = max(14, int(panel_h * 0.12))
         text_width = panel_w - (2 * inner_padding_x)
+        title_font = _load_font(max(26, int(panel_h * cfg.title_font_ratio)), bold=True)
+        body_font = _load_font(max(18, int(panel_h * cfg.body_font_ratio)))
         title_text = (cta_copy.get("headline") or "Discover this product").strip()
         body_text = (cta_copy.get("body") or description or "").strip()
         title_lines = _truncate_lines(_fit_text(panel_draw, title_text, title_font, text_width), 2) or [
