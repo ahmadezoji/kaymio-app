@@ -35,6 +35,28 @@ def _build_qr_image(affiliate_link: str, size: int, timeout_seconds: int) -> Ima
     return qr_image.resize((size, size), Image.LANCZOS)
 
 
+def _build_panel_dimensions(
+    width: int,
+    height: int,
+    cfg: StoryQrWidgetConfig,
+) -> tuple[int, int, int, int, int, int]:
+    margin = max(16, int(min(width, height) * 0.025))
+    max_panel_w = max(120, width - (2 * margin))
+    max_panel_h = max(120, height - (2 * margin))
+    qr_size = max(cfg.min_qr_size_px, int(min(width, height) * cfg.qr_size_ratio))
+
+    while True:
+        panel_padding = max(10, int(qr_size * 0.09))
+        watermark_height = max(20, int(qr_size * 0.18))
+        panel_w = qr_size + (2 * panel_padding)
+        panel_h = qr_size + watermark_height + (2 * panel_padding)
+        if panel_w <= max_panel_w and panel_h <= max_panel_h:
+            return qr_size, margin, panel_padding, watermark_height, panel_w, panel_h
+        if qr_size <= 64:
+            return qr_size, margin, panel_padding, watermark_height, panel_w, panel_h
+        qr_size = max(64, int(qr_size * 0.92))
+
+
 def compose_story_image_with_affiliate_qr(
     *,
     source_image_url: str,
@@ -45,12 +67,11 @@ def compose_story_image_with_affiliate_qr(
     source_bytes = _download_image_bytes(source_image_url, cfg.request_timeout_seconds)
     with Image.open(BytesIO(source_bytes)).convert("RGBA") as base:
         width, height = base.size
-        qr_size = max(cfg.min_qr_size_px, int(min(width, height) * cfg.qr_size_ratio))
-        margin = max(16, int(min(width, height) * 0.025))
-        panel_padding = max(10, int(qr_size * 0.09))
-        watermark_height = max(20, int(qr_size * 0.18))
-        panel_w = qr_size + (2 * panel_padding)
-        panel_h = qr_size + watermark_height + (2 * panel_padding)
+        qr_size, margin, panel_padding, watermark_height, panel_w, panel_h = _build_panel_dimensions(
+            width,
+            height,
+            cfg,
+        )
 
         qr_image = _build_qr_image(affiliate_link, qr_size, cfg.request_timeout_seconds)
 
@@ -79,13 +100,13 @@ def compose_story_image_with_affiliate_qr(
         text_y = qr_y + qr_size + max(2, (watermark_height - text_h) // 2)
         panel_draw.text((text_x, text_y), cfg.watermark_text, fill=(33, 33, 33, 255), font=font)
 
-        safe_right = max(margin, int(width * cfg.safe_right_ratio))
         safe_bottom = max(margin, int(height * cfg.safe_bottom_ratio))
-        pos_x = max(0, width - panel_w - safe_right)
-        pos_y = max(0, height - panel_h - safe_bottom)
+        safe_side = max(margin, int(width * cfg.safe_right_ratio))
+        centered_x = (width - panel_w) // 2
+        pos_x = min(max(safe_side, centered_x), max(safe_side, width - panel_w - safe_side))
+        pos_y = min(max(margin, height - panel_h - safe_bottom), max(margin, height - panel_h - margin))
         base.paste(panel, (pos_x, pos_y), panel)
 
         output = BytesIO()
         base.convert("RGB").save(output, format="JPEG", quality=94)
         return output.getvalue()
-
