@@ -41,7 +41,12 @@ from kaymio.wordpress.wordpress_api_helper import create_woocommerce_product, fi
 from PIL import Image, ImageOps
 from analytics_view import analytics_bp
 from kaymio_wp_admin_view import kaymio_wp_admin_bp
-from widgets.story_qr_widget import StoryQrWidgetConfig, compose_story_image_with_affiliate_qr
+from widgets.story_qr_widget import (
+    StoryCtaWidgetConfig,
+    StoryQrWidgetConfig,
+    compose_story_image_with_affiliate_qr,
+    compose_story_image_with_cta,
+)
 
 load_dotenv()
 
@@ -90,6 +95,9 @@ STORY_QR_WIDGET_CONFIG = StoryQrWidgetConfig(
     safe_bottom_ratio=STORY_QR_SAFE_BOTTOM_RATIO,
     min_qr_size_px=STORY_QR_MIN_SIZE_PX,
     qr_size_ratio=STORY_QR_SIZE_RATIO,
+)
+STORY_CTA_WIDGET_CONFIG = StoryCtaWidgetConfig(
+    safe_bottom_ratio=STORY_QR_SAFE_BOTTOM_RATIO,
 )
 
 
@@ -151,6 +159,33 @@ def _affiliate_link_for_instagram_media(media_id: str) -> Optional[str]:
     return None
 
 
+def _story_content_for_instagram_media(media_id: str) -> Dict[str, str]:
+    if not media_id:
+        return {}
+    state = load_app_state()
+    products = state.get("products", {}) or {}
+    for entry in products.values():
+        platforms = entry.get("platforms") or {}
+        instagram_group = platforms.get("instagram") or {}
+        for key in ("instagram_feed", "instagram_reel", "instagram_story"):
+            p_state = instagram_group.get(key) or {}
+            stored_media_id = str(p_state.get("instagram_media_id") or p_state.get("media_id") or "")
+            if stored_media_id and stored_media_id == str(media_id):
+                return {
+                    "title": str(p_state.get("title") or ""),
+                    "description": str(p_state.get("description") or ""),
+                }
+        for key in ("instagram_feed", "instagram_story", "instagram_reel"):
+            p_state = platforms.get(key) or {}
+            stored_media_id = str(p_state.get("instagram_media_id") or p_state.get("media_id") or "")
+            if stored_media_id and stored_media_id == str(media_id):
+                return {
+                    "title": str(p_state.get("title") or ""),
+                    "description": str(p_state.get("description") or ""),
+                }
+    return {}
+
+
 def _publish_scheduled_instagram_stories() -> None:
     posted = 0
     candidates = list_story_media_candidates(limit=50)
@@ -171,7 +206,11 @@ def _publish_scheduled_instagram_stories() -> None:
             if not candidate:
                 break
             # 17892045201283167
-            affiliate_link = _affiliate_link_for_instagram_media(str(candidate.get("media_id") or ""))
+            media_id = str(candidate.get("media_id") or "")
+            caption = str(candidate.get("caption") or "")
+            affiliate_link = _affiliate_link_for_instagram_media(media_id)
+            story_content = _story_content_for_instagram_media(media_id)
+            story_copy = caption or story_content.get("description", "") or story_content.get("title", "")
             # affiliate_link = "https://www.amazon.com/dp/B0987JNH24?tag=kaymio-20"
             image_url = candidate.get("image_url", "")
             if affiliate_link and image_url:
@@ -184,6 +223,16 @@ def _publish_scheduled_instagram_stories() -> None:
                     image_url = f"/media/{save_generated_image(story_image)}"
                 except Exception:
                     app.logger.exception("Unable to compose scheduled story image with affiliate QR.")
+            elif image_url:
+                try:
+                    story_image = compose_story_image_with_cta(
+                        source_image_url=image_url,
+                        description=story_copy,
+                        config=STORY_CTA_WIDGET_CONFIG,
+                    )
+                    image_url = f"/media/{save_generated_image(story_image)}"
+                except Exception:
+                    app.logger.exception("Unable to compose scheduled story image with CTA.")
             
             response = publish_instagram_story(
                 image_url=image_url,

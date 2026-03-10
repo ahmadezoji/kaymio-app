@@ -7,6 +7,7 @@ from urllib.parse import quote_plus
 
 import requests
 from PIL import Image, ImageDraw, ImageFont
+from openai_helper import generate_story_cta_text
 
 
 @dataclass(frozen=True)
@@ -16,6 +17,17 @@ class StoryQrWidgetConfig:
     safe_bottom_ratio: float = 0.12
     min_qr_size_px: int = 100
     qr_size_ratio: float = 0.18
+    request_timeout_seconds: int = 30
+
+
+@dataclass(frozen=True)
+class StoryCtaWidgetConfig:
+    safe_bottom_ratio: float = 0.12
+    max_width_ratio: float = 0.78
+    min_height_ratio: float = 0.12
+    max_height_ratio: float = 0.22
+    title_font_ratio: float = 0.035
+    body_font_ratio: float = 0.024
     request_timeout_seconds: int = 30
 
 
@@ -55,6 +67,31 @@ def _build_panel_dimensions(
         if qr_size <= 64:
             return qr_size, margin, panel_padding, watermark_height, panel_w, panel_h
         qr_size = max(64, int(qr_size * 0.92))
+
+
+def _fit_text(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont, max_width: int) -> list[str]:
+    words = [word for word in text.split() if word]
+    if not words:
+        return []
+    lines: list[str] = []
+    current = words[0]
+    for word in words[1:]:
+        trial = f"{current} {word}"
+        if draw.textbbox((0, 0), trial, font=font)[2] <= max_width:
+            current = trial
+        else:
+            lines.append(current)
+            current = word
+    lines.append(current)
+    return lines
+
+
+def _truncate_lines(lines: list[str], limit: int) -> list[str]:
+    if len(lines) <= limit:
+        return lines
+    kept = lines[:limit]
+    kept[-1] = kept[-1].rstrip(" .,!?:;") + "..."
+    return kept
 
 
 def compose_story_image_with_affiliate_qr(
@@ -107,6 +144,71 @@ def compose_story_image_with_affiliate_qr(
         pos_y = min(max(margin, height - panel_h - safe_bottom), max(margin, height - panel_h - margin))
         base.paste(panel, (pos_x, pos_y), panel)
 
+        output = BytesIO()
+        base.convert("RGB").save(output, format="JPEG", quality=94)
+        return output.getvalue()
+
+
+def compose_story_image_with_cta(
+    *,
+    source_image_url: str,
+    description: str,
+    config: StoryCtaWidgetConfig | None = None,
+) -> bytes:
+    cfg = config or StoryCtaWidgetConfig()
+    cta_copy = generate_story_cta_text(description=description)
+    source_bytes = _download_image_bytes(source_image_url, cfg.request_timeout_seconds)
+    with Image.open(BytesIO(source_bytes)).convert("RGBA") as base:
+        width, height = base.size
+        margin = max(16, int(min(width, height) * 0.025))
+        safe_bottom = max(margin, int(height * cfg.safe_bottom_ratio))
+        panel_w = min(int(width * cfg.max_width_ratio), width - (2 * margin))
+        panel_h = min(max(int(height * cfg.min_height_ratio), 120), int(height * cfg.max_height_ratio))
+        panel_x = max(margin, (width - panel_w) // 2)
+        panel_y = max(margin, height - panel_h - safe_bottom)
+        panel = Image.new("RGBA", (panel_w, panel_h), (0, 0, 0, 0))
+        panel_draw = ImageDraw.Draw(panel)
+        corner_radius = max(18, int(panel_h * 0.2))
+        panel_draw.rounded_rectangle(
+            (0, 0, panel_w - 1, panel_h - 1),
+            radius=corner_radius,
+            fill=(12, 12, 16, 184),
+            outline=(255, 255, 255, 42),
+            width=max(1, int(panel_h * 0.01)),
+        )
+
+        try:
+            title_font = ImageFont.truetype("Arial Bold.ttf", max(18, int(height * cfg.title_font_ratio)))
+        except Exception:
+            title_font = ImageFont.load_default()
+        try:
+            body_font = ImageFont.truetype("Arial.ttf", max(14, int(height * cfg.body_font_ratio)))
+        except Exception:
+            body_font = ImageFont.load_default()
+
+        inner_padding_x = max(18, int(panel_w * 0.06))
+        inner_padding_y = max(14, int(panel_h * 0.12))
+        text_width = panel_w - (2 * inner_padding_x)
+        title_text = (cta_copy.get("headline") or "Discover this product").strip()
+        body_text = (cta_copy.get("body") or description or "").strip()
+        title_lines = _truncate_lines(_fit_text(panel_draw, title_text, title_font, text_width), 2) or [
+            "Discover this product"
+        ]
+        body_lines = _truncate_lines(_fit_text(panel_draw, body_text, body_font, text_width), 2)
+
+        current_y = inner_padding_y
+        for line in title_lines:
+            panel_draw.text((inner_padding_x, current_y), line, fill=(255, 255, 255, 255), font=title_font)
+            bbox = panel_draw.textbbox((0, 0), line, font=title_font)
+            current_y += max(18, bbox[3] - bbox[1] + 4)
+        if body_lines:
+            current_y += max(6, int(panel_h * 0.07))
+        for line in body_lines:
+            panel_draw.text((inner_padding_x, current_y), line, fill=(232, 232, 238, 235), font=body_font)
+            bbox = panel_draw.textbbox((0, 0), line, font=body_font)
+            current_y += max(14, bbox[3] - bbox[1] + 3)
+
+        base.paste(panel, (panel_x, panel_y), panel)
         output = BytesIO()
         base.convert("RGB").save(output, format="JPEG", quality=94)
         return output.getvalue()
