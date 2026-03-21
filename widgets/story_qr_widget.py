@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from io import BytesIO
+from pathlib import Path
 from urllib.parse import quote_plus
 
 import requests
@@ -28,10 +29,16 @@ class StoryCtaWidgetConfig:
     max_height_ratio: float = 0.22
     title_font_ratio: float = 0.22
     body_font_ratio: float = 0.12
+    combined_target_width_px: int = 840
+    combined_target_height_px: int = 210
+    vertical_center_ratio: float = 0.68
     request_timeout_seconds: int = 30
 
 
 def _download_image_bytes(image_url: str, timeout_seconds: int) -> bytes:
+    local_candidate = Path(image_url)
+    if local_candidate.exists() and local_candidate.is_file():
+        return local_candidate.read_bytes()
     response = requests.get(image_url, timeout=timeout_seconds)
     response.raise_for_status()
     return response.content
@@ -104,6 +111,103 @@ def _load_font(size: int, *, bold: bool = False) -> ImageFont.ImageFont:
     return ImageFont.load_default()
 
 
+def _build_qr_panel(
+    width: int,
+    height: int,
+    affiliate_link: str,
+    cfg: StoryQrWidgetConfig,
+    *,
+    size_ratio: float | None = None,
+) -> tuple[Image.Image, int, int]:
+    margin = max(16, int(min(width, height) * 0.025))
+    qr_ratio = size_ratio if size_ratio is not None else cfg.qr_size_ratio
+    panel_cfg = StoryQrWidgetConfig(
+        watermark_text=cfg.watermark_text,
+        safe_right_ratio=cfg.safe_right_ratio,
+        safe_bottom_ratio=cfg.safe_bottom_ratio,
+        min_qr_size_px=max(72, min(cfg.min_qr_size_px, 90)),
+        qr_size_ratio=qr_ratio,
+        request_timeout_seconds=cfg.request_timeout_seconds,
+    )
+    qr_size, _, panel_padding, watermark_height, panel_w, panel_h = _build_panel_dimensions(
+        width,
+        height,
+        panel_cfg,
+    )
+    qr_image = _build_qr_image(affiliate_link, qr_size, cfg.request_timeout_seconds)
+    panel = Image.new("RGBA", (panel_w, panel_h), (0, 0, 0, 0))
+    panel_draw = ImageDraw.Draw(panel)
+    corner_radius = max(12, int(panel_w * 0.09))
+    panel_draw.rounded_rectangle(
+        (0, 0, panel_w - 1, panel_h - 1),
+        radius=corner_radius,
+        fill=(255, 255, 255, 228),
+    )
+    qr_x = panel_padding
+    qr_y = panel_padding
+    panel.paste(qr_image, (qr_x, qr_y), qr_image)
+    font = _load_font(max(14, int(watermark_height * 0.55)))
+    text_bbox = panel_draw.textbbox((0, 0), cfg.watermark_text, font=font)
+    text_w = max(1, text_bbox[2] - text_bbox[0])
+    text_h = max(1, text_bbox[3] - text_bbox[1])
+    text_x = max(0, (panel_w - text_w) // 2)
+    text_y = qr_y + qr_size + max(2, (watermark_height - text_h) // 2)
+    panel_draw.text((text_x, text_y), cfg.watermark_text, fill=(33, 33, 33, 255), font=font)
+    return panel, panel_w, panel_h
+
+
+def _build_cta_panel(
+    width: int,
+    height: int,
+    product_title: str,
+    caption: str,
+    description: str,
+    cfg: StoryCtaWidgetConfig,
+) -> tuple[Image.Image, int, int]:
+    cta_copy = generate_story_cta_text(
+        product_title=product_title,
+        caption=caption,
+        description=description,
+    )
+    margin = max(16, int(min(width, height) * 0.025))
+    panel_w = width - (2 * margin)
+    panel_h = min(max(int(height * cfg.min_height_ratio), 120), int(height * cfg.max_height_ratio))
+    panel = Image.new("RGBA", (panel_w, panel_h), (0, 0, 0, 0))
+    panel_draw = ImageDraw.Draw(panel)
+    corner_radius = max(18, int(panel_h * 0.2))
+    panel_draw.rounded_rectangle(
+        (0, 0, panel_w - 1, panel_h - 1),
+        radius=corner_radius,
+        fill=(12, 12, 16, 184),
+        outline=(255, 255, 255, 42),
+        width=max(1, int(panel_h * 0.01)),
+    )
+    inner_padding_x = max(18, int(panel_w * 0.06))
+    inner_padding_y = max(14, int(panel_h * 0.12))
+    text_width = panel_w - (2 * inner_padding_x)
+    title_font = _load_font(max(26, int(panel_h * cfg.title_font_ratio)), bold=True)
+    body_font = _load_font(max(18, int(panel_h * cfg.body_font_ratio)))
+    title_text = (cta_copy.get("headline") or "Discover this product").strip()
+    body_text = (cta_copy.get("body") or description or "").strip()
+    title_lines = _truncate_lines(_fit_text(panel_draw, title_text, title_font, text_width), 2) or [
+        "Discover this product"
+    ]
+    body_lines = _truncate_lines(_fit_text(panel_draw, body_text, body_font, text_width), 2)
+
+    current_y = inner_padding_y
+    for line in title_lines:
+        panel_draw.text((inner_padding_x, current_y), line, fill=(255, 255, 255, 255), font=title_font)
+        bbox = panel_draw.textbbox((0, 0), line, font=title_font)
+        current_y += max(18, bbox[3] - bbox[1] + 4)
+    if body_lines:
+        current_y += max(6, int(panel_h * 0.07))
+    for line in body_lines:
+        panel_draw.text((inner_padding_x, current_y), line, fill=(232, 232, 238, 235), font=body_font)
+        bbox = panel_draw.textbbox((0, 0), line, font=body_font)
+        current_y += max(14, bbox[3] - bbox[1] + 3)
+    return panel, panel_w, panel_h
+
+
 def compose_story_image_with_affiliate_qr(
     *,
     source_image_url: str,
@@ -114,39 +218,8 @@ def compose_story_image_with_affiliate_qr(
     source_bytes = _download_image_bytes(source_image_url, cfg.request_timeout_seconds)
     with Image.open(BytesIO(source_bytes)).convert("RGBA") as base:
         width, height = base.size
-        qr_size, margin, panel_padding, watermark_height, panel_w, panel_h = _build_panel_dimensions(
-            width,
-            height,
-            cfg,
-        )
-
-        qr_image = _build_qr_image(affiliate_link, qr_size, cfg.request_timeout_seconds)
-
-        panel = Image.new("RGBA", (panel_w, panel_h), (0, 0, 0, 0))
-        panel_draw = ImageDraw.Draw(panel)
-        corner_radius = max(12, int(panel_w * 0.09))
-        panel_draw.rounded_rectangle(
-            (0, 0, panel_w - 1, panel_h - 1),
-            radius=corner_radius,
-            fill=(255, 255, 255, 228),
-        )
-        qr_x = panel_padding
-        qr_y = panel_padding
-        panel.paste(qr_image, (qr_x, qr_y), qr_image)
-
-        try:
-            font_size = max(14, int(watermark_height * 0.55))
-            font = ImageFont.truetype("Arial.ttf", font_size)
-        except Exception:
-            font = ImageFont.load_default()
-
-        text_bbox = panel_draw.textbbox((0, 0), cfg.watermark_text, font=font)
-        text_w = max(1, text_bbox[2] - text_bbox[0])
-        text_h = max(1, text_bbox[3] - text_bbox[1])
-        text_x = max(0, (panel_w - text_w) // 2)
-        text_y = qr_y + qr_size + max(2, (watermark_height - text_h) // 2)
-        panel_draw.text((text_x, text_y), cfg.watermark_text, fill=(33, 33, 33, 255), font=font)
-
+        margin = max(16, int(min(width, height) * 0.025))
+        panel, panel_w, panel_h = _build_qr_panel(width, height, affiliate_link, cfg)
         safe_bottom = max(margin, int(height * cfg.safe_bottom_ratio))
         safe_side = max(margin, int(width * cfg.safe_right_ratio))
         centered_x = (width - panel_w) // 2
@@ -162,52 +235,127 @@ def compose_story_image_with_affiliate_qr(
 def compose_story_image_with_cta(
     *,
     source_image_url: str,
+    product_title: str = "",
+    caption: str = "",
     description: str,
     config: StoryCtaWidgetConfig | None = None,
 ) -> bytes:
     cfg = config or StoryCtaWidgetConfig()
-    cta_copy = generate_story_cta_text(description=description)
     source_bytes = _download_image_bytes(source_image_url, cfg.request_timeout_seconds)
     with Image.open(BytesIO(source_bytes)).convert("RGBA") as base:
         width, height = base.size
         margin = max(16, int(min(width, height) * 0.025))
         safe_bottom = max(margin, int(height * cfg.safe_bottom_ratio))
-        panel_w = min(int(width * cfg.max_width_ratio), width - (2 * margin))
-        panel_h = min(max(int(height * cfg.min_height_ratio), 120), int(height * cfg.max_height_ratio))
+        panel, panel_w, panel_h = _build_cta_panel(width, height, product_title, caption, description, cfg)
         panel_x = max(margin, (width - panel_w) // 2)
-        panel_y = max(margin, height - panel_h - safe_bottom)
+        bottom_y = height - panel_h - safe_bottom
+        target_center_y = int(height * cfg.vertical_center_ratio)
+        target_y = target_center_y - (panel_h // 2)
+        panel_y = max(margin, min(bottom_y, target_y))
+        base.paste(panel, (panel_x, panel_y), panel)
+        output = BytesIO()
+        base.convert("RGB").save(output, format="JPEG", quality=94)
+        return output.getvalue()
+
+
+def compose_story_image_with_cta_and_affiliate_qr(
+    *,
+    source_image_url: str,
+    affiliate_link: str,
+    product_title: str = "",
+    caption: str = "",
+    description: str,
+    qr_config: StoryQrWidgetConfig | None = None,
+    cta_config: StoryCtaWidgetConfig | None = None,
+) -> bytes:
+    qr_cfg = qr_config or StoryQrWidgetConfig()
+    cta_cfg = cta_config or StoryCtaWidgetConfig()
+    source_bytes = _download_image_bytes(source_image_url, qr_cfg.request_timeout_seconds)
+    with Image.open(BytesIO(source_bytes)).convert("RGBA") as base:
+        width, height = base.size
+        margin = max(16, int(min(width, height) * 0.025))
+        safe_side = max(margin, int(width * 0.055))
+        safe_width = max(180, width - (2 * safe_side))
+        cta_copy = generate_story_cta_text(
+            product_title=product_title,
+            caption=caption,
+            description=description,
+        )
+        panel_w = min(
+            max(220, cta_cfg.combined_target_width_px),
+            width - (2 * safe_side),
+        )
+        panel_h = min(
+            max(120, cta_cfg.combined_target_height_px),
+            height - (2 * margin),
+        )
+        panel_x = safe_side + max(0, (safe_width - panel_w) // 2)
+        panel_y = max(margin, height - panel_h - margin)
+
         panel = Image.new("RGBA", (panel_w, panel_h), (0, 0, 0, 0))
         panel_draw = ImageDraw.Draw(panel)
-        corner_radius = max(18, int(panel_h * 0.2))
+        corner_radius = max(20, int(panel_h * 0.18))
         panel_draw.rounded_rectangle(
             (0, 0, panel_w - 1, panel_h - 1),
             radius=corner_radius,
-            fill=(12, 12, 16, 184),
-            outline=(255, 255, 255, 42),
+            fill=(10, 10, 14, 196),
+            outline=(255, 255, 255, 38),
             width=max(1, int(panel_h * 0.01)),
         )
 
-        inner_padding_x = max(18, int(panel_w * 0.06))
-        inner_padding_y = max(14, int(panel_h * 0.12))
-        text_width = panel_w - (2 * inner_padding_x)
-        title_font = _load_font(max(26, int(panel_h * cfg.title_font_ratio)), bold=True)
-        body_font = _load_font(max(18, int(panel_h * cfg.body_font_ratio)))
+        inner_padding_x = max(18, int(panel_w * 0.04))
+        inner_padding_y = max(16, int(panel_h * 0.12))
+        qr_size = min(int(panel_h * 0.5), int(panel_w * 0.18))
+        qr_size = max(72, qr_size)
+        qr_box_size = min(
+            qr_size + max(18, int(qr_size * 0.2)),
+            int(panel_w * 0.24),
+        )
+        qr_box_x = panel_w - inner_padding_x - qr_box_size
+        qr_box_y = max(12, (panel_h - qr_box_size) // 2)
+
+        panel_draw.rounded_rectangle(
+            (qr_box_x, qr_box_y, qr_box_x + qr_box_size, qr_box_y + qr_box_size),
+            radius=max(16, int(qr_box_size * 0.14)),
+            fill=(255, 255, 255, 236),
+        )
+        qr_image = _build_qr_image(affiliate_link, qr_size, qr_cfg.request_timeout_seconds)
+        qr_x = qr_box_x + (qr_box_size - qr_size) // 2
+        qr_y = qr_box_y + max(8, int(qr_box_size * 0.08))
+        panel.paste(qr_image, (qr_x, qr_y), qr_image)
+        watermark_font = _load_font(max(12, int(panel_h * 0.08)))
+        watermark_text = qr_cfg.watermark_text
+        watermark_bbox = panel_draw.textbbox((0, 0), watermark_text, font=watermark_font)
+        watermark_w = max(1, watermark_bbox[2] - watermark_bbox[0])
+        watermark_x = qr_box_x + max(0, (qr_box_size - watermark_w) // 2)
+        watermark_y = qr_y + qr_size + max(4, int(panel_h * 0.02))
+        # panel_draw.text(
+        #     (watermark_x, watermark_y),
+        #     watermark_text,
+        #     fill=(44, 44, 44, 255),
+        #     font=watermark_font,
+        # )
+
+        text_column_x = inner_padding_x
+        text_column_w = max(110, qr_box_x - text_column_x - max(12, int(panel_w * 0.03)))
+        title_font = _load_font(max(26, int(panel_h * cta_cfg.title_font_ratio)), bold=True)
+        body_font = _load_font(max(18, int(panel_h * cta_cfg.body_font_ratio)))
         title_text = (cta_copy.get("headline") or "Discover this product").strip()
         body_text = (cta_copy.get("body") or description or "").strip()
-        title_lines = _truncate_lines(_fit_text(panel_draw, title_text, title_font, text_width), 2) or [
+        title_lines = _truncate_lines(_fit_text(panel_draw, title_text, title_font, text_column_w), 2) or [
             "Discover this product"
         ]
-        body_lines = _truncate_lines(_fit_text(panel_draw, body_text, body_font, text_width), 2)
+        body_lines = _truncate_lines(_fit_text(panel_draw, body_text, body_font, text_column_w), 2)
 
         current_y = inner_padding_y
         for line in title_lines:
-            panel_draw.text((inner_padding_x, current_y), line, fill=(255, 255, 255, 255), font=title_font)
+            panel_draw.text((text_column_x, current_y), line, fill=(255, 255, 255, 255), font=title_font)
             bbox = panel_draw.textbbox((0, 0), line, font=title_font)
-            current_y += max(18, bbox[3] - bbox[1] + 4)
+            current_y += max(18, bbox[3] - bbox[1] + 5)
         if body_lines:
-            current_y += max(6, int(panel_h * 0.07))
+            current_y += max(6, int(panel_h * 0.04))
         for line in body_lines:
-            panel_draw.text((inner_padding_x, current_y), line, fill=(232, 232, 238, 235), font=body_font)
+            panel_draw.text((text_column_x, current_y), line, fill=(232, 232, 238, 236), font=body_font)
             bbox = panel_draw.textbbox((0, 0), line, font=body_font)
             current_y += max(14, bbox[3] - bbox[1] + 3)
 

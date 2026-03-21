@@ -19,7 +19,6 @@ from amazon.amazon_api import build_affiliate_link, extract_asin, fetch_product_
 from gemeni_api_helper import edit_image, generate_video_from_image
 from instagram.instagram_api_helper import (
     get_latest_instagram_media_id,
-    list_story_media_candidates,
     publish_instagram_post,
     publish_random_profile_story,
     publish_instagram_reel,
@@ -44,8 +43,8 @@ from kaymio_wp_admin_view import kaymio_wp_admin_bp
 from widgets.story_qr_widget import (
     StoryCtaWidgetConfig,
     StoryQrWidgetConfig,
-    compose_story_image_with_affiliate_qr,
     compose_story_image_with_cta,
+    compose_story_image_with_cta_and_affiliate_qr,
 )
 
 load_dotenv()
@@ -186,48 +185,113 @@ def _story_content_for_instagram_media(media_id: str) -> Dict[str, str]:
     return {}
 
 
+def _resolve_story_source_image(entry: Dict[str, Any], feed_state: Dict[str, Any]) -> Dict[str, str]:
+    assets = entry.get("assets") or {}
+    relative_candidates = [
+        str(feed_state.get("instagram_image_path") or ""),
+        str(feed_state.get("generated_image_path") or ""),
+        str(assets.get("instagram_image_path") or ""),
+        str(assets.get("generated_image_path") or ""),
+        str(assets.get("original_image_path") or ""),
+    ]
+    for relative_path in relative_candidates:
+        storage_path = resolve_storage_path(relative_path)
+        if storage_path:
+            return {
+                "compose_source": storage_path,
+                "publish_source": f"/media/{relative_path}",
+            }
+    external_candidates = list(assets.get("source_image_urls") or []) + list(assets.get("amazon_image_urls") or [])
+    for image_url in external_candidates:
+        if image_url:
+            return {
+                "compose_source": str(image_url),
+                "publish_source": str(image_url),
+            }
+    return {}
+
+
+def _scheduled_story_candidates_from_state() -> List[Dict[str, str]]:
+    state = load_app_state()
+    products = state.get("products", {}) or {}
+    candidates: List[Dict[str, str]] = []
+    for product_id, entry in products.items():
+        platforms = entry.get("platforms") or {}
+        instagram = platforms.get("instagram") or {}
+        feed_state = instagram.get("instagram_feed") or {}
+        if not feed_state:
+            continue
+        image_sources = _resolve_story_source_image(entry, feed_state)
+        compose_source = image_sources.get("compose_source") or ""
+        publish_source = image_sources.get("publish_source") or ""
+        if not compose_source or not publish_source:
+            continue
+        affiliate_link = str(
+            feed_state.get("affiliate_link")
+            or (platforms.get("website") or {}).get("affiliate_link")
+            or ""
+        )
+        candidates.append(
+            {
+                "product_id": str(product_id),
+                "title": str(feed_state.get("title") or ""),
+                "description": str(feed_state.get("description") or ""),
+                "caption": str(feed_state.get("caption") or ""),
+                "affiliate_link": affiliate_link,
+                "compose_source": compose_source,
+                "publish_source": publish_source,
+            }
+        )
+    return candidates
+
+
 def _publish_scheduled_instagram_stories() -> None:
     posted = 0
-    candidates = list_story_media_candidates(limit=50)
+    candidates = _scheduled_story_candidates_from_state()
     if not candidates:
-        app.logger.warning("No Instagram media candidates found for scheduled stories.")
+        app.logger.warning("No app_state.json candidates found for scheduled stories.")
         return
     random.shuffle(candidates)
-    used_media: set[str] = set()
+    used_products: set[str] = set()
     while posted < STORY_AUTOPUBLISH_COUNT:
         try:
             candidate = None
             for item in candidates:
-                media_id = str(item.get("media_id") or "")
-                if media_id not in used_media:
+                product_id = str(item.get("product_id") or "")
+                if product_id not in used_products:
                     candidate = item
-                    used_media.add(media_id)
+                    used_products.add(product_id)
                     break
             if not candidate:
                 break
-            # 17892045201283167
-            media_id = str(candidate.get("media_id") or "")
             caption = str(candidate.get("caption") or "")
-            affiliate_link = _affiliate_link_for_instagram_media(media_id)
-            story_content = _story_content_for_instagram_media(media_id)
-            story_copy = caption or story_content.get("description", "") or story_content.get("title", "")
-            # affiliate_link = "https://www.amazon.com/dp/B0987JNH24?tag=kaymio-20"
-            image_url = candidate.get("image_url", "")
-            if affiliate_link and image_url:
+            title = str(candidate.get("title") or "")
+            description = str(candidate.get("description") or "")
+            affiliate_link = str(candidate.get("affiliate_link") or "")
+            compose_source = str(candidate.get("compose_source") or "")
+            image_url = str(candidate.get("publish_source") or "")
+            story_copy = caption or description or title
+            if affiliate_link and compose_source:
                 try:
-                    story_image = compose_story_image_with_affiliate_qr(
-                        source_image_url=image_url,
+                    story_image = compose_story_image_with_cta_and_affiliate_qr(
+                        source_image_url=compose_source,
                         affiliate_link=affiliate_link,
-                        config=STORY_QR_WIDGET_CONFIG,
+                        product_title=title,
+                        caption=caption,
+                        description=description or story_copy,
+                        qr_config=STORY_QR_WIDGET_CONFIG,
+                        cta_config=STORY_CTA_WIDGET_CONFIG,
                     )
                     image_url = f"/media/{save_generated_image(story_image)}"
                 except Exception:
-                    app.logger.exception("Unable to compose scheduled story image with affiliate QR.")
-            elif image_url:
+                    app.logger.exception("Unable to compose scheduled story image with CTA + affiliate QR.")
+            elif compose_source:
                 try:
                     story_image = compose_story_image_with_cta(
-                        source_image_url=image_url,
-                        description=story_copy,
+                        source_image_url=compose_source,
+                        product_title=title,
+                        caption=caption,
+                        description=description or story_copy,
                         config=STORY_CTA_WIDGET_CONFIG,
                     )
                     image_url = f"/media/{save_generated_image(story_image)}"
@@ -237,8 +301,9 @@ def _publish_scheduled_instagram_stories() -> None:
             response = publish_instagram_story(
                 image_url=image_url,
                 caption=None,
-                share_link=affiliate_link or candidate.get("permalink"),
+                share_link=affiliate_link,
             )
+            print(f"Scheduled story publish response: {response}")
             app.logger.info("Scheduled Instagram story published: %s", response)
             posted += 1
             time.sleep(8)

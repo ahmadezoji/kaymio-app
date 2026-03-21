@@ -330,31 +330,35 @@ def generate_youtube_metadata(title: str, description: str) -> Dict[str, str]:
     }
 
 
-def generate_story_cta_text(description: str) -> Dict[str, str]:
+def generate_story_cta_text(product_title: str = "", description: str = "", caption: str = "") -> Dict[str, str]:
     """Produce compact CTA copy suitable for a visual story overlay."""
 
-    cleaned_description = (description or "").strip()
-    words = [word.strip(".,!?:;\"'()[]{}") for word in cleaned_description.split() if word.strip()]
-    keywords = [word for word in words if len(word) > 3][:3]
-    keyword_phrase = " ".join(keywords).strip()
-    fallback_title = f"{keyword_phrase} upgrade".title() if keyword_phrase else "Worth a closer look"
-    fallback_body = "Find it in our bio." if cleaned_description else "Find it in our bio."
+    source_text = " ".join(part.strip() for part in (product_title, caption, description) if part and part.strip())
+    cleaned_source = source_text.strip()
+    words = [word.strip(".,!?:;\"'()[]{}") for word in cleaned_source.split() if word.strip()]
+    strong_words = [word for word in words if len(word) > 3][:4]
+    keyword_phrase = " ".join(strong_words[:2]).strip()
+    fallback_title = keyword_phrase.title() if keyword_phrase else "Style Worth Saving"
+    fallback_body = "Find it in our bio."
 
     prompt = (
         "Return strict JSON with keys headline and body. "
         "Write premium, catchy CTA overlay copy for an Instagram story selling a product. "
-        "Do not repeat or paraphrase the product description directly. "
-        "Extract the benefit or vibe, then write fresh marketing copy. "
-        "Headline rules: max 4 words, 2-4 words preferred, punchy, stylish, no punctuation unless essential. "
+        "Do not repeat the input wording or end with generic words like upgrade, product, item, deal, style unless absolutely necessary. "
+        "Extract the product category, mood, benefit, or transformation and write fresh marketing copy. "
+        "Headline rules: max 4 words, 2-4 words preferred, punchy, stylish, product-aware, no punctuation unless essential. "
         "Body rules: max 8 words, action-oriented, short, human. "
         "If you reference next step, direct users to bio or website, not a story tap. "
         "Do not use hashtags. Do not use quotation marks. Do not mention Instagram. "
-        "Avoid generic lines like Discover this product.\n"
+        "Avoid generic lines like Discover this product or Elevate Your Wardrobe.\n"
+        f"Product title: {product_title}\n"
+        f"Caption: {caption}\n"
         f"Product description: {description}"
     )
     text = _generate_response_text(
         "You write short, high-performing CTA copy for story overlays. "
-        "Your copy must feel like ad creative, not a summary.",
+        "Your copy must feel like ad creative, not a summary. "
+        "Every headline should feel category-specific and visually distinctive.",
         prompt,
         temperature=0.95,
         max_output_tokens=90,
@@ -365,9 +369,9 @@ def generate_story_cta_text(description: str) -> Dict[str, str]:
     data = _safe_json_loads(text)
     headline = str(data.get("headline") or fallback_title).strip().replace('"', "")
     body = str(data.get("body") or fallback_body).strip().replace('"', "")
-    if headline.lower() in cleaned_description.lower():
+    if headline.lower() in cleaned_source.lower():
         headline = fallback_title
-    if body.lower() in cleaned_description.lower():
+    if body.lower() in cleaned_source.lower():
         body = fallback_body
     return {
         "headline": " ".join(headline.split()[:4]) or fallback_title,
