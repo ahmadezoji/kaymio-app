@@ -769,6 +769,25 @@
                     Generate Instagram Reel
                   </button>
                 </form>
+                <form
+                  method="post"
+                  action="{{ url_for('upload_platform_video', platform='instagram') }}"
+                  enctype="multipart/form-data"
+                >
+                  {{ preview_hidden_inputs(preview_data, values) }}
+                  <label>
+                    <span>Upload external Reel</span>
+                    <input
+                      type="file"
+                      name="external_video"
+                      accept="video/mp4,video/quicktime,video/x-m4v,video/webm"
+                      {% if instagram_reel_published or platforms_locked %}disabled{% endif %}
+                    />
+                  </label>
+                  <button type="submit" class="ghost-btn" {% if instagram_reel_published or platforms_locked %}disabled{% endif %}>
+                    Use uploaded video
+                  </button>
+                </form>
                 {% else %}
                   <p class="muted">Generate a creative first to unlock Reels video generation.</p>
                 {% endif %}
@@ -895,6 +914,25 @@
                   {{ preview_hidden_inputs(preview_data, values) }}
                   <button type="submit" class="ghost-btn" {% if youtube_published or platforms_locked %}disabled{% endif %}>
                     Generate YouTube Short
+                  </button>
+                </form>
+                <form
+                  method="post"
+                  action="{{ url_for('upload_platform_video', platform='youtube') }}"
+                  enctype="multipart/form-data"
+                >
+                  {{ preview_hidden_inputs(preview_data, values) }}
+                  <label>
+                    <span>Upload external Short</span>
+                    <input
+                      type="file"
+                      name="external_video"
+                      accept="video/mp4,video/quicktime,video/x-m4v,video/webm"
+                      {% if youtube_published or platforms_locked %}disabled{% endif %}
+                    />
+                  </label>
+                  <button type="submit" class="ghost-btn" {% if youtube_published or platforms_locked %}disabled{% endif %}>
+                    Use uploaded video
                   </button>
                 </form>
               {% else %}
