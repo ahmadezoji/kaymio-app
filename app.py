@@ -55,6 +55,7 @@ app.register_blueprint(kaymio_wp_admin_bp)
 app.config["SECRET_KEY"] = os.getenv("FLASK_SECRET_KEY", "dev-secret-key")
 app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024  # 20MB uploads
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp"}
+ALLOWED_VIDEO_EXTENSIONS = {"mp4", "mov", "m4v", "webm"}
 STORAGE_ROOT = Path(app.root_path) / "template_images"
 ORIGINALS_DIR = STORAGE_ROOT / "originals"
 GENERATED_DIR = STORAGE_ROOT / "generated"
@@ -805,6 +806,10 @@ def allowed_file(filename: str) -> bool:
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
 
 
+def allowed_video_file(filename: str) -> bool:
+    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_VIDEO_EXTENSIONS
+
+
 def _store_image(bytes_data: bytes, directory: Path, suffix: str) -> str:
     directory.mkdir(parents=True, exist_ok=True)
     filename = f"{uuid4().hex}{suffix}"
@@ -835,6 +840,13 @@ def save_generated_image(bytes_data: bytes) -> str:
 
 def save_generated_video(bytes_data: bytes) -> str:
     return _store_image(bytes_data, VIDEOS_DIR, ".mp4")
+
+
+def save_uploaded_video(bytes_data: bytes, original_filename: str) -> str:
+    suffix = Path(original_filename).suffix.lower() or ".mp4"
+    if suffix.lstrip(".") not in ALLOWED_VIDEO_EXTENSIONS:
+        suffix = ".mp4"
+    return _store_image(bytes_data, VIDEOS_DIR, suffix)
 
 
 def load_stored_media(relative_path: str) -> bytes:
@@ -2406,6 +2418,62 @@ def generate_platform_video(platform: str):
         platform_payload.pop("status", None)
         platform_payload["video_status"] = "pending"
     flash(f"{target_label} video generated.", "success")
+    update_product_state(
+        product_id,
+        form_values=form_values,
+        preview=preview_payload,
+        platforms={platform_key: platform_payload},
+        assets={"generated_video_path": video_path},
+    )
+    return render_home_view(form_values, preview_payload, product_id=product_id)
+
+
+@app.route("/upload-video/<platform>", methods=["POST"])
+def upload_platform_video(platform: str):
+    supported = {"youtube", "tiktok", "instagram", "pinterest"}
+    target = platform.lower()
+    if target not in supported:
+        abort(404)
+
+    raw_form_values = collect_form_values(request.form)
+    form_values = extract_form_defaults(raw_form_values)
+    use_affiliate_link_flag = str(form_values.get("use_affiliate_link", "0")).lower() in TRUTHY_VALUES
+    product_id = resolve_product_id(form_values)
+    preview_payload = rebuild_preview_payload(raw_form_values)
+    upload = request.files.get("external_video")
+
+    if not upload or not upload.filename:
+        flash("Choose a video file to upload first.", "error")
+        return render_home_view(form_values, preview_payload, product_id=product_id)
+    if not allowed_video_file(upload.filename):
+        flash("Unsupported video format. Upload MP4, MOV, M4V, or WEBM.", "error")
+        return render_home_view(form_values, preview_payload, product_id=product_id)
+
+    video_bytes = upload.read()
+    if not video_bytes:
+        flash("Uploaded video was empty.", "error")
+        return render_home_view(form_values, preview_payload, product_id=product_id)
+
+    video_path = save_uploaded_video(video_bytes, upload.filename)
+    preview_payload = preview_payload or {}
+    preview_payload["generated_video_path"] = video_path
+    preview_payload["video_url"] = url_for("serve_media", filename=video_path)
+    preview_payload["video_download_url"] = url_for("download_media", filename=video_path)
+    preview_payload["video_public_url"] = url_for("serve_media", filename=video_path, _external=True)
+
+    target_label = "Instagram" if target == "instagram" else target.title()
+    platform_key = "instagram_reel" if target == "instagram" else target
+    platform_payload = {
+        "status": "pending",
+        "video_path": video_path,
+        "use_affiliate_link": use_affiliate_link_flag,
+        "video_source": "upload",
+    }
+    if target == "pinterest":
+        platform_payload.pop("status", None)
+        platform_payload["video_status"] = "pending"
+
+    flash(f"{target_label} video uploaded.", "success")
     update_product_state(
         product_id,
         form_values=form_values,
