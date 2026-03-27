@@ -34,7 +34,12 @@ from openai_helper import (
     generate_youtube_metadata,
 )
 from pintrest.pinterest_helper import create_pinterest_pin, create_pinterest_video_pin
-from tiktok.tiktok_api_helper import publish_tiktok_post
+from tiktok.tiktok_api_helper import (
+    build_tiktok_oauth_url,
+    exchange_tiktok_oauth_code,
+    has_tiktok_credentials,
+    publish_tiktok_post,
+)
 from youtube.youtube_api_helper import publish_short_video
 from kaymio.wordpress.wordpress_api_helper import (
     create_woocommerce_product,
@@ -88,6 +93,7 @@ STORY_AUTOPUBLISH_TIME = os.getenv("INSTAGRAM_STORY_AUTOPUBLISH_TIME", "11:45")
 STORY_AUTOPUBLISH_COUNT = int(os.getenv("INSTAGRAM_STORY_AUTOPUBLISH_COUNT", "2"))
 STORY_AUTOPUBLISH_ENABLED = os.getenv("INSTAGRAM_STORY_AUTOPUBLISH_ENABLED", "1") in TRUTHY_VALUES
 STORY_AUTOPUBLISH_STATE_FILE = STATE_DIR / "instagram_story_scheduler.json"
+TIKTOK_OAUTH_PENDING_FILE = STATE_DIR / "tiktok_oauth_pending.json"
 STORY_QR_WATERMARK = os.getenv("INSTAGRAM_STORY_QR_WATERMARK", "https://kaymio.com")
 STORY_QR_SAFE_RIGHT_RATIO = float(os.getenv("INSTAGRAM_STORY_QR_SAFE_RIGHT_RATIO", "0.08"))
 STORY_QR_SAFE_BOTTOM_RATIO = float(os.getenv("INSTAGRAM_STORY_QR_SAFE_BOTTOM_RATIO", "0.12"))
@@ -121,6 +127,41 @@ def _load_story_scheduler_state() -> Dict[str, Any]:
 
 def _save_story_scheduler_state(payload: Dict[str, Any]) -> None:
     STORY_AUTOPUBLISH_STATE_FILE.write_text(json.dumps(payload))
+
+
+def _load_tiktok_oauth_pending() -> Dict[str, Any]:
+    if not TIKTOK_OAUTH_PENDING_FILE.exists():
+        return {}
+    try:
+        payload = json.loads(TIKTOK_OAUTH_PENDING_FILE.read_text())
+        return payload if isinstance(payload, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_tiktok_oauth_pending(payload: Dict[str, Any]) -> None:
+    TIKTOK_OAUTH_PENDING_FILE.write_text(json.dumps(payload))
+
+
+def _stash_tiktok_publish_request(raw_form_values: Dict[str, str]) -> str:
+    pending = _load_tiktok_oauth_pending()
+    state = uuid4().hex
+    pending[state] = {
+        "raw_form_values": raw_form_values,
+        "created_at": dt.datetime.utcnow().isoformat(),
+    }
+    _save_tiktok_oauth_pending(pending)
+    return state
+
+
+def _pop_tiktok_publish_request(state: str) -> Dict[str, str]:
+    pending = _load_tiktok_oauth_pending()
+    payload = pending.pop(state, None)
+    _save_tiktok_oauth_pending(pending)
+    if not isinstance(payload, dict):
+        return {}
+    raw_form_values = payload.get("raw_form_values")
+    return raw_form_values if isinstance(raw_form_values, dict) else {}
 
 
 def _random_affiliate_link_from_state() -> Optional[str]:
@@ -2610,6 +2651,22 @@ def publish_youtube():
 @app.route("/publish-tiktok", methods=["POST"])
 def publish_tiktok():
     raw_form_values = collect_form_values(request.form)
+    if not has_tiktok_credentials():
+        try:
+            state = _stash_tiktok_publish_request(raw_form_values)
+            return redirect(build_tiktok_oauth_url(state))
+        except Exception as exc:
+            app.logger.exception("TikTok OAuth redirect failed")
+            form_values = extract_form_defaults(raw_form_values)
+            product_id = resolve_product_id(form_values)
+            preview_payload = rebuild_preview_payload(raw_form_values)
+            flash(f"Unable to start TikTok login: {exc}", "error")
+            return render_home_view(form_values, preview_payload, product_id=product_id)
+
+    return _publish_tiktok_from_form(raw_form_values)
+
+
+def _publish_tiktok_from_form(raw_form_values: Dict[str, str]):
     form_values = extract_form_defaults(raw_form_values)
     use_affiliate_link_flag = str(form_values.get("use_affiliate_link", "0")).lower() in TRUTHY_VALUES
     product_id = resolve_product_id(form_values)
@@ -2661,6 +2718,36 @@ def publish_tiktok():
         flash(f"Unable to publish to TikTok: {exc}", "error")
 
     return render_home_view(form_values, preview_payload, product_id=product_id)
+
+
+@app.route("/tiktok/callback", methods=["GET"])
+def tiktok_oauth_callback():
+    state = (request.args.get("state") or "").strip()
+    code = (request.args.get("code") or "").strip()
+    error = (request.args.get("error") or "").strip()
+    error_description = (request.args.get("error_description") or "").strip()
+
+    if error:
+        flash(f"TikTok login was cancelled or failed: {error_description or error}", "error")
+        return redirect(url_for("home"))
+
+    if not state or not code:
+        flash("TikTok login did not return the expected authorization code.", "error")
+        return redirect(url_for("home"))
+
+    try:
+        exchange_tiktok_oauth_code(code)
+    except Exception as exc:
+        app.logger.exception("TikTok OAuth token exchange failed")
+        flash(f"Unable to finish TikTok login: {exc}", "error")
+        return redirect(url_for("home"))
+
+    raw_form_values = _pop_tiktok_publish_request(state)
+    if not raw_form_values:
+        flash("TikTok login succeeded, but the pending publish request expired.", "error")
+        return redirect(url_for("home"))
+
+    return _publish_tiktok_from_form(raw_form_values)
 
 
 if __name__ == "__main__":

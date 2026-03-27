@@ -1036,7 +1036,7 @@
                 <p class="muted">Generate a Shorts-style video before sending it to TikTok.</p>
               {% endif %}
               {% if preview_data.video_url %}
-                <form method="post" action="{{ url_for('publish_tiktok') }}">
+                <form method="post" action="{{ url_for('publish_tiktok') }}" target="_blank">
                   {{ preview_hidden_inputs(preview_data, values) }}
                   <input type="hidden" name="use_affiliate_link" value="0" />
                   <label class="checkbox">
@@ -1061,6 +1061,7 @@
                     Publish to TikTok
                   </button>
                 </form>
+                <p class="muted">If TikTok is not connected yet, Kaymio will open TikTok login in a new tab and continue publishing after approval.</p>
                 {% if tiktok_published %}
                   <p class="muted">TikTok video already published.</p>
                 {% elif platforms_locked %}
