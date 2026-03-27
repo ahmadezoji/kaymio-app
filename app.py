@@ -36,7 +36,11 @@ from openai_helper import (
 from pintrest.pinterest_helper import create_pinterest_pin, create_pinterest_video_pin
 from tiktok.tiktok_api_helper import publish_tiktok_post
 from youtube.youtube_api_helper import publish_short_video
-from kaymio.wordpress.wordpress_api_helper import create_woocommerce_product, find_wordpress_nearest_category
+from kaymio.wordpress.wordpress_api_helper import (
+    create_woocommerce_product,
+    find_wordpress_nearest_category,
+    list_woocommerce_products,
+)
 from PIL import Image, ImageOps
 from analytics_view import analytics_bp
 from kaymio_wp_admin_view import kaymio_wp_admin_bp
@@ -246,11 +250,53 @@ def _scheduled_story_candidates_from_state() -> List[Dict[str, str]]:
     return candidates
 
 
+def _scheduled_story_candidates_from_website(limit: int = 100) -> List[Dict[str, str]]:
+    result = list_woocommerce_products(page=1, per_page=max(1, min(limit, 100)))
+    if result.get("error"):
+        app.logger.warning("Unable to load WooCommerce products for scheduled stories: %s", result["error"])
+        return []
+
+    candidates: List[Dict[str, str]] = []
+    for product in result.get("items", []):
+        if not isinstance(product, dict):
+            continue
+        images = product.get("images") or []
+        image_url = ""
+        if images and isinstance(images[0], dict):
+            image_url = str(images[0].get("src") or "")
+        if not image_url:
+            continue
+
+        affiliate_link = str(product.get("external_url") or product.get("permalink") or "")
+        candidates.append(
+            {
+                "product_id": f"wc:{product.get('id')}",
+                "title": str(product.get("name") or ""),
+                "description": str(
+                    product.get("short_description")
+                    or product.get("description")
+                    or ""
+                ),
+                "caption": "",
+                "affiliate_link": affiliate_link,
+                "compose_source": image_url,
+                "publish_source": image_url,
+            }
+        )
+    return candidates
+
+
+def _scheduled_story_candidates() -> List[Dict[str, str]]:
+    candidates = _scheduled_story_candidates_from_state()
+    candidates.extend(_scheduled_story_candidates_from_website())
+    return candidates
+
+
 def _publish_scheduled_instagram_stories() -> None:
     posted = 0
-    candidates = _scheduled_story_candidates_from_state()
+    candidates = _scheduled_story_candidates()
     if not candidates:
-        app.logger.warning("No app_state.json candidates found for scheduled stories.")
+        app.logger.warning("No app_state.json or WooCommerce candidates found for scheduled stories.")
         return
     random.shuffle(candidates)
     used_products: set[str] = set()

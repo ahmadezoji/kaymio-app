@@ -91,7 +91,6 @@ def create_wordpress_post(title, content, featured_image_path=None, tags=None):
         print(f"Error creating WordPress post: {e}")
         return None
 
-
 def get_tag_id(tag_name, wp_url, wp_username, wp_password):
     response = requests.get(
         f"{wp_url}/wp-json/wp/v2/tags",
@@ -116,8 +115,6 @@ def get_tag_id(tag_name, wp_url, wp_username, wp_password):
     else:
         print(f"❌ Could not create tag '{tag_name}' — {response.text}")
         return None
-
-
 
 def upload_media_to_wordpress_ext(image_path):
     if image_path and os.path.exists(image_path):
@@ -189,7 +186,6 @@ def create_woocommerce_product(name, description, price, image_path=None, tags=N
         print(f"Failed to create product: {response.text}")
         return None
 
-
 def upload_wordpress_media(file_path, wp_url, username, password):
     """
     Upload media file to WordPress
@@ -219,7 +215,6 @@ def upload_wordpress_media(file_path, wp_url, username, password):
         print(f"Error uploading media: {e}")
         return None
 
-
 def create_woocommerce_category(name, parent_id=None):
     url = f"{wc_url}/wp-json/wc/v3/products/categories"
     data = {"name": name}
@@ -238,9 +233,6 @@ def create_woocommerce_category(name, parent_id=None):
     else:
         print(f"❌ Failed to create category '{name}': {response.text}")
         return None
-
-
-
 
 def upload_images_to_wordpress(product_id, image_urls, keep_temp_folder=False):
     folder_name = f"{product_id}"
@@ -276,9 +268,6 @@ def upload_images_to_wordpress(product_id, image_urls, keep_temp_folder=False):
             shutil.rmtree(folder_path, ignore_errors=True)
 
     return uploaded_urls, local_paths
-
-
-
 
 def get_all_categories():
     """
@@ -344,9 +333,6 @@ def get_parent_category_name(category_name):
                 return cat["name"]
     return None
     
-
-
-
 def update_affiliate_links():
     """
     Fetch all WooCommerce products, find products with Amazon affiliate links
@@ -400,7 +386,6 @@ def update_affiliate_links():
     except Exception as e:
         print(f"Error updating affiliate links: {e}")
 
-
 def list_woocommerce_products(page: int = 1, per_page: int = 100):
     """Return paginated WooCommerce products with total headers."""
     if not all([wc_url, consumer_key, consumer_secret]):
@@ -430,7 +415,6 @@ def list_woocommerce_products(page: int = 1, per_page: int = 100):
         "total_pages": max(1, total_pages),
     }
 
-
 def delete_woocommerce_product(product_id: int):
     """Delete WooCommerce product permanently."""
     if not all([wc_url, consumer_key, consumer_secret]):
@@ -449,7 +433,6 @@ def delete_woocommerce_product(product_id: int):
     if response.status_code >= 400:
         return {"error": f"WooCommerce product delete failed: {response.status_code} - {response.text}"}
     return {"ok": True, "product_id": int(product_id)}
-
 
 if __name__ == "__main__":
     # ppid  = get_category_id_by_name("🧒 Kids & Baby")
