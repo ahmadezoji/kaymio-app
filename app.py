@@ -34,11 +34,12 @@ from openai_helper import (
     generate_youtube_metadata,
 )
 from pintrest.pinterest_helper import create_pinterest_pin, create_pinterest_video_pin
-from tiktok.tiktok_api_helper import (
+from tiktok.tiktok_api_helper import publish_tiktok_post
+from tiktok.tiktok_get_auth import (
     build_tiktok_oauth_url,
     exchange_tiktok_oauth_code,
+    generate_tiktok_pkce_pair,
     has_tiktok_credentials,
-    publish_tiktok_post,
 )
 from youtube.youtube_api_helper import publish_short_video
 from kaymio.wordpress.wordpress_api_helper import (
@@ -143,25 +144,29 @@ def _save_tiktok_oauth_pending(payload: Dict[str, Any]) -> None:
     TIKTOK_OAUTH_PENDING_FILE.write_text(json.dumps(payload))
 
 
-def _stash_tiktok_publish_request(raw_form_values: Dict[str, str]) -> str:
+def _stash_tiktok_publish_request(raw_form_values: Dict[str, str], code_verifier: str) -> str:
     pending = _load_tiktok_oauth_pending()
     state = uuid4().hex
     pending[state] = {
         "raw_form_values": raw_form_values,
+        "code_verifier": code_verifier,
         "created_at": dt.datetime.utcnow().isoformat(),
     }
     _save_tiktok_oauth_pending(pending)
     return state
 
 
-def _pop_tiktok_publish_request(state: str) -> Dict[str, str]:
+def _pop_tiktok_publish_request(state: str) -> Dict[str, Any]:
     pending = _load_tiktok_oauth_pending()
     payload = pending.pop(state, None)
     _save_tiktok_oauth_pending(pending)
     if not isinstance(payload, dict):
         return {}
     raw_form_values = payload.get("raw_form_values")
-    return raw_form_values if isinstance(raw_form_values, dict) else {}
+    return {
+        "raw_form_values": raw_form_values if isinstance(raw_form_values, dict) else {},
+        "code_verifier": str(payload.get("code_verifier") or ""),
+    }
 
 
 def _random_affiliate_link_from_state() -> Optional[str]:
@@ -2653,8 +2658,9 @@ def publish_tiktok():
     raw_form_values = collect_form_values(request.form)
     if not has_tiktok_credentials():
         try:
-            state = _stash_tiktok_publish_request(raw_form_values)
-            return redirect(build_tiktok_oauth_url(state))
+            pkce = generate_tiktok_pkce_pair()
+            state = _stash_tiktok_publish_request(raw_form_values, pkce["code_verifier"])
+            return redirect(build_tiktok_oauth_url(state, pkce["code_challenge"]))
         except Exception as exc:
             app.logger.exception("TikTok OAuth redirect failed")
             form_values = extract_form_defaults(raw_form_values)
@@ -2735,16 +2741,18 @@ def tiktok_oauth_callback():
         flash("TikTok login did not return the expected authorization code.", "error")
         return redirect(url_for("home"))
 
+    pending_payload = _pop_tiktok_publish_request(state)
+    raw_form_values = pending_payload.get("raw_form_values") or {}
+    code_verifier = str(pending_payload.get("code_verifier") or "")
+    if not raw_form_values or not code_verifier:
+        flash("TikTok login succeeded, but the pending publish request expired.", "error")
+        return redirect(url_for("home"))
+
     try:
-        exchange_tiktok_oauth_code(code)
+        exchange_tiktok_oauth_code(code, code_verifier)
     except Exception as exc:
         app.logger.exception("TikTok OAuth token exchange failed")
         flash(f"Unable to finish TikTok login: {exc}", "error")
-        return redirect(url_for("home"))
-
-    raw_form_values = _pop_tiktok_publish_request(state)
-    if not raw_form_values:
-        flash("TikTok login succeeded, but the pending publish request expired.", "error")
         return redirect(url_for("home"))
 
     return _publish_tiktok_from_form(raw_form_values)
