@@ -2729,11 +2729,15 @@ def _publish_tiktok_from_form(raw_form_values: Dict[str, str]):
         caption_to_publish = caption.strip()
 
     try:
+        requested_privacy = raw_form_values.get("privacy_level", "PRIVATE")
+        effective_privacy = requested_privacy
         publish_tiktok_post(
             video_bytes,
             caption=caption_to_publish,
-            privacy_level=raw_form_values.get("privacy_level", "PUBLIC"),
+            privacy_level=requested_privacy,
         )
+        if requested_privacy.strip().upper() != "PRIVATE":
+            effective_privacy = "PRIVATE"
         flash("TikTok video published successfully!", "success")
         update_product_state(
             product_id,
@@ -2743,7 +2747,7 @@ def _publish_tiktok_from_form(raw_form_values: Dict[str, str]):
             results={
                 "tiktok": {
                     "caption": caption_to_publish,
-                    "privacy_level": raw_form_values.get("privacy_level", "PUBLIC"),
+                    "privacy_level": effective_privacy,
                 }
             },
         )

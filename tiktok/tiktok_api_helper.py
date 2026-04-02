@@ -11,6 +11,7 @@ from tiktok.tiktok_get_auth import get_tiktok_credentials, refresh_tiktok_access
 logger = logging.getLogger(__name__)
 API_BASE = "https://open.tiktokapis.com/v2/post/publish"
 TIKTOK_MAX_CHUNK_SIZE = 64 * 1024 * 1024
+TIKTOK_UNAUDITED_PRIVATE_ONLY_CODE = "unaudited_client_can_only_post_to_private_accounts"
 
 
 def _normalize_privacy_level(value: str) -> str:
@@ -66,6 +67,21 @@ def publish_tiktok_post(
         }
         init_resp = requests.post(f"{API_BASE}/video/init/", headers=headers, json=init_payload, timeout=30)
         if init_resp.status_code >= 400:
+            if init_resp.status_code == 403:
+                try:
+                    error_payload = init_resp.json().get("error", {})
+                except ValueError:
+                    error_payload = {}
+                if (
+                    error_payload.get("code") == TIKTOK_UNAUDITED_PRIVATE_ONLY_CODE
+                    and _normalize_privacy_level(privacy_level) != "SELF_ONLY"
+                ):
+                    logger.info("TikTok app is unaudited; retrying publish as private.")
+                    return publish_tiktok_post(
+                        video_bytes,
+                        caption=caption,
+                        privacy_level="PRIVATE",
+                    )
             if init_resp.status_code == 401 and attempt == 0:
                 logger.info("TikTok token rejected during init upload, refreshing token.")
                 refresh_tiktok_access_token()

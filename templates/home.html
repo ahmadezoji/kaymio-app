@@ -1052,11 +1052,12 @@
                   <label>
                     <span>Privacy</span>
                     <select name="privacy_level">
-                      <option value="PUBLIC" selected>Public</option>
+                      <option value="PUBLIC">Public</option>
                       <option value="FRIENDS">Friends</option>
-                      <option value="PRIVATE">Private</option>
+                      <option value="PRIVATE" selected>Private</option>
                     </select>
                   </label>
+                  <p class="muted">TikTok currently requires private posting for unaudited apps, so Kaymio defaults this to private.</p>
                   <button type="submit" class="primary" {% if tiktok_published or platforms_locked %}disabled{% endif %}>
                     Publish to TikTok
                   </button>
