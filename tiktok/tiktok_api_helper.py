@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Dict
 
 import requests
@@ -10,8 +11,11 @@ from tiktok.tiktok_get_auth import get_tiktok_credentials, refresh_tiktok_access
 
 logger = logging.getLogger(__name__)
 API_BASE = "https://open.tiktokapis.com/v2/post/publish"
+STATUS_FETCH_URL = f"{API_BASE}/status/fetch/"
 TIKTOK_MAX_CHUNK_SIZE = 64 * 1024 * 1024
 TIKTOK_UNAUDITED_PRIVATE_ONLY_CODE = "unaudited_client_can_only_post_to_private_accounts"
+TIKTOK_STATUS_POLL_ATTEMPTS = 10
+TIKTOK_STATUS_POLL_SECONDS = 2
 
 
 def _normalize_privacy_level(value: str) -> str:
@@ -40,6 +44,33 @@ def _build_source_info(video_bytes: bytes) -> Dict[str, int | str]:
         "chunk_size": chunk_size,
         "total_chunk_count": total_chunk_count,
     }
+
+
+def _poll_publish_status(headers: Dict[str, str], publish_id: str) -> Dict[str, str]:
+    last_payload: Dict[str, str] = {}
+    for poll_index in range(TIKTOK_STATUS_POLL_ATTEMPTS):
+        response = requests.post(
+            STATUS_FETCH_URL,
+            headers=headers,
+            json={"publish_id": publish_id},
+            timeout=30,
+        )
+        if response.status_code >= 400:
+            logger.error("TikTok status fetch failed: %s - %s", response.status_code, response.text)
+            response.raise_for_status()
+
+        payload = response.json().get("data", {}) or {}
+        last_payload = payload
+        status = str(payload.get("status") or "").upper()
+        if status == "PUBLISH_COMPLETE":
+            return payload
+        if status == "FAILED":
+            fail_reason = payload.get("fail_reason") or "unknown_error"
+            raise RuntimeError(f"TikTok publish failed after upload: {fail_reason}")
+        if poll_index < TIKTOK_STATUS_POLL_ATTEMPTS - 1:
+            time.sleep(TIKTOK_STATUS_POLL_SECONDS)
+
+    return last_payload
 
 
 def publish_tiktok_post(
@@ -110,19 +141,20 @@ def publish_tiktok_post(
             logger.error("TikTok video upload failed: %s - %s", upload_resp.status_code, upload_resp.text)
             upload_resp.raise_for_status()
 
-        publish_payload = {
-            "publish_id": publish_id,
-            "open_id": creds["open_id"],
-        }
-        publish_resp = requests.post(f"{API_BASE}/", headers=headers, json=publish_payload, timeout=30)
-        if publish_resp.status_code >= 400:
-            if publish_resp.status_code == 401 and attempt == 0:
-                logger.info("TikTok token rejected during publish, refreshing token.")
+        try:
+            status_payload = _poll_publish_status(headers, publish_id)
+        except requests.HTTPError as exc:
+            if exc.response is not None and exc.response.status_code == 401 and attempt == 0:
+                logger.info("TikTok token rejected during status polling, refreshing token.")
                 refresh_tiktok_access_token()
                 continue
-            logger.error("TikTok publish failed: %s - %s", publish_resp.status_code, publish_resp.text)
-            publish_resp.raise_for_status()
+            raise
 
-        return publish_resp.json().get("data", {})
+        return {
+            "publish_id": publish_id,
+            "status": status_payload.get("status") or "PROCESSING_UPLOAD",
+            "post_id": (status_payload.get("publicaly_available_post_id") or [None])[0],
+            "uploaded_bytes": status_payload.get("uploaded_bytes"),
+        }
 
     raise RuntimeError("Unable to publish to TikTok after refreshing the access token")
