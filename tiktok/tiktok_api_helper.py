@@ -95,7 +95,12 @@ def publish_tiktok_post(
         if not upload_url or not publish_id:
             raise RuntimeError("TikTok init upload missing upload_url/publish_id")
 
-        upload_headers = {"Authorization": f"Bearer {creds['access_token']}", "Content-Type": "video/mp4"}
+        video_size = len(video_bytes)
+        upload_headers = {
+            "Content-Type": "video/mp4",
+            "Content-Length": str(video_size),
+            "Content-Range": f"bytes 0-{video_size - 1}/{video_size}",
+        }
         upload_resp = requests.put(upload_url, headers=upload_headers, data=video_bytes, timeout=120)
         if upload_resp.status_code >= 400:
             if upload_resp.status_code == 401 and attempt == 0:
