@@ -156,17 +156,45 @@ def _stash_tiktok_publish_request(raw_form_values: Dict[str, str], code_verifier
     return state
 
 
-def _pop_tiktok_publish_request(state: str) -> Dict[str, Any]:
+def _resolve_tiktok_publish_request(state: str) -> Dict[str, Any]:
     pending = _load_tiktok_oauth_pending()
-    payload = pending.pop(state, None)
-    _save_tiktok_oauth_pending(pending)
+    payload = pending.get(state)
+    matched_state = state
+
     if not isinstance(payload, dict):
-        return {}
+        recent_candidates: List[tuple[dt.datetime, str, Dict[str, Any]]] = []
+        now = dt.datetime.utcnow()
+        for pending_state, pending_payload in pending.items():
+            if not isinstance(pending_payload, dict):
+                continue
+            created_at_raw = str(pending_payload.get("created_at") or "")
+            try:
+                created_at = dt.datetime.fromisoformat(created_at_raw)
+            except ValueError:
+                continue
+            age = now - created_at
+            if age.total_seconds() < 0 or age.total_seconds() > 1800:
+                continue
+            recent_candidates.append((created_at, pending_state, pending_payload))
+        if recent_candidates:
+            recent_candidates.sort(key=lambda item: item[0], reverse=True)
+            _, matched_state, payload = recent_candidates[0]
+        else:
+            return {}
+
     raw_form_values = payload.get("raw_form_values")
     return {
+        "matched_state": matched_state,
         "raw_form_values": raw_form_values if isinstance(raw_form_values, dict) else {},
         "code_verifier": str(payload.get("code_verifier") or ""),
     }
+
+
+def _remove_tiktok_publish_request(state: str) -> None:
+    pending = _load_tiktok_oauth_pending()
+    if state in pending:
+        pending.pop(state, None)
+        _save_tiktok_oauth_pending(pending)
 
 
 def _random_affiliate_link_from_state() -> Optional[str]:
@@ -2741,9 +2769,10 @@ def tiktok_oauth_callback():
         flash("TikTok login did not return the expected authorization code.", "error")
         return redirect(url_for("home"))
 
-    pending_payload = _pop_tiktok_publish_request(state)
+    pending_payload = _resolve_tiktok_publish_request(state)
     raw_form_values = pending_payload.get("raw_form_values") or {}
     code_verifier = str(pending_payload.get("code_verifier") or "")
+    matched_state = str(pending_payload.get("matched_state") or "")
     if not raw_form_values or not code_verifier:
         flash("TikTok login succeeded, but the pending publish request expired.", "error")
         return redirect(url_for("home"))
@@ -2755,6 +2784,8 @@ def tiktok_oauth_callback():
         flash(f"Unable to finish TikTok login: {exc}", "error")
         return redirect(url_for("home"))
 
+    if matched_state:
+        _remove_tiktok_publish_request(matched_state)
     return _publish_tiktok_from_form(raw_form_values)
 
 

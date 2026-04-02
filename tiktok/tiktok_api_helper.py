@@ -10,6 +10,35 @@ from tiktok.tiktok_get_auth import get_tiktok_credentials, refresh_tiktok_access
 
 logger = logging.getLogger(__name__)
 API_BASE = "https://open.tiktokapis.com/v2/post/publish"
+TIKTOK_MAX_CHUNK_SIZE = 64 * 1024 * 1024
+
+
+def _normalize_privacy_level(value: str) -> str:
+    normalized = (value or "").strip().upper()
+    mapping = {
+        "PUBLIC": "PUBLIC_TO_EVERYONE",
+        "FRIENDS": "MUTUAL_FOLLOW_FRIENDS",
+        "PRIVATE": "SELF_ONLY",
+        "PUBLIC_TO_EVERYONE": "PUBLIC_TO_EVERYONE",
+        "MUTUAL_FOLLOW_FRIENDS": "MUTUAL_FOLLOW_FRIENDS",
+        "FOLLOWER_OF_CREATOR": "FOLLOWER_OF_CREATOR",
+        "SELF_ONLY": "SELF_ONLY",
+    }
+    return mapping.get(normalized, "PUBLIC_TO_EVERYONE")
+
+
+def _build_source_info(video_bytes: bytes) -> Dict[str, int | str]:
+    video_size = len(video_bytes)
+    if video_size <= 0:
+        raise RuntimeError("TikTok video upload is empty.")
+    chunk_size = min(video_size, TIKTOK_MAX_CHUNK_SIZE)
+    total_chunk_count = max(1, (video_size + chunk_size - 1) // chunk_size)
+    return {
+        "source": "FILE_UPLOAD",
+        "video_size": video_size,
+        "chunk_size": chunk_size,
+        "total_chunk_count": total_chunk_count,
+    }
 
 
 def publish_tiktok_post(
@@ -23,15 +52,17 @@ def publish_tiktok_post(
     for attempt in range(2):
         creds = get_tiktok_credentials()
         headers = {"Authorization": f"Bearer {creds['access_token']}", "Content-Type": "application/json"}
+        source_info = _build_source_info(video_bytes)
         init_payload = {
-            "source_info": {"source": "FILE_UPLOAD"},
-            "open_id": creds["open_id"],
             "post_info": {
-                "caption": caption[:2200],
-                "privacy_level": privacy_level,
+                "title": caption[:2200],
+                "privacy_level": _normalize_privacy_level(privacy_level),
                 "disable_duet": False,
                 "disable_comment": False,
+                "disable_stitch": False,
             },
+            "source_info": source_info,
+            "open_id": creds["open_id"],
         }
         init_resp = requests.post(f"{API_BASE}/video/init/", headers=headers, json=init_payload, timeout=30)
         if init_resp.status_code >= 400:
