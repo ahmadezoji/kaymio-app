@@ -437,8 +437,11 @@ def _find_nested_value(payload: Any, target_keys: set[str]) -> Optional[str]:
 
 def _extract_story_media_id(event: Dict[str, Any]) -> Optional[str]:
     candidate_paths = [
+        (("message", "reply_to", "story", "id"),),
         (("reply_to", "story", "id"),),
+        (("message", "story", "id"),),
         (("story", "id"),),
+        (("message", "media", "id"),),
         (("media", "id"),),
         (("mentioned_media", "id"),),
     ]
