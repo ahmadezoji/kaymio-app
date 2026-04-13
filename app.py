@@ -462,19 +462,38 @@ def _extract_story_media_id(event: Dict[str, Any]) -> Optional[str]:
 def _handle_instagram_messaging_event(event: Dict[str, Any]) -> None:
     sender = event.get("sender") or {}
     recipient_id = str(sender.get("id") or "")
+    app.logger.warning(
+        "Instagram messaging event received: sender_id=%s event_keys=%s has_message=%s",
+        recipient_id or "missing",
+        sorted(event.keys()),
+        isinstance(event.get("message"), dict),
+    )
     if not recipient_id:
+        app.logger.warning("Instagram messaging event skipped: sender.id missing. event=%s", event)
         return
     media_id = _extract_story_media_id(event)
     if not media_id:
-        app.logger.info("Instagram messaging event skipped; no story media id present.")
+        app.logger.warning("Instagram messaging event skipped: no story media id present. event=%s", event)
         return
+    app.logger.warning("Instagram messaging event extracted media_id=%s", media_id)
     route_entry = _load_story_route_state().get(media_id)
     if not isinstance(route_entry, dict):
-        app.logger.info("Instagram messaging event skipped; no route for media id %s.", media_id)
+        app.logger.warning(
+            "Instagram messaging event skipped: no route for media_id=%s. known_route_ids=%s",
+            media_id,
+            sorted(_load_story_route_state().keys()),
+        )
         return
     reply_text = _build_instagram_affiliate_reply(route_entry)
     if not reply_text:
+        app.logger.warning("Instagram messaging event skipped: empty reply text for media_id=%s", media_id)
         return
+    app.logger.warning(
+        "Instagram messaging event matched route: media_id=%s product_id=%s affiliate_link_present=%s",
+        media_id,
+        route_entry.get("product_id", ""),
+        bool(route_entry.get("affiliate_link")),
+    )
     send_instagram_message(recipient_id=recipient_id, text=reply_text)
     app.logger.info("Instagram DM auto-reply sent for media id %s.", media_id)
 
@@ -2214,13 +2233,32 @@ def verify_instagram_webhook():
 @app.route("/webhooks/instagram", methods=["POST"])
 def receive_instagram_webhook():
     payload = request.get_json(silent=True) or {}
+    entry_count = len(payload.get("entry", [])) if isinstance(payload.get("entry", []), list) else 0
+    app.logger.warning(
+        "Instagram webhook POST received: top_level_keys=%s object=%s entry_count=%s",
+        sorted(payload.keys()) if isinstance(payload, dict) else [],
+        payload.get("object") if isinstance(payload, dict) else "",
+        entry_count,
+    )
+    app.logger.warning("Instagram webhook payload: %s", payload)
     for entry in payload.get("entry", []):
+        app.logger.warning(
+            "Instagram webhook entry: entry_keys=%s messaging_count=%s changes_count=%s",
+            sorted(entry.keys()) if isinstance(entry, dict) else [],
+            len(entry.get("messaging", [])) if isinstance(entry.get("messaging", []), list) else 0,
+            len(entry.get("changes", [])) if isinstance(entry.get("changes", []), list) else 0,
+        )
         for event in entry.get("messaging", []):
             try:
                 _handle_instagram_messaging_event(event)
             except Exception:
                 app.logger.exception("Instagram messaging webhook handler failed.")
         for change in entry.get("changes", []):
+            app.logger.warning(
+                "Instagram webhook change received: field=%s value_keys=%s",
+                change.get("field", "") if isinstance(change, dict) else "",
+                sorted((change.get("value") or {}).keys()) if isinstance(change, dict) else [],
+            )
             if change.get("field") not in {"comments", "live_comments"}:
                 continue
             try:
