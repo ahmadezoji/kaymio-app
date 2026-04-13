@@ -57,19 +57,54 @@ def _get_instagram_credentials() -> Dict[str, str]:
 
 
 def _get_instagram_messaging_credentials() -> Dict[str, str]:
-    page_access_token = os.getenv("INSTAGRAM_PAGE_ACCESS_TOKEN")
-    page_id = os.getenv("FACEBOOK_PAGE_ID")
     token_payload = _load_token_file()
+    env_page_access_token = os.getenv("INSTAGRAM_PAGE_ACCESS_TOKEN")
+    env_page_id = os.getenv("FACEBOOK_PAGE_ID")
+
+    token_file_page_access_token = token_payload.get("INSTAGRAM_PAGE_ACCESS_TOKEN")
+    token_file_fallback_access_token = token_payload.get("FB_LONG_LIVED_USER_ACCESS_TOKEN")
+    token_file_page_id = token_payload.get("FACEBOOK_PAGE_ID")
+    token_file_fallback_page_id = token_payload.get("FB_PAGE_ID")
+
     page_access_token = (
-        token_payload.get("INSTAGRAM_PAGE_ACCESS_TOKEN")
-        or token_payload.get("FB_LONG_LIVED_USER_ACCESS_TOKEN")
-        or page_access_token
+        token_file_page_access_token
+        or token_file_fallback_access_token
+        or env_page_access_token
     )
     page_id = (
-        token_payload.get("FACEBOOK_PAGE_ID")
-        or token_payload.get("FB_PAGE_ID")
-        or page_id
+        token_file_page_id
+        or token_file_fallback_page_id
+        or env_page_id
     )
+
+    logger.warning(
+        "Instagram messaging credentials resolved: "
+        "token_source=%s page_id_source=%s token_file_present=%s token_file_has_page_token=%s "
+        "token_file_has_fb_user_token=%s env_has_page_token=%s",
+        (
+            "instagram_token.json:INSTAGRAM_PAGE_ACCESS_TOKEN"
+            if token_file_page_access_token
+            else (
+                "instagram_token.json:FB_LONG_LIVED_USER_ACCESS_TOKEN"
+                if token_file_fallback_access_token
+                else ("env:INSTAGRAM_PAGE_ACCESS_TOKEN" if env_page_access_token else "missing")
+            )
+        ),
+        (
+            "instagram_token.json:FACEBOOK_PAGE_ID"
+            if token_file_page_id
+            else (
+                "instagram_token.json:FB_PAGE_ID"
+                if token_file_fallback_page_id
+                else ("env:FACEBOOK_PAGE_ID" if env_page_id else "missing")
+            )
+        ),
+        bool(token_payload),
+        bool(token_file_page_access_token),
+        bool(token_file_fallback_access_token),
+        bool(env_page_access_token),
+    )
+
     if not page_access_token or not page_id:
         raise RuntimeError(
             "Instagram messaging credentials must be configured via "

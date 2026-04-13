@@ -504,6 +504,7 @@ def _instagram_story_scheduler_loop() -> None:
     while True:
         try:
             now = dt.datetime.now()
+            print(f"Instagram scheduler loop running at {now.isoformat()}")
             target_hour, target_minute = [int(part) for part in STORY_AUTOPUBLISH_TIME.split(":", 1)]
             state = _load_story_scheduler_state()
             last_run_date = state.get("last_run_date")
