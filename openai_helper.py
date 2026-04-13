@@ -96,8 +96,8 @@ def _generate_response_text(
             temperature=temperature,
             max_output_tokens=max_output_tokens,
             input=[
-                {"role": "system", "content": [{"type": "text", "text": system_prompt}]},
-                {"role": "user", "content": [{"type": "text", "text": user_prompt}]},
+                {"role": "system", "content": [{"type": "input_text", "text": system_prompt}]},
+                {"role": "user", "content": [{"type": "input_text", "text": user_prompt}]},
             ],
         )
         text = getattr(response, "output_text", "")
@@ -131,7 +131,7 @@ def extract_concept_from_text(title: str, description: str, extra_text: str) -> 
     )
 
     content = {
-        "type": "text",
+        "type": "input_text",
         "text": (
             f"Title: {title}\nDescription: {description}\nExtra Pinterest Context: {extra_text}"
         ),
@@ -142,8 +142,8 @@ def extract_concept_from_text(title: str, description: str, extra_text: str) -> 
             model=os.getenv("OPENAI_TEXT_MODEL", "gpt-4o-mini"),
             temperature=0.5,
             input=[
-                {"role": "system", "content": [{"type": "text", "text": system_prompt}]},
-                {"role": "user", "content": [content, {"type": "text", "text": user_prompt}]},
+                {"role": "system", "content": [{"type": "input_text", "text": system_prompt}]},
+                {"role": "user", "content": [content, {"type": "input_text", "text": user_prompt}]},
             ],
         )
         data = _safe_json_loads(response.output_text)
@@ -180,8 +180,8 @@ def generate_tags_for_product_for_pintrest(title: str, description: str) -> List
             model=os.getenv("OPENAI_TEXT_MODEL", "gpt-4o-mini"),
             temperature=0.2,
             input=[
-                {"role": "system", "content": [{"type": "text", "text": system_prompt}]},
-                {"role": "user", "content": [{"type": "text", "text": prompt}]},
+                {"role": "system", "content": [{"type": "input_text", "text": system_prompt}]},
+                {"role": "user", "content": [{"type": "input_text", "text": prompt}]},
             ],
         )
         text = response.output_text
