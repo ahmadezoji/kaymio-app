@@ -96,8 +96,8 @@ def _generate_response_text(
             temperature=temperature,
             max_output_tokens=max_output_tokens,
             input=[
-                {"role": "system", "content": [{"type": "text", "text": system_prompt}]},
-                {"role": "user", "content": [{"type": "text", "text": user_prompt}]},
+                {"role": "system", "content": [{"type": "input_text", "text": system_prompt}]},
+                {"role": "user", "content": [{"type": "input_text", "text": user_prompt}]},
             ],
         )
         text = getattr(response, "output_text", "")
@@ -131,7 +131,7 @@ def extract_concept_from_text(title: str, description: str, extra_text: str) -> 
     )
 
     content = {
-        "type": "text",
+        "type": "input_text",
         "text": (
             f"Title: {title}\nDescription: {description}\nExtra Pinterest Context: {extra_text}"
         ),
@@ -142,8 +142,8 @@ def extract_concept_from_text(title: str, description: str, extra_text: str) -> 
             model=os.getenv("OPENAI_TEXT_MODEL", "gpt-4o-mini"),
             temperature=0.5,
             input=[
-                {"role": "system", "content": [{"type": "text", "text": system_prompt}]},
-                {"role": "user", "content": [content, {"type": "text", "text": user_prompt}]},
+                {"role": "system", "content": [{"type": "input_text", "text": system_prompt}]},
+                {"role": "user", "content": [content, {"type": "input_text", "text": user_prompt}]},
             ],
         )
         data = _safe_json_loads(response.output_text)
@@ -180,8 +180,8 @@ def generate_tags_for_product_for_pintrest(title: str, description: str) -> List
             model=os.getenv("OPENAI_TEXT_MODEL", "gpt-4o-mini"),
             temperature=0.2,
             input=[
-                {"role": "system", "content": [{"type": "text", "text": system_prompt}]},
-                {"role": "user", "content": [{"type": "text", "text": prompt}]},
+                {"role": "system", "content": [{"type": "input_text", "text": system_prompt}]},
+                {"role": "user", "content": [{"type": "input_text", "text": prompt}]},
             ],
         )
         text = response.output_text
@@ -328,6 +328,56 @@ def generate_youtube_metadata(title: str, description: str) -> Dict[str, str]:
             if str(item).strip()
         ][:12],
     }
+
+
+def generate_story_cta_text(product_title: str = "", description: str = "", caption: str = "") -> Dict[str, str]:
+    """Produce compact CTA copy suitable for a visual story overlay."""
+
+    source_text = " ".join(part.strip() for part in (product_title, caption, description) if part and part.strip())
+    cleaned_source = source_text.strip()
+    words = [word.strip(".,!?:;\"'()[]{}") for word in cleaned_source.split() if word.strip()]
+    strong_words = [word for word in words if len(word) > 3][:4]
+    keyword_phrase = " ".join(strong_words[:2]).strip()
+    fallback_title = keyword_phrase.title() if keyword_phrase else "Style Worth Saving"
+    fallback_body = "Find it in our bio."
+
+    prompt = (
+        "Return strict JSON with keys headline and body. "
+        "Write premium, catchy CTA overlay copy for an Instagram story selling a product. "
+        "Do not repeat the input wording or end with generic words like upgrade, product, item, deal, style unless absolutely necessary. "
+        "Extract the product category, mood, benefit, or transformation and write fresh marketing copy. "
+        "Headline rules: max 4 words, 2-4 words preferred, punchy, stylish, product-aware, no punctuation unless essential. "
+        "Body rules: max 8 words, action-oriented, short, human. "
+        "If you reference next step, direct users to bio or website, not a story tap. "
+        "Do not use hashtags. Do not use quotation marks. Do not mention Instagram. "
+        "Avoid generic lines like Discover this product or Elevate Your Wardrobe.\n"
+        f"Product title: {product_title}\n"
+        f"Caption: {caption}\n"
+        f"Product description: {description}"
+    )
+    text = _generate_response_text(
+        "You write short, high-performing CTA copy for story overlays. "
+        "Your copy must feel like ad creative, not a summary. "
+        "Every headline should feel category-specific and visually distinctive.",
+        prompt,
+        temperature=0.95,
+        max_output_tokens=90,
+    )
+    if not text:
+        return {"headline": fallback_title, "body": fallback_body}
+
+    data = _safe_json_loads(text)
+    headline = str(data.get("headline") or fallback_title).strip().replace('"', "")
+    body = str(data.get("body") or fallback_body).strip().replace('"', "")
+    if headline.lower() in cleaned_source.lower():
+        headline = fallback_title
+    if body.lower() in cleaned_source.lower():
+        body = fallback_body
+    return {
+        "headline": " ".join(headline.split()[:4]) or fallback_title,
+        "body": " ".join(body.split()[:8]) or fallback_body,
+    }
+
 
 def find_nearest_category(title, categories):
     try:

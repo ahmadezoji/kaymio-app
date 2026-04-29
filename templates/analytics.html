@@ -119,6 +119,24 @@
         justify-content: center;
         margin-bottom: 18px;
       }
+      .chart-legend {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        color: var(--muted);
+        font-size: 0.8rem;
+      }
+      .legend-item {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .legend-swatch {
+        width: 10px;
+        height: 3px;
+        border-radius: 2px;
+        display: inline-block;
+      }
 
       .metrics {
         display: grid;
@@ -153,6 +171,42 @@
         font-size: 0.8rem;
         font-weight: 600;
       }
+      .mini-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 14px;
+        font-size: 0.88rem;
+      }
+      .mini-table th,
+      .mini-table td {
+        padding: 8px 10px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        text-align: left;
+      }
+      .mini-table th {
+        color: var(--muted);
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        font-size: 0.72rem;
+      }
+      .mini-table td {
+        color: var(--text);
+      }
+      .link-btn {
+        display: inline-block;
+        padding: 5px 9px;
+        border-radius: 8px;
+        border: 1px solid rgba(255, 255, 255, 0.22);
+        color: var(--text);
+        text-decoration: none;
+        font-size: 0.78rem;
+        line-height: 1;
+      }
+      .link-btn.disabled {
+        opacity: 0.45;
+        pointer-events: none;
+      }
 
       .delta.up {
         color: #22c55e;
@@ -183,6 +237,29 @@
         border-bottom: 1px solid rgba(255,255,255,0.2);
         padding-bottom: 2px;
       }
+      .loading-wrap {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 300px;
+        flex-direction: column;
+        gap: 12px;
+        color: var(--muted);
+      }
+      .spinner {
+        width: 32px;
+        height: 32px;
+        border: 3px solid rgba(255, 255, 255, 0.15);
+        border-top-color: #fff;
+        border-radius: 50%;
+        animation: spin 0.9s linear infinite;
+      }
+      .hidden {
+        display: none !important;
+      }
+      @keyframes spin {
+        to { transform: rotate(360deg); }
+      }
 
       @media (max-width: 720px) {
         header {
@@ -208,67 +285,192 @@
         </div>
       </header>
 
-      {% if errors %}
-      <div class="platform-card" style="border-color:#f97316;">
+      <div id="warnings-card" class="platform-card hidden" style="border-color:#f97316;">
         <div class="platform-header">
           <h2>Data warnings</h2>
         </div>
-        <ul>
-          {% for err in errors %}
-            <li style="margin-bottom:6px;color:var(--muted);">{{ err }}</li>
-          {% endfor %}
+        <ul id="warnings-list">
         </ul>
       </div>
-    {% endif %}
 
-      <section class="platform-grid">
-        {% for platform in platforms %}
-          <article class="platform-card">
-            <div class="platform-header">
-              <div>
-                <h2>
-                  <span class="accent-dot" style="background: {{ platform.accent }};"></span>
-                  {{ platform.name }}
-                </h2>
-                <span>{{ platform.subtitle }} • {{ platform.period }}</span>
-              </div>
-            </div>
-            <div class="sparkline">
-              {% if platform.sparkline %}
-                <svg viewBox="0 0 240 80" width="100%" height="80" aria-hidden="true">
-                  <polyline
-                    fill="none"
-                    stroke="{{ platform.accent }}"
-                    stroke-width="3"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    points="{{ platform.sparkline }}"
-                  />
-                </svg>
-              {% else %}
-                <span class="pill">No trend data</span>
-              {% endif %}
-            </div>
-            <div class="metrics">
-              {% for metric in platform.metrics %}
-                <div class="metric">
-                  <h3>{{ metric.label }}</h3>
-                  <div class="value">
-                    {{ metric.value }}
-                    {% if metric.delta %}
-                      <span class="delta {{ metric.trend or '' }}">{{ metric.delta }}</span>
-                    {% endif %}
-                  </div>
-                </div>
-              {% endfor %}
-            </div>
-          </article>
-        {% endfor %}
+      <section id="platform-grid" class="platform-grid">
+        <article id="card-pinterest" class="platform-card">
+          <div class="loading-wrap">
+            <div class="spinner"></div>
+            <div>Loading Pinterest insights...</div>
+          </div>
+        </article>
+        <article id="card-instagram-feed" class="platform-card">
+          <div class="loading-wrap">
+            <div class="spinner"></div>
+            <div>Loading Instagram feed insights...</div>
+          </div>
+        </article>
+        <article id="card-instagram-reels" class="platform-card">
+          <div class="loading-wrap">
+            <div class="spinner"></div>
+            <div>Loading Instagram reels insights...</div>
+          </div>
+        </article>
+        <article id="card-youtube" class="platform-card">
+          <div class="loading-wrap">
+            <div class="spinner"></div>
+            <div>Loading YouTube insights...</div>
+          </div>
+        </article>
       </section>
 
       <p class="footer-note">
         These metrics are loaded live from your connected platform APIs. If a section is empty, check tokens/scopes.
       </p>
     </div>
+    <script>
+      const endpoints = {
+        pinterest: "{{ url_for('analytics.analytics_platform', platform='pinterest') }}",
+        instagram: "{{ url_for('analytics.analytics_platform', platform='instagram') }}",
+        youtube: "{{ url_for('analytics.analytics_platform', platform='youtube') }}"
+      };
+
+      function escapeHtml(value) {
+        return String(value ?? "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#39;");
+      }
+
+      function renderCard(card) {
+        const legend = card.compare_a_points && card.compare_b_points
+          ? `
+            <div class="chart-legend" style="margin-bottom: 12px;">
+              <span class="legend-item">
+                <span class="legend-swatch" style="background: ${escapeHtml(card.accent)};"></span>
+                ${escapeHtml(card.compare_a_label)}
+              </span>
+              <span class="legend-item">
+                <span class="legend-swatch" style="background: ${escapeHtml(card.compare_b_accent)};"></span>
+                ${escapeHtml(card.compare_b_label)}
+              </span>
+            </div>
+          `
+          : "";
+
+        const chart = card.compare_a_points && card.compare_b_points
+          ? `
+            <svg viewBox="0 0 240 80" width="100%" height="80" aria-hidden="true">
+              <polyline fill="none" stroke="${escapeHtml(card.accent)}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" points="${escapeHtml(card.compare_a_points)}" />
+              <polyline fill="none" stroke="${escapeHtml(card.compare_b_accent)}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" points="${escapeHtml(card.compare_b_points)}" />
+            </svg>
+          `
+          : (card.sparkline
+            ? `<svg viewBox="0 0 240 80" width="100%" height="80" aria-hidden="true"><polyline fill="none" stroke="${escapeHtml(card.accent)}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" points="${escapeHtml(card.sparkline)}" /></svg>`
+            : `<span class="pill">No trend data</span>`);
+
+        const metrics = (card.metrics || []).map((metric) => `
+          <div class="metric">
+            <h3>${escapeHtml(metric.label)}</h3>
+            <div class="value">${escapeHtml(metric.value)}</div>
+          </div>
+        `).join("");
+
+        const rows = (card.rows || []).map((row) => `
+          <tr>
+            <td>${escapeHtml(row.label)}</td>
+            <td>${escapeHtml(row.views)}</td>
+            <td>${escapeHtml(row.engagement)}</td>
+            <td>
+              ${row.url
+                ? `<a class="link-btn" href="${escapeHtml(row.url)}" target="_blank" rel="noopener noreferrer">Link</a>`
+                : `<span class="link-btn disabled">Link</span>`}
+            </td>
+          </tr>
+        `).join("");
+
+        const table = rows
+          ? `
+            <table class="mini-table" aria-label="${escapeHtml(card.name)} last 5 performance">
+              <thead>
+                <tr><th>Item</th><th>Views</th><th>Engagement</th><th>Link</th></tr>
+              </thead>
+              <tbody>${rows}</tbody>
+            </table>
+          `
+          : "";
+
+        return `
+          <div class="platform-header">
+            <div>
+              <h2><span class="accent-dot" style="background: ${escapeHtml(card.accent)};"></span>${escapeHtml(card.name)}</h2>
+              <span>${escapeHtml(card.subtitle)} • ${escapeHtml(card.period)}</span>
+            </div>
+          </div>
+          <div class="sparkline">${chart}</div>
+          ${legend}
+          <div class="metrics">${metrics}</div>
+          ${table}
+        `;
+      }
+
+      function renderErrorCard(message) {
+        return `
+          <div class="loading-wrap">
+            <div>${escapeHtml(message)}</div>
+          </div>
+        `;
+      }
+
+      function addWarnings(errors) {
+        if (!errors || !errors.length) return;
+        const warningsCard = document.getElementById("warnings-card");
+        const warningsList = document.getElementById("warnings-list");
+        warningsCard.classList.remove("hidden");
+        errors.forEach((err) => {
+          const li = document.createElement("li");
+          li.style.marginBottom = "6px";
+          li.style.color = "var(--muted)";
+          li.textContent = err;
+          warningsList.appendChild(li);
+        });
+      }
+
+      async function loadPlatform(endpoint, targets) {
+        try {
+          const response = await fetch(endpoint, { headers: { "Accept": "application/json" } });
+          const payload = await response.json();
+          const cards = payload.cards || [];
+          const rendered = new Set();
+          cards.forEach((card) => {
+            const targetId = targets[card.key];
+            if (!targetId) return;
+            const node = document.getElementById(targetId);
+            if (!node) return;
+            node.innerHTML = renderCard(card);
+            rendered.add(targetId);
+          });
+          Object.values(targets).forEach((targetId) => {
+            if (rendered.has(targetId)) return;
+            const node = document.getElementById(targetId);
+            if (!node) return;
+            node.innerHTML = renderErrorCard("No data available for this platform yet.");
+          });
+          addWarnings(payload.errors || []);
+        } catch (error) {
+          Object.values(targets).forEach((targetId) => {
+            const node = document.getElementById(targetId);
+            if (!node) return;
+            node.innerHTML = renderErrorCard("Unable to load this platform right now.");
+          });
+          addWarnings([`Loading error: ${error}`]);
+        }
+      }
+
+      loadPlatform(endpoints.pinterest, { pinterest: "card-pinterest" });
+      loadPlatform(endpoints.instagram, {
+        instagram_feed: "card-instagram-feed",
+        instagram_reels: "card-instagram-reels"
+      });
+      loadPlatform(endpoints.youtube, { youtube: "card-youtube" });
+    </script>
   </body>
 </html>

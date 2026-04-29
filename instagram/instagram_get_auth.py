@@ -23,12 +23,15 @@ GRAPH_VERSION = "v21.0"
 AUTH_URL = f"https://www.facebook.com/{GRAPH_VERSION}/dialog/oauth"
 TOKEN_URL = f"https://graph.facebook.com/{GRAPH_VERSION}/oauth/access_token"
 DEFAULT_REDIRECT_URI = "https://kaymio.mardomvpn.store/instagram/callback"
+
 SCOPES = [
     "instagram_basic",
     "instagram_content_publish",
-    "instagram_manage_insights",
+    "instagram_manage_messages",
     "pages_show_list",
     "pages_read_engagement",
+    "pages_manage_metadata",
+    "instagram_manage_insights",
 ]
 
 
@@ -71,6 +74,7 @@ def _write_token_file(
     *,
     access_token: str,
     user_id: str,
+    page_access_token: str,
     page_id: str,
     expires_in: object,
 ) -> Path:
@@ -78,6 +82,8 @@ def _write_token_file(
     payload = {
         "INSTAGRAM_ACCESS_TOKEN": access_token,
         "INSTAGRAM_USER_ID": user_id,
+        "INSTAGRAM_PAGE_ACCESS_TOKEN": page_access_token,
+        "FACEBOOK_PAGE_ID": page_id,
         "FB_LONG_LIVED_USER_ACCESS_TOKEN": access_token,
         "FB_PAGE_ID": page_id,
         "EXPIRES_IN": expires_in,
@@ -141,6 +147,21 @@ def fetch_instagram_business_account(page_id: str, access_token: str) -> dict:
         params={"access_token": access_token, "fields": "instagram_business_account"},
     )
     return data
+
+
+def fetch_page_access_token(page_id: str, user_access_token: str) -> str:
+    url = f"https://graph.facebook.com/{GRAPH_VERSION}/{page_id}"
+    data = _request_json(
+        url,
+        params={"access_token": user_access_token, "fields": "access_token"},
+    )
+    page_access_token = data.get("access_token")
+    if not page_access_token:
+        raise RuntimeError(
+            "Selected Facebook Page did not return an access_token. "
+            "Confirm the app has the required permissions and the user has page access."
+        )
+    return str(page_access_token)
 
 
 def _choose_page(pages: list[dict]) -> dict:
@@ -221,6 +242,7 @@ def main() -> int:
                 "No Instagram Business Account found for the selected Page. "
                 "Confirm the Page is connected to the Instagram account and the account is Business or Creator."
             )
+        page_access_token = fetch_page_access_token(page_id, long_token)
 
     except RuntimeError as exc:
         print(exc, file=sys.stderr)
@@ -229,6 +251,7 @@ def main() -> int:
     token_path = _write_token_file(
         access_token=long_token,
         user_id=ig_user_id,
+        page_access_token=page_access_token,
         page_id=page_id,
         expires_in=long_payload.get("expires_in", "unknown"),
     )
@@ -236,6 +259,8 @@ def main() -> int:
     print("\nSuccess! Store these values in your environment (.env on the server):\n")
     print(f"INSTAGRAM_ACCESS_TOKEN={long_token}")
     print(f"INSTAGRAM_USER_ID={ig_user_id}")
+    print(f"INSTAGRAM_PAGE_ACCESS_TOKEN={page_access_token}")
+    print(f"FACEBOOK_PAGE_ID={page_id}")
     print(f"FB_LONG_LIVED_USER_ACCESS_TOKEN={long_token}")
     print(f"FB_PAGE_ID={page_id}")
     print(f"Expires in: {long_payload.get('expires_in', 'unknown')} seconds")

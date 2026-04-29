@@ -5,6 +5,7 @@ import datetime as dt
 import json
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Dict, Iterable, Optional
 
@@ -173,6 +174,7 @@ def publish_short_video(
 
 
 YOUTUBE_ANALYTICS_API = "https://youtubeanalytics.googleapis.com/v2/reports"
+YOUTUBE_VIDEOS_API = "https://www.googleapis.com/youtube/v3/videos"
 
 
 def _get_access_token_from_file() -> Optional[str]:
@@ -188,6 +190,52 @@ def _get_access_token_from_file() -> Optional[str]:
         return data.get("access_token")
     except json.JSONDecodeError:
         return raw
+
+
+def _parse_iso8601_duration_seconds(duration: str) -> int:
+    if not duration:
+        return 0
+    match = re.fullmatch(r"PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?", duration)
+    if not match:
+        return 0
+    hours = int(match.group(1) or 0)
+    minutes = int(match.group(2) or 0)
+    seconds = int(match.group(3) or 0)
+    return hours * 3600 + minutes * 60 + seconds
+
+
+def _fetch_video_metadata(token: str, video_ids: Iterable[str]) -> Dict[str, Dict[str, object]]:
+    ids = [vid for vid in video_ids if vid]
+    if not ids:
+        return {}
+    metadata: Dict[str, Dict[str, object]] = {}
+    headers = {"Authorization": f"Bearer {token}"}
+    for start in range(0, len(ids), 50):
+        chunk = ids[start:start + 50]
+        response = requests.get(
+            YOUTUBE_VIDEOS_API,
+            headers=headers,
+            params={
+                "part": "contentDetails,snippet",
+                "id": ",".join(chunk),
+                "maxResults": "50",
+            },
+            timeout=30,
+        )
+        if response.status_code >= 400:
+            logger.warning("YouTube videos metadata error: %s - %s", response.status_code, response.text)
+            continue
+        for item in (response.json().get("items") or []):
+            video_id = item.get("id")
+            if not video_id:
+                continue
+            snippet = item.get("snippet") or {}
+            content_details = item.get("contentDetails") or {}
+            metadata[video_id] = {
+                "title": snippet.get("title") or video_id,
+                "duration_seconds": _parse_iso8601_duration_seconds(content_details.get("duration") or ""),
+            }
+    return metadata
 
 
 def fetch_youtube_analytics(days: int = 28) -> Dict[str, object]:
@@ -236,6 +284,63 @@ def fetch_youtube_analytics(days: int = 28) -> Dict[str, object]:
     if trend_payload and trend_payload.get("rows"):
         trend = [item[1] for item in trend_payload["rows"] if len(item) > 1]
 
+    video_payload = _query(
+        {
+            "dimensions": "video",
+            "metrics": "views,likes,comments",
+            "sort": "-views",
+            "maxResults": "50",
+        }
+    )
+    short_rows = []
+    if video_payload and video_payload.get("rows"):
+        raw_rows = video_payload.get("rows") or []
+        video_ids = [str(item[0]) for item in raw_rows if item and len(item) > 0]
+        metadata_map = _fetch_video_metadata(token, video_ids)
+        for item in raw_rows:
+            if len(item) < 4:
+                continue
+            video_id = str(item[0])
+            views = int(item[1] or 0)
+            likes = int(item[2] or 0)
+            comments = int(item[3] or 0)
+            meta = metadata_map.get(video_id) or {}
+            duration_seconds = int(meta.get("duration_seconds") or 0)
+            if 0 < duration_seconds <= 60:
+                short_rows.append(
+                    {
+                        "video_id": video_id,
+                        "label": str(meta.get("title") or video_id)[:60],
+                        "url": f"https://www.youtube.com/watch?v={video_id}",
+                        "views": views,
+                        "engagement": likes + comments,
+                    }
+                )
+
+        if not short_rows:
+            # Fallback: keep top 5 videos if Shorts filter cannot be inferred.
+            for item in raw_rows[:5]:
+                if len(item) < 4:
+                    continue
+                video_id = str(item[0])
+                views = int(item[1] or 0)
+                likes = int(item[2] or 0)
+                comments = int(item[3] or 0)
+                meta = metadata_map.get(video_id) or {}
+                short_rows.append(
+                    {
+                        "video_id": video_id,
+                        "label": str(meta.get("title") or video_id)[:60],
+                        "url": f"https://www.youtube.com/watch?v={video_id}",
+                        "views": views,
+                        "engagement": likes + comments,
+                    }
+                )
+
+    short_rows = short_rows[:5]
+    short_views = [row["views"] for row in reversed(short_rows)]
+    short_engagement = [row["engagement"] for row in reversed(short_rows)]
+
     return {
         "period": f"Last {days} days",
         "metrics": {
@@ -247,4 +352,24 @@ def fetch_youtube_analytics(days: int = 28) -> Dict[str, object]:
             "Subscribers gained": metric_map.get("subscribersGained"),
         },
         "trend": trend,
+        "shorts": {
+            "period": "Last 5 Shorts",
+            "metrics": {
+                "Views": sum(row["views"] for row in short_rows),
+                "Engagement": sum(row["engagement"] for row in short_rows),
+            },
+            "series": {
+                "views": short_views,
+                "engagement": short_engagement,
+            },
+            "rows": [
+                {
+                    "label": row["label"],
+                    "views": str(row["views"]),
+                    "engagement": str(row["engagement"]),
+                    "url": row.get("url") or "",
+                }
+                for row in short_rows
+            ],
+        },
     }

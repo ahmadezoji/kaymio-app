@@ -1,6 +1,9 @@
 import base64
+import datetime as dt
 import json
 import os
+import threading
+import time
 from io import BytesIO
 from pathlib import Path
 import random
@@ -15,9 +18,13 @@ from flask import Flask, abort, flash, redirect, render_template, request, send_
 from amazon.amazon_api import build_affiliate_link, extract_asin, fetch_product_from_canopy
 from gemeni_api_helper import edit_image, generate_video_from_image
 from instagram.instagram_api_helper import (
+    get_latest_instagram_media_id,
     publish_instagram_post,
+    publish_random_profile_story,
     publish_instagram_reel,
     publish_instagram_story,
+    send_instagram_message,
+    send_instagram_private_reply,
 )
 from openai_helper import (
     generate_caption_for_instagram,
@@ -28,20 +35,33 @@ from openai_helper import (
     generate_text,
     generate_youtube_metadata,
 )
-from pintrest.pinterest_helper import create_pinterest_pin
+from pintrest.pinterest_helper import create_pinterest_pin, create_pinterest_video_pin
 from tiktok.tiktok_api_helper import publish_tiktok_post
 from youtube.youtube_api_helper import publish_short_video
-from kaymio.kaymio import create_woocommerce_product, find_wordpress_nearest_category
+from kaymio.wordpress.wordpress_api_helper import (
+    create_woocommerce_product,
+    find_wordpress_nearest_category,
+    list_woocommerce_products,
+)
 from PIL import Image, ImageOps
 from analytics_view import analytics_bp
+from kaymio_wp_admin_view import kaymio_wp_admin_bp
+from widgets.story_qr_widget import (
+    StoryCtaWidgetConfig,
+    StoryQrWidgetConfig,
+    compose_story_image_with_cta,
+    compose_story_image_with_cta_and_affiliate_qr,
+)
 
 load_dotenv()
 
 app = Flask(__name__)
 app.register_blueprint(analytics_bp)
+app.register_blueprint(kaymio_wp_admin_bp)
 app.config["SECRET_KEY"] = os.getenv("FLASK_SECRET_KEY", "dev-secret-key")
 app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024  # 20MB uploads
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp"}
+ALLOWED_VIDEO_EXTENSIONS = {"mp4", "mov", "m4v", "webm"}
 STORAGE_ROOT = Path(app.root_path) / "template_images"
 ORIGINALS_DIR = STORAGE_ROOT / "originals"
 GENERATED_DIR = STORAGE_ROOT / "generated"
@@ -66,10 +86,472 @@ TRUTHY_VALUES = {"1", "true", "yes", "on"}
 VIDEO_DURATION_DEFAULT = 8
 VIDEO_DURATION_MIN = 4
 VIDEO_DURATION_MAX = 60
+STORY_AUTOPUBLISH_TIME = os.getenv("INSTAGRAM_STORY_AUTOPUBLISH_TIME", "11:45")
+STORY_AUTOPUBLISH_COUNT = int(os.getenv("INSTAGRAM_STORY_AUTOPUBLISH_COUNT", "2"))
+STORY_AUTOPUBLISH_ENABLED = os.getenv("INSTAGRAM_STORY_AUTOPUBLISH_ENABLED", "1") in TRUTHY_VALUES
+STORY_AUTOPUBLISH_STATE_FILE = STATE_DIR / "instagram_story_scheduler.json"
+INSTAGRAM_STORY_ROUTE_FILE = STATE_DIR / "instagram_story_routes.json"
+INSTAGRAM_WEBHOOK_VERIFY_TOKEN = os.getenv("INSTAGRAM_WEBHOOK_VERIFY_TOKEN", "")
+STORY_QR_WATERMARK = os.getenv("INSTAGRAM_STORY_QR_WATERMARK", "https://kaymio.com")
+STORY_QR_SAFE_RIGHT_RATIO = float(os.getenv("INSTAGRAM_STORY_QR_SAFE_RIGHT_RATIO", "0.08"))
+STORY_QR_SAFE_BOTTOM_RATIO = float(os.getenv("INSTAGRAM_STORY_QR_SAFE_BOTTOM_RATIO", "0.12"))
+STORY_QR_MIN_SIZE_PX = int(os.getenv("INSTAGRAM_STORY_QR_MIN_SIZE_PX", "100"))
+STORY_QR_SIZE_RATIO = float(os.getenv("INSTAGRAM_STORY_QR_SIZE_RATIO", "0.18"))
+STORY_QR_WIDGET_CONFIG = StoryQrWidgetConfig(
+    watermark_text=STORY_QR_WATERMARK,
+    safe_right_ratio=STORY_QR_SAFE_RIGHT_RATIO,
+    safe_bottom_ratio=STORY_QR_SAFE_BOTTOM_RATIO,
+    min_qr_size_px=STORY_QR_MIN_SIZE_PX,
+    qr_size_ratio=STORY_QR_SIZE_RATIO,
+)
+STORY_CTA_WIDGET_CONFIG = StoryCtaWidgetConfig(
+    safe_bottom_ratio=STORY_QR_SAFE_BOTTOM_RATIO,
+)
 
 
 def _empty_app_state() -> Dict[str, Any]:
     return {"products": {}, "last_product_id": ""}
+
+
+def _load_story_scheduler_state() -> Dict[str, Any]:
+    if not STORY_AUTOPUBLISH_STATE_FILE.exists():
+        return {}
+    try:
+        payload = json.loads(STORY_AUTOPUBLISH_STATE_FILE.read_text())
+        return payload if isinstance(payload, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_story_scheduler_state(payload: Dict[str, Any]) -> None:
+    STORY_AUTOPUBLISH_STATE_FILE.write_text(json.dumps(payload))
+
+
+def _load_story_route_state() -> Dict[str, Any]:
+    if not INSTAGRAM_STORY_ROUTE_FILE.exists():
+        return {}
+    try:
+        payload = json.loads(INSTAGRAM_STORY_ROUTE_FILE.read_text())
+        return payload if isinstance(payload, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_story_route_state(payload: Dict[str, Any]) -> None:
+    INSTAGRAM_STORY_ROUTE_FILE.write_text(json.dumps(payload, indent=2))
+
+
+def _register_story_reply_route(media_id: str, candidate: Dict[str, Any]) -> None:
+    normalized_media_id = str(media_id or "").strip()
+    if not normalized_media_id:
+        return
+    affiliate_link = str(candidate.get("affiliate_link") or "").strip()
+    if not affiliate_link:
+        return
+    routes = _load_story_route_state()
+    routes[normalized_media_id] = {
+        "product_id": str(candidate.get("product_id") or ""),
+        "affiliate_link": affiliate_link,
+        "title": str(candidate.get("title") or ""),
+        "description": str(candidate.get("description") or ""),
+        "published_at": dt.datetime.utcnow().isoformat(),
+    }
+    _save_story_route_state(routes)
+
+
+def _build_instagram_affiliate_reply(route_entry: Dict[str, Any]) -> str:
+    title = str(route_entry.get("title") or "").strip()
+    affiliate_link = str(route_entry.get("affiliate_link") or "").strip()
+    if title:
+        return f"{title}\n{affiliate_link}"
+    return affiliate_link
+
+
+def _random_affiliate_link_from_state() -> Optional[str]:
+    state = load_app_state()
+    products = state.get("products", {})
+    links: List[str] = []
+    for entry in products.values():
+        platforms = entry.get("platforms") or {}
+        for platform_name in ("pinterest", "website", "instagram_reel", "youtube", "tiktok"):
+            p_state = platforms.get(platform_name) or {}
+            candidate = p_state.get("affiliate_link")
+            if candidate:
+                links.append(candidate)
+    return random.choice(links) if links else None
+
+
+def _affiliate_link_for_instagram_media(media_id: str) -> Optional[str]:
+    if not media_id:
+        return None
+    route_state = _load_story_route_state()
+    route_entry = route_state.get(str(media_id))
+    if isinstance(route_entry, dict):
+        affiliate_link = str(route_entry.get("affiliate_link") or "")
+        if affiliate_link:
+            return affiliate_link
+    state = load_app_state()
+    products = state.get("products", {}) or {}
+    for entry in products.values():
+        platforms = entry.get("platforms") or {}
+        instagram_group = platforms.get("instagram") or {}
+        for key in ("instagram_feed", "instagram_reel"):
+            p_state = instagram_group.get(key) or {}
+            stored_media_id = str(p_state.get("instagram_media_id") or p_state.get("media_id") or "")
+            if stored_media_id and stored_media_id == str(media_id):
+                affiliate = p_state.get("affiliate_link")
+                if affiliate:
+                    return affiliate
+        # Backward-compatible fallback for older flat structure.
+        for key in ("instagram_feed", "instagram_story", "instagram_reel"):
+            p_state = platforms.get(key) or {}
+            stored_media_id = str(p_state.get("instagram_media_id") or p_state.get("media_id") or "")
+            if stored_media_id and stored_media_id == str(media_id):
+                affiliate = p_state.get("affiliate_link")
+                if affiliate:
+                    return affiliate
+    return None
+
+
+def _story_content_for_instagram_media(media_id: str) -> Dict[str, str]:
+    if not media_id:
+        return {}
+    route_state = _load_story_route_state()
+    route_entry = route_state.get(str(media_id))
+    if isinstance(route_entry, dict):
+        return {
+            "title": str(route_entry.get("title") or ""),
+            "description": str(route_entry.get("description") or ""),
+        }
+    state = load_app_state()
+    products = state.get("products", {}) or {}
+    for entry in products.values():
+        platforms = entry.get("platforms") or {}
+        instagram_group = platforms.get("instagram") or {}
+        for key in ("instagram_feed", "instagram_reel", "instagram_story"):
+            p_state = instagram_group.get(key) or {}
+            stored_media_id = str(p_state.get("instagram_media_id") or p_state.get("media_id") or "")
+            if stored_media_id and stored_media_id == str(media_id):
+                return {
+                    "title": str(p_state.get("title") or ""),
+                    "description": str(p_state.get("description") or ""),
+                }
+        for key in ("instagram_feed", "instagram_story", "instagram_reel"):
+            p_state = platforms.get(key) or {}
+            stored_media_id = str(p_state.get("instagram_media_id") or p_state.get("media_id") or "")
+            if stored_media_id and stored_media_id == str(media_id):
+                return {
+                    "title": str(p_state.get("title") or ""),
+                    "description": str(p_state.get("description") or ""),
+                }
+    return {}
+
+
+def _resolve_story_source_image(entry: Dict[str, Any], feed_state: Dict[str, Any]) -> Dict[str, str]:
+    assets = entry.get("assets") or {}
+    relative_candidates = [
+        str(feed_state.get("instagram_image_path") or ""),
+        str(feed_state.get("generated_image_path") or ""),
+        str(assets.get("instagram_image_path") or ""),
+        str(assets.get("generated_image_path") or ""),
+        str(assets.get("original_image_path") or ""),
+    ]
+    for relative_path in relative_candidates:
+        storage_path = resolve_storage_path(relative_path)
+        if storage_path:
+            return {
+                "compose_source": storage_path,
+                "publish_source": f"/media/{relative_path}",
+            }
+    external_candidates = list(assets.get("source_image_urls") or []) + list(assets.get("amazon_image_urls") or [])
+    for image_url in external_candidates:
+        if image_url:
+            return {
+                "compose_source": str(image_url),
+                "publish_source": str(image_url),
+            }
+    return {}
+
+
+def _scheduled_story_candidates_from_state() -> List[Dict[str, str]]:
+    state = load_app_state()
+    products = state.get("products", {}) or {}
+    candidates: List[Dict[str, str]] = []
+    for product_id, entry in products.items():
+        platforms = entry.get("platforms") or {}
+        instagram = platforms.get("instagram") or {}
+        feed_state = instagram.get("instagram_feed") or {}
+        if not feed_state:
+            continue
+        image_sources = _resolve_story_source_image(entry, feed_state)
+        compose_source = image_sources.get("compose_source") or ""
+        publish_source = image_sources.get("publish_source") or ""
+        if not compose_source or not publish_source:
+            continue
+        affiliate_link = str(
+            feed_state.get("affiliate_link")
+            or (platforms.get("website") or {}).get("affiliate_link")
+            or ""
+        )
+        candidates.append(
+            {
+                "product_id": str(product_id),
+                "title": str(feed_state.get("title") or ""),
+                "description": str(feed_state.get("description") or ""),
+                "caption": str(feed_state.get("caption") or ""),
+                "affiliate_link": affiliate_link,
+                "compose_source": compose_source,
+                "publish_source": publish_source,
+            }
+        )
+    return candidates
+
+
+def _scheduled_story_candidates_from_website(limit: int = 100) -> List[Dict[str, str]]:
+    result = list_woocommerce_products(page=1, per_page=max(1, min(limit, 100)))
+    if result.get("error"):
+        app.logger.warning("Unable to load WooCommerce products for scheduled stories: %s", result["error"])
+        return []
+
+    candidates: List[Dict[str, str]] = []
+    for product in result.get("items", []):
+        if not isinstance(product, dict):
+            continue
+        images = product.get("images") or []
+        image_url = ""
+        if images and isinstance(images[0], dict):
+            image_url = str(images[0].get("src") or "")
+        if not image_url:
+            continue
+
+        affiliate_link = str(product.get("external_url") or product.get("permalink") or "")
+        candidates.append(
+            {
+                "product_id": f"wc:{product.get('id')}",
+                "title": str(product.get("name") or ""),
+                "description": str(
+                    product.get("short_description")
+                    or product.get("description")
+                    or ""
+                ),
+                "caption": "",
+                "affiliate_link": affiliate_link,
+                "compose_source": image_url,
+                "publish_source": image_url,
+            }
+        )
+    return candidates
+
+
+def _scheduled_story_candidates() -> List[Dict[str, str]]:
+    candidates = _scheduled_story_candidates_from_state()
+    candidates.extend(_scheduled_story_candidates_from_website())
+    return candidates
+
+
+def _publish_scheduled_instagram_stories() -> None:
+    posted = 0
+    candidates = _scheduled_story_candidates()
+    if not candidates:
+        app.logger.warning("No app_state.json or WooCommerce candidates found for scheduled stories.")
+        return
+    random.shuffle(candidates)
+    used_products: set[str] = set()
+    while posted < STORY_AUTOPUBLISH_COUNT:
+        try:
+            candidate = None
+            for item in candidates:
+                product_id = str(item.get("product_id") or "")
+                if product_id not in used_products:
+                    candidate = item
+                    used_products.add(product_id)
+                    break
+            if not candidate:
+                break
+            caption = str(candidate.get("caption") or "")
+            title = str(candidate.get("title") or "")
+            description = str(candidate.get("description") or "")
+            affiliate_link = str(candidate.get("affiliate_link") or "")
+            compose_source = str(candidate.get("compose_source") or "")
+            image_url = str(candidate.get("publish_source") or "")
+            story_copy = caption or description or title
+            if affiliate_link and compose_source:
+                try:
+                    story_image = compose_story_image_with_cta_and_affiliate_qr(
+                        source_image_url=compose_source,
+                        affiliate_link=affiliate_link,
+                        product_title=title,
+                        caption=caption,
+                        description=description or story_copy,
+                        qr_config=STORY_QR_WIDGET_CONFIG,
+                        cta_config=STORY_CTA_WIDGET_CONFIG,
+                    )
+                    image_url = f"/media/{save_generated_image(story_image)}"
+                except Exception:
+                    app.logger.exception("Unable to compose scheduled story image with CTA + affiliate QR.")
+            elif compose_source:
+                try:
+                    story_image = compose_story_image_with_cta(
+                        source_image_url=compose_source,
+                        product_title=title,
+                        caption=caption,
+                        description=description or story_copy,
+                        config=STORY_CTA_WIDGET_CONFIG,
+                    )
+                    image_url = f"/media/{save_generated_image(story_image)}"
+                except Exception:
+                    app.logger.exception("Unable to compose scheduled story image with CTA.")
+            
+            response = publish_instagram_story(
+                image_url=image_url,
+                caption=None,
+                share_link=affiliate_link,
+            )
+            media_id = response.get("id") or get_latest_instagram_media_id()
+            if media_id:
+                _register_story_reply_route(str(media_id), candidate)
+            print(f"Scheduled story publish response: {response}")
+            app.logger.info("Scheduled Instagram story published: %s", response)
+            posted += 1
+            time.sleep(8)
+        except Exception as exc:
+            app.logger.exception("Scheduled Instagram story publish failed: %s", exc)
+            break
+
+
+def _find_nested_value(payload: Any, target_keys: set[str]) -> Optional[str]:
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            if key in target_keys and value not in (None, ""):
+                return str(value)
+            nested = _find_nested_value(value, target_keys)
+            if nested:
+                return nested
+    elif isinstance(payload, list):
+        for item in payload:
+            nested = _find_nested_value(item, target_keys)
+            if nested:
+                return nested
+    return None
+
+
+def _extract_story_media_id(event: Dict[str, Any]) -> Optional[str]:
+    candidate_paths = [
+        (("message", "reply_to", "story", "id"),),
+        (("reply_to", "story", "id"),),
+        (("message", "story", "id"),),
+        (("story", "id"),),
+        (("message", "media", "id"),),
+        (("media", "id"),),
+        (("mentioned_media", "id"),),
+    ]
+    for path_group in candidate_paths:
+        for path in path_group:
+            current: Any = event
+            found = True
+            for key in path:
+                if not isinstance(current, dict) or key not in current:
+                    found = False
+                    break
+                current = current[key]
+            if found and current not in (None, ""):
+                return str(current)
+    return _find_nested_value(event, {"media_id", "story_id"})
+
+
+def _handle_instagram_messaging_event(event: Dict[str, Any]) -> None:
+    sender = event.get("sender") or {}
+    recipient_id = str(sender.get("id") or "")
+    app.logger.warning(
+        "Instagram messaging event received: sender_id=%s event_keys=%s has_message=%s",
+        recipient_id or "missing",
+        sorted(event.keys()),
+        isinstance(event.get("message"), dict),
+    )
+    if not recipient_id:
+        app.logger.warning("Instagram messaging event skipped: sender.id missing. event=%s", event)
+        return
+    media_id = _extract_story_media_id(event)
+    if not media_id:
+        app.logger.warning("Instagram messaging event skipped: no story media id present. event=%s", event)
+        return
+    app.logger.warning("Instagram messaging event extracted media_id=%s", media_id)
+    route_entry = _load_story_route_state().get(media_id)
+    if not isinstance(route_entry, dict):
+        app.logger.warning(
+            "Instagram messaging event skipped: no route for media_id=%s. known_route_ids=%s",
+            media_id,
+            sorted(_load_story_route_state().keys()),
+        )
+        return
+    reply_text = _build_instagram_affiliate_reply(route_entry)
+    if not reply_text:
+        app.logger.warning("Instagram messaging event skipped: empty reply text for media_id=%s", media_id)
+        return
+    app.logger.warning(
+        "Instagram messaging event matched route: media_id=%s product_id=%s affiliate_link_present=%s",
+        media_id,
+        route_entry.get("product_id", ""),
+        bool(route_entry.get("affiliate_link")),
+    )
+    send_instagram_message(recipient_id=recipient_id, text=reply_text)
+    app.logger.info("Instagram DM auto-reply sent for media id %s.", media_id)
+
+
+def _handle_instagram_comment_change(change: Dict[str, Any]) -> None:
+    value = change.get("value") or {}
+    comment_id = str(value.get("id") or "")
+    media_id = str(
+        (value.get("media") or {}).get("id")
+        or value.get("media_id")
+        or ""
+    )
+    if not comment_id or not media_id:
+        return
+    route_entry = _load_story_route_state().get(media_id)
+    if not isinstance(route_entry, dict):
+        return
+    reply_text = _build_instagram_affiliate_reply(route_entry)
+    if not reply_text:
+        return
+    send_instagram_private_reply(comment_id=comment_id, text=reply_text)
+    app.logger.info("Instagram private reply sent for comment %s on media %s.", comment_id, media_id)
+
+
+def _instagram_story_scheduler_loop() -> None:
+    app.logger.info("Instagram story scheduler started for %s", STORY_AUTOPUBLISH_TIME)
+    while True:
+        try:
+            now = dt.datetime.now()
+            print(f"Instagram scheduler loop running at {now.isoformat()}")
+            target_hour, target_minute = [int(part) for part in STORY_AUTOPUBLISH_TIME.split(":", 1)]
+            state = _load_story_scheduler_state()
+            last_run_date = state.get("last_run_date")
+            today = now.date().isoformat()
+            should_run = (
+                now.hour == target_hour
+                and now.minute >= target_minute
+                and last_run_date != today
+            )
+            if should_run:
+                _publish_scheduled_instagram_stories()
+                _save_story_scheduler_state({"last_run_date": today})
+            time.sleep(20)
+        except Exception:
+            app.logger.exception("Instagram scheduler loop error")
+            time.sleep(30)
+
+
+def start_instagram_story_scheduler() -> None:
+    if not STORY_AUTOPUBLISH_ENABLED:
+        app.logger.info("Instagram story scheduler disabled.")
+        return
+    thread = threading.Thread(
+        target=_instagram_story_scheduler_loop,
+        name="instagram-story-scheduler",
+        daemon=True,
+    )
+    thread.start()
 
 
 def _json_safe(data: Any) -> Any:
@@ -530,6 +1012,10 @@ def allowed_file(filename: str) -> bool:
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
 
 
+def allowed_video_file(filename: str) -> bool:
+    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_VIDEO_EXTENSIONS
+
+
 def _store_image(bytes_data: bytes, directory: Path, suffix: str) -> str:
     directory.mkdir(parents=True, exist_ok=True)
     filename = f"{uuid4().hex}{suffix}"
@@ -560,6 +1046,13 @@ def save_generated_image(bytes_data: bytes) -> str:
 
 def save_generated_video(bytes_data: bytes) -> str:
     return _store_image(bytes_data, VIDEOS_DIR, ".mp4")
+
+
+def save_uploaded_video(bytes_data: bytes, original_filename: str) -> str:
+    suffix = Path(original_filename).suffix.lower() or ".mp4"
+    if suffix.lstrip(".") not in ALLOWED_VIDEO_EXTENSIONS:
+        suffix = ".mp4"
+    return _store_image(bytes_data, VIDEOS_DIR, suffix)
 
 
 def load_stored_media(relative_path: str) -> bytes:
@@ -1493,6 +1986,66 @@ def confirm_pinterest():
     return render_home_view(form_values, pinterest_result=result, product_id=product_id)
 
 
+@app.route("/publish-pinterest-video", methods=["POST"])
+def publish_pinterest_video():
+    raw_form_values = collect_form_values(request.form)
+    form_values = extract_form_defaults(raw_form_values)
+    use_affiliate_link_flag = str(form_values.get("use_affiliate_link", "0")).lower() in TRUTHY_VALUES
+    product_id = resolve_product_id(form_values)
+    preview_payload = rebuild_preview_payload(raw_form_values)
+    video_path = raw_form_values.get("generated_video_path")
+
+    if not video_path:
+        flash("Generate the Pinterest video first, then publish.", "error")
+        return render_home_view(form_values, preview_payload, product_id=product_id)
+
+    try:
+        # Load local generated video for Pinterest media upload.
+        video_bytes = load_stored_media(video_path)
+    except Exception:
+        flash("Unable to load the generated video. Please regenerate it.", "error")
+        return render_home_view(form_values, preview_payload, product_id=product_id)
+
+    title = raw_form_values.get("title") or form_values.get("title", "")
+    description = raw_form_values.get("description") or form_values.get("description", "")
+    tags = parse_tags_payload(raw_form_values.get("tags_payload") or raw_form_values.get("tags", "[]"))
+    destination_link = resolve_destination_url(
+        product_id,
+        raw_form_values.get("affiliate_link", form_values.get("affiliate_link", "")),
+        use_affiliate_link_flag,
+    )
+    cover_image_url = preview_payload.get("image_public_url") if preview_payload else None
+
+    try:
+        pin_response = create_pinterest_video_pin(
+            video_bytes=video_bytes,
+            title=title,
+            description=description,
+            affiliate_link=destination_link,
+            tags=tags,
+            cover_image_url=cover_image_url,
+        )
+        flash("Pinterest video published successfully!", "success")
+        update_product_state(
+            product_id,
+            form_values=form_values,
+            preview=preview_payload,
+            platforms={
+                "pinterest": {
+                    "video_status": "published",
+                    "video_pin_id": pin_response.get("id"),
+                    "video_pin_url": pin_response.get("url"),
+                    "use_affiliate_link": use_affiliate_link_flag,
+                }
+            },
+        )
+    except Exception as exc:
+        app.logger.exception("Pinterest video publish failed")
+        flash(f"Unable to publish video to Pinterest: {exc}", "error")
+
+    return render_home_view(form_values, preview_payload, product_id=product_id)
+
+
 @app.route("/generate-instagram-image", methods=["POST"])
 def generate_instagram_image():
     raw_form_values = collect_form_values(request.form)
@@ -1631,22 +2184,88 @@ def publish_instagram():
     try:
         media_url = url_for("serve_media", filename=generated_image_path, _external=True)
         if target == "story":
-            publish_instagram_story(image_url=media_url, caption=caption.strip())
+            response = publish_instagram_story(image_url=media_url, caption=caption.strip())
         else:
-            publish_instagram_post(image_url=media_url, caption=caption_to_publish)
+            response = publish_instagram_post(image_url=media_url, caption=caption_to_publish)
+        media_id = response.get("id") or get_latest_instagram_media_id()
         flash("Instagram content published successfully!", "success")
         platform_name = f"instagram_{target.lower()}"
         update_product_state(
             product_id,
             form_values=form_values,
             preview=preview_payload,
-            platforms={platform_name: {"status": "published", "use_affiliate_link": use_affiliate_link_flag}},
+            platforms={
+                platform_name: {
+                    "status": "published",
+                    "use_affiliate_link": use_affiliate_link_flag,
+                    "instagram_media_id": media_id,
+                    "affiliate_link": form_values.get("affiliate_link"),
+                }
+            },
         )
+        if target == "story" and media_id:
+            _register_story_reply_route(
+                str(media_id),
+                {
+                    "product_id": product_id,
+                    "affiliate_link": form_values.get("affiliate_link"),
+                    "title": form_values.get("title_input") or preview_payload.get("title") or "",
+                    "description": form_values.get("description_input") or preview_payload.get("description") or "",
+                },
+            )
     except Exception as exc:
         app.logger.exception("Instagram publish failed")
         flash(f"Unable to publish to Instagram: {exc}", "error")
 
     return render_home_view(form_values, preview_payload, product_id=product_id)
+
+
+@app.route("/webhooks/instagram", methods=["GET"])
+def verify_instagram_webhook():
+    mode = request.args.get("hub.mode", "")
+    token = request.args.get("hub.verify_token", "")
+    challenge = request.args.get("hub.challenge", "")
+    if mode == "subscribe" and token and token == INSTAGRAM_WEBHOOK_VERIFY_TOKEN:
+        return challenge, 200
+    abort(403)
+
+
+@app.route("/webhooks/instagram", methods=["POST"])
+def receive_instagram_webhook():
+    payload = request.get_json(silent=True) or {}
+    entry_count = len(payload.get("entry", [])) if isinstance(payload.get("entry", []), list) else 0
+    app.logger.warning(
+        "Instagram webhook POST received: top_level_keys=%s object=%s entry_count=%s",
+        sorted(payload.keys()) if isinstance(payload, dict) else [],
+        payload.get("object") if isinstance(payload, dict) else "",
+        entry_count,
+    )
+    app.logger.warning("Instagram webhook payload: %s", payload)
+    for entry in payload.get("entry", []):
+        app.logger.warning(
+            "Instagram webhook entry: entry_keys=%s messaging_count=%s changes_count=%s",
+            sorted(entry.keys()) if isinstance(entry, dict) else [],
+            len(entry.get("messaging", [])) if isinstance(entry.get("messaging", []), list) else 0,
+            len(entry.get("changes", [])) if isinstance(entry.get("changes", []), list) else 0,
+        )
+        for event in entry.get("messaging", []):
+            try:
+                _handle_instagram_messaging_event(event)
+            except Exception:
+                app.logger.exception("Instagram messaging webhook handler failed.")
+        for change in entry.get("changes", []):
+            app.logger.warning(
+                "Instagram webhook change received: field=%s value_keys=%s",
+                change.get("field", "") if isinstance(change, dict) else "",
+                sorted((change.get("value") or {}).keys()) if isinstance(change, dict) else [],
+            )
+            if change.get("field") not in {"comments", "live_comments"}:
+                continue
+            try:
+                _handle_instagram_comment_change(change)
+            except Exception:
+                app.logger.exception("Instagram comment webhook handler failed.")
+    return {"status": "ok"}, 200
 
 
 @app.route("/publish-instagram-reel", methods=["POST"])
@@ -1676,7 +2295,8 @@ def publish_instagram_reel_route():
 
     try:
         media_url = url_for("serve_media", filename=video_path, _external=True)
-        publish_instagram_reel(video_url=media_url, caption=caption_to_publish)
+        response = publish_instagram_reel(video_url=media_url, caption=caption_to_publish)
+        media_id = response.get("id") or get_latest_instagram_media_id()
         flash("Instagram Reel published successfully!", "success")
         update_product_state(
             product_id,
@@ -1686,6 +2306,8 @@ def publish_instagram_reel_route():
                 "instagram_reel": {
                     "status": "published",
                     "use_affiliate_link": use_affiliate_link_flag,
+                    "instagram_media_id": media_id,
+                    "affiliate_link": form_values.get("affiliate_link"),
                 }
             },
         )
@@ -1847,7 +2469,7 @@ def publish_website():
 
 @app.route("/generate-video/<platform>", methods=["POST"])
 def generate_platform_video(platform: str):
-    supported = {"youtube", "tiktok", "instagram"}
+    supported = {"youtube", "tiktok", "instagram", "pinterest"}
     target = platform.lower()
     if target not in supported:
         abort(404)
@@ -1950,6 +2572,12 @@ def generate_platform_video(platform: str):
     cut_style = random.choice(cut_styles)
 
     prompt_templates = {
+        "pinterest": (
+            "Create a Pinterest-optimized vertical product video for {product}. Hook: {hook}. "
+            "Lead with an eye-catching opening shot, then show clear lifestyle use-cases and close-up details. "
+            "Use {cut_style} and varied camera moves: {moves}. Setting: {setting}. Lighting: {lighting}. "
+            "No on-screen text, no logos, no voiceover, no speech. Choose suitable music only."
+        ),
         "youtube": (
             "Create a vertical YouTube Short for {product}. Make it feel like authentic UGC, not an ad. "
             "Hook: {hook}. Setting: {setting}. Lighting: {lighting}. "
@@ -1985,6 +2613,13 @@ def generate_platform_video(platform: str):
             or get_platform_state(saved_state, "youtube").get("youtube_boost_prompt", "")
         )
         form_values["youtube_boost_prompt"] = boost_prompt
+    elif target == "pinterest":
+        boost_prompt = (
+            raw_form_values.get("pinterest_extra")
+            or (preview_payload.get("pinterest_extra") if preview_payload else "")
+            or get_platform_state(saved_state, "pinterest").get("pinterest_extra", "")
+        )
+        form_values["pinterest_extra"] = boost_prompt
     elif target == "instagram":
         boost_prompt = (
             raw_form_values.get("instagram_boost_prompt")
@@ -2036,19 +2671,78 @@ def generate_platform_video(platform: str):
 
     target_label = "Instagram" if target == "instagram" else target.title()
     platform_key = "instagram_reel" if target == "instagram" else target
+    platform_payload = {
+        "status": "pending",
+        "video_path": video_path,
+        "base_image_path": base_image_path,
+        "use_affiliate_link": use_affiliate_link_flag,
+    }
+    if target == "pinterest":
+        # Keep image pin publication status intact; track video state separately.
+        platform_payload.pop("status", None)
+        platform_payload["video_status"] = "pending"
     flash(f"{target_label} video generated.", "success")
     update_product_state(
         product_id,
         form_values=form_values,
         preview=preview_payload,
-        platforms={
-            platform_key: {
-                "status": "pending",
-                "video_path": video_path,
-                "base_image_path": base_image_path,
-                "use_affiliate_link": use_affiliate_link_flag,
-            }
-        },
+        platforms={platform_key: platform_payload},
+        assets={"generated_video_path": video_path},
+    )
+    return render_home_view(form_values, preview_payload, product_id=product_id)
+
+
+@app.route("/upload-video/<platform>", methods=["POST"])
+def upload_platform_video(platform: str):
+    supported = {"youtube", "tiktok", "instagram", "pinterest"}
+    target = platform.lower()
+    if target not in supported:
+        abort(404)
+
+    raw_form_values = collect_form_values(request.form)
+    form_values = extract_form_defaults(raw_form_values)
+    use_affiliate_link_flag = str(form_values.get("use_affiliate_link", "0")).lower() in TRUTHY_VALUES
+    product_id = resolve_product_id(form_values)
+    preview_payload = rebuild_preview_payload(raw_form_values)
+    upload = request.files.get("external_video")
+
+    if not upload or not upload.filename:
+        flash("Choose a video file to upload first.", "error")
+        return render_home_view(form_values, preview_payload, product_id=product_id)
+    if not allowed_video_file(upload.filename):
+        flash("Unsupported video format. Upload MP4, MOV, M4V, or WEBM.", "error")
+        return render_home_view(form_values, preview_payload, product_id=product_id)
+
+    video_bytes = upload.read()
+    if not video_bytes:
+        flash("Uploaded video was empty.", "error")
+        return render_home_view(form_values, preview_payload, product_id=product_id)
+
+    video_path = save_uploaded_video(video_bytes, upload.filename)
+    preview_payload = preview_payload or {}
+    preview_payload["generated_video_path"] = video_path
+    preview_payload["video_url"] = url_for("serve_media", filename=video_path)
+    preview_payload["video_download_url"] = url_for("download_media", filename=video_path)
+    preview_payload["video_public_url"] = url_for("serve_media", filename=video_path, _external=True)
+
+    target_label = "Instagram" if target == "instagram" else target.title()
+    platform_key = "instagram_reel" if target == "instagram" else target
+    platform_payload = {
+        "status": "pending",
+        "video_path": video_path,
+        "use_affiliate_link": use_affiliate_link_flag,
+        "video_source": "upload",
+    }
+    if target == "pinterest":
+        platform_payload.pop("status", None)
+        platform_payload["video_status"] = "pending"
+
+    flash(f"{target_label} video uploaded.", "success")
+    update_product_state(
+        product_id,
+        form_values=form_values,
+        preview=preview_payload,
+        platforms={platform_key: platform_payload},
         assets={"generated_video_path": video_path},
     )
     return render_home_view(form_values, preview_payload, product_id=product_id)
@@ -2188,4 +2882,8 @@ def publish_tiktok():
 
 
 if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
+    debug_enabled = True
+    # Avoid duplicate scheduler thread when Flask debug reloader spawns parent process.
+    if not debug_enabled or os.getenv("WERKZEUG_RUN_MAIN") == "true":
+        start_instagram_story_scheduler()
+    app.run(debug=debug_enabled, host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
