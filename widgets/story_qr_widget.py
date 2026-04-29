@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
+import random
 from urllib.parse import quote_plus
 
 import requests
@@ -33,6 +34,57 @@ class StoryCtaWidgetConfig:
     combined_target_height_px: int = 210
     vertical_center_ratio: float = 0.68
     request_timeout_seconds: int = 30
+
+
+@dataclass(frozen=True)
+class StoryPanelTheme:
+    panel_fill: tuple[int, int, int, int]
+    panel_outline: tuple[int, int, int, int]
+    highlight_fill: tuple[int, int, int, int]
+    shadow_fill: tuple[int, int, int, int]
+    qr_box_fill: tuple[int, int, int, int] = (255, 255, 255, 236)
+    title_color: tuple[int, int, int, int] = (255, 255, 255, 255)
+    body_color: tuple[int, int, int, int] = (238, 241, 247, 236)
+
+
+_STORY_PANEL_THEMES: tuple[StoryPanelTheme, ...] = (
+    StoryPanelTheme(
+        panel_fill=(20, 42, 102, 214),
+        panel_outline=(190, 216, 255, 70),
+        highlight_fill=(94, 177, 255, 82),
+        shadow_fill=(10, 19, 52, 122),
+    ),
+    StoryPanelTheme(
+        panel_fill=(129, 48, 73, 214),
+        panel_outline=(255, 212, 221, 72),
+        highlight_fill=(255, 158, 165, 82),
+        shadow_fill=(78, 17, 45, 124),
+    ),
+    StoryPanelTheme(
+        panel_fill=(16, 96, 99, 214),
+        panel_outline=(184, 243, 236, 72),
+        highlight_fill=(111, 222, 204, 78),
+        shadow_fill=(8, 58, 62, 122),
+    ),
+    StoryPanelTheme(
+        panel_fill=(122, 69, 17, 214),
+        panel_outline=(255, 224, 174, 72),
+        highlight_fill=(255, 180, 85, 84),
+        shadow_fill=(73, 36, 7, 122),
+    ),
+    StoryPanelTheme(
+        panel_fill=(85, 40, 118, 214),
+        panel_outline=(226, 203, 255, 72),
+        highlight_fill=(181, 138, 255, 82),
+        shadow_fill=(49, 18, 72, 122),
+    ),
+    StoryPanelTheme(
+        panel_fill=(32, 91, 55, 214),
+        panel_outline=(202, 240, 213, 72),
+        highlight_fill=(127, 214, 157, 80),
+        shadow_fill=(15, 55, 31, 122),
+    ),
+)
 
 
 def _download_image_bytes(image_url: str, timeout_seconds: int) -> bytes:
@@ -111,6 +163,61 @@ def _load_font(size: int, *, bold: bool = False) -> ImageFont.ImageFont:
     return ImageFont.load_default()
 
 
+def _pick_story_panel_theme() -> StoryPanelTheme:
+    return random.choice(_STORY_PANEL_THEMES)
+
+
+def _build_panel_background(
+    width: int,
+    height: int,
+    *,
+    corner_radius: int,
+    outline_width: int,
+    theme: StoryPanelTheme,
+) -> Image.Image:
+    panel = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    mask = Image.new("L", (width, height), 0)
+    mask_draw = ImageDraw.Draw(mask)
+    mask_draw.rounded_rectangle(
+        (0, 0, width - 1, height - 1),
+        radius=corner_radius,
+        fill=255,
+    )
+
+    background = Image.new("RGBA", (width, height), theme.panel_fill)
+    accent_layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    accent_draw = ImageDraw.Draw(accent_layer)
+    accent_draw.ellipse(
+        (
+            int(width * 0.52),
+            -int(height * 0.34),
+            width + int(width * 0.18),
+            int(height * 0.62),
+        ),
+        fill=theme.highlight_fill,
+    )
+    accent_draw.ellipse(
+        (
+            -int(width * 0.24),
+            int(height * 0.34),
+            int(width * 0.42),
+            height + int(height * 0.42),
+        ),
+        fill=theme.shadow_fill,
+    )
+    background = Image.alpha_composite(background, accent_layer)
+    panel.paste(background, (0, 0), mask)
+
+    panel_draw = ImageDraw.Draw(panel)
+    panel_draw.rounded_rectangle(
+        (0, 0, width - 1, height - 1),
+        radius=corner_radius,
+        outline=theme.panel_outline,
+        width=outline_width,
+    )
+    return panel
+
+
 def _build_qr_panel(
     width: int,
     height: int,
@@ -172,16 +279,16 @@ def _build_cta_panel(
     margin = max(16, int(min(width, height) * 0.025))
     panel_w = width - (2 * margin)
     panel_h = min(max(int(height * cfg.min_height_ratio), 120), int(height * cfg.max_height_ratio))
-    panel = Image.new("RGBA", (panel_w, panel_h), (0, 0, 0, 0))
-    panel_draw = ImageDraw.Draw(panel)
     corner_radius = max(18, int(panel_h * 0.2))
-    panel_draw.rounded_rectangle(
-        (0, 0, panel_w - 1, panel_h - 1),
-        radius=corner_radius,
-        fill=(12, 12, 16, 184),
-        outline=(255, 255, 255, 42),
-        width=max(1, int(panel_h * 0.01)),
+    theme = _pick_story_panel_theme()
+    panel = _build_panel_background(
+        panel_w,
+        panel_h,
+        corner_radius=corner_radius,
+        outline_width=max(1, int(panel_h * 0.01)),
+        theme=theme,
     )
+    panel_draw = ImageDraw.Draw(panel)
     inner_padding_x = max(18, int(panel_w * 0.06))
     inner_padding_y = max(14, int(panel_h * 0.12))
     text_width = panel_w - (2 * inner_padding_x)
@@ -196,13 +303,13 @@ def _build_cta_panel(
 
     current_y = inner_padding_y
     for line in title_lines:
-        panel_draw.text((inner_padding_x, current_y), line, fill=(255, 255, 255, 255), font=title_font)
+        panel_draw.text((inner_padding_x, current_y), line, fill=theme.title_color, font=title_font)
         bbox = panel_draw.textbbox((0, 0), line, font=title_font)
         current_y += max(18, bbox[3] - bbox[1] + 4)
     if body_lines:
         current_y += max(6, int(panel_h * 0.07))
     for line in body_lines:
-        panel_draw.text((inner_padding_x, current_y), line, fill=(232, 232, 238, 235), font=body_font)
+        panel_draw.text((inner_padding_x, current_y), line, fill=theme.body_color, font=body_font)
         bbox = panel_draw.textbbox((0, 0), line, font=body_font)
         current_y += max(14, bbox[3] - bbox[1] + 3)
     return panel, panel_w, panel_h
@@ -292,16 +399,16 @@ def compose_story_image_with_cta_and_affiliate_qr(
         panel_x = safe_side + max(0, (safe_width - panel_w) // 2)
         panel_y = max(margin, height - panel_h - margin)
 
-        panel = Image.new("RGBA", (panel_w, panel_h), (0, 0, 0, 0))
-        panel_draw = ImageDraw.Draw(panel)
         corner_radius = max(20, int(panel_h * 0.18))
-        panel_draw.rounded_rectangle(
-            (0, 0, panel_w - 1, panel_h - 1),
-            radius=corner_radius,
-            fill=(10, 10, 14, 196),
-            outline=(255, 255, 255, 38),
-            width=max(1, int(panel_h * 0.01)),
+        theme = _pick_story_panel_theme()
+        panel = _build_panel_background(
+            panel_w,
+            panel_h,
+            corner_radius=corner_radius,
+            outline_width=max(1, int(panel_h * 0.01)),
+            theme=theme,
         )
+        panel_draw = ImageDraw.Draw(panel)
 
         inner_padding_x = max(18, int(panel_w * 0.04))
         inner_padding_y = max(16, int(panel_h * 0.12))
@@ -317,7 +424,7 @@ def compose_story_image_with_cta_and_affiliate_qr(
         panel_draw.rounded_rectangle(
             (qr_box_x, qr_box_y, qr_box_x + qr_box_size, qr_box_y + qr_box_size),
             radius=max(16, int(qr_box_size * 0.14)),
-            fill=(255, 255, 255, 236),
+            fill=theme.qr_box_fill,
         )
         qr_image = _build_qr_image(affiliate_link, qr_size, qr_cfg.request_timeout_seconds)
         qr_x = qr_box_x + (qr_box_size - qr_size) // 2
@@ -349,13 +456,13 @@ def compose_story_image_with_cta_and_affiliate_qr(
 
         current_y = inner_padding_y
         for line in title_lines:
-            panel_draw.text((text_column_x, current_y), line, fill=(255, 255, 255, 255), font=title_font)
+            panel_draw.text((text_column_x, current_y), line, fill=theme.title_color, font=title_font)
             bbox = panel_draw.textbbox((0, 0), line, font=title_font)
             current_y += max(18, bbox[3] - bbox[1] + 5)
         if body_lines:
             current_y += max(6, int(panel_h * 0.04))
         for line in body_lines:
-            panel_draw.text((text_column_x, current_y), line, fill=(232, 232, 238, 236), font=body_font)
+            panel_draw.text((text_column_x, current_y), line, fill=theme.body_color, font=body_font)
             bbox = panel_draw.textbbox((0, 0), line, font=body_font)
             current_y += max(14, bbox[3] - bbox[1] + 3)
 
