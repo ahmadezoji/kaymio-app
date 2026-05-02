@@ -27,19 +27,25 @@ INSTAGRAM_GRAPH_URL = f"https://graph.instagram.com/{GRAPH_VERSION}"
 DEFAULT_REDIRECT_URI = "https://kaymio.mardomvpn.store/instagram/callback"
 WEBHOOK_FIELDS = ("messages", "comments", "live_comments")
 
+# SCOPES = [
+#     "instagram_basic",
+#     "instagram_content_publish",
+#     "instagram_manage_comments",
+#     "instagram_manage_messages",
+#     "pages_show_list",
+#     "pages_read_engagement",
+#     "pages_manage_metadata",
+#     "instagram_manage_insights",
+#     "instagram_business_basic",
+#     "instagram_business_manage_messages",
+#     "instagram_business_manage_comments",
+#     "instagram_business_content_publish",
+# ]
 SCOPES = [
-    "instagram_basic",
-    "instagram_content_publish",
-    "instagram_manage_comments",
-    "instagram_manage_messages",
-    "pages_show_list",
-    "pages_read_engagement",
-    "pages_manage_metadata",
-    "instagram_manage_insights",
     "instagram_business_basic",
-    "instagram_business_manage_messages",
-    "instagram_business_manage_comments",
     "instagram_business_content_publish",
+    "instagram_business_manage_comments",
+    "instagram_business_manage_messages",
 ]
 
 
