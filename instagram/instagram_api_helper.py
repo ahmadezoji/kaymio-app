@@ -59,28 +59,23 @@ def _get_instagram_credentials() -> Dict[str, str]:
 def _get_instagram_messaging_credentials() -> Dict[str, str]:
     token_payload = _load_token_file()
     env_page_access_token = os.getenv("INSTAGRAM_PAGE_ACCESS_TOKEN")
-    env_page_id = os.getenv("FACEBOOK_PAGE_ID")
+    env_instagram_user_id = os.getenv("INSTAGRAM_USER_ID")
 
     token_file_page_access_token = token_payload.get("INSTAGRAM_PAGE_ACCESS_TOKEN")
     token_file_fallback_access_token = token_payload.get("FB_LONG_LIVED_USER_ACCESS_TOKEN")
-    token_file_page_id = token_payload.get("FACEBOOK_PAGE_ID")
-    token_file_fallback_page_id = token_payload.get("FB_PAGE_ID")
+    token_file_instagram_user_id = token_payload.get("INSTAGRAM_USER_ID")
 
     page_access_token = (
         token_file_page_access_token
         or token_file_fallback_access_token
         or env_page_access_token
     )
-    page_id = (
-        token_file_page_id
-        or token_file_fallback_page_id
-        or env_page_id
-    )
+    instagram_user_id = token_file_instagram_user_id or env_instagram_user_id
 
     logger.warning(
         "Instagram messaging credentials resolved: "
-        "token_source=%s page_id_source=%s token_file_present=%s token_file_has_page_token=%s "
-        "token_file_has_fb_user_token=%s env_has_page_token=%s",
+        "token_source=%s instagram_user_id_source=%s token_file_present=%s "
+        "token_file_has_page_token=%s token_file_has_fb_user_token=%s env_has_page_token=%s",
         (
             "instagram_token.json:INSTAGRAM_PAGE_ACCESS_TOKEN"
             if token_file_page_access_token
@@ -91,13 +86,9 @@ def _get_instagram_messaging_credentials() -> Dict[str, str]:
             )
         ),
         (
-            "instagram_token.json:FACEBOOK_PAGE_ID"
-            if token_file_page_id
-            else (
-                "instagram_token.json:FB_PAGE_ID"
-                if token_file_fallback_page_id
-                else ("env:FACEBOOK_PAGE_ID" if env_page_id else "missing")
-            )
+            "instagram_token.json:INSTAGRAM_USER_ID"
+            if token_file_instagram_user_id
+            else ("env:INSTAGRAM_USER_ID" if env_instagram_user_id else "missing")
         ),
         bool(token_payload),
         bool(token_file_page_access_token),
@@ -105,14 +96,31 @@ def _get_instagram_messaging_credentials() -> Dict[str, str]:
         bool(env_page_access_token),
     )
 
-    if not page_access_token or not page_id:
+    if not page_access_token or not instagram_user_id:
         raise RuntimeError(
             "Instagram messaging credentials must be configured via "
-            "INSTAGRAM_PAGE_ACCESS_TOKEN/FACEBOOK_PAGE_ID, or "
-            "FB_LONG_LIVED_USER_ACCESS_TOKEN/FB_PAGE_ID in "
+            "INSTAGRAM_PAGE_ACCESS_TOKEN and INSTAGRAM_USER_ID, or "
+            "FB_LONG_LIVED_USER_ACCESS_TOKEN plus INSTAGRAM_USER_ID in "
             "instagram/instagram_token.json."
         )
-    return {"page_access_token": page_access_token, "page_id": page_id}
+    return {
+        "page_access_token": page_access_token,
+        "instagram_user_id": instagram_user_id,
+    }
+
+
+def _post_instagram_message(payload: Dict[str, object]) -> Dict[str, str]:
+    creds = _get_instagram_messaging_credentials()
+    response = requests.post(
+        f"{GRAPH_API_BASE}/{creds['instagram_user_id']}/messages",
+        params={"access_token": creds["page_access_token"]},
+        json=payload,
+        timeout=30,
+    )
+    if response.status_code >= 400:
+        logger.error("Instagram message send failed: %s - %s", response.status_code, response.text)
+        response.raise_for_status()
+    return response.json()
 
 
 def _resolve_local_media_path(media_url: str) -> Optional[str]:
@@ -320,39 +328,22 @@ def publish_instagram_reel(
 
 def send_instagram_message(*, recipient_id: str, text: str) -> Dict[str, str]:
     """Send a text reply to an Instagram Messaging conversation."""
-    creds = _get_instagram_messaging_credentials()
-    response = requests.post(
-        f"{GRAPH_API_BASE}/{creds['page_id']}/messages",
-        params={"access_token": creds["page_access_token"]},
-        json={
+    return _post_instagram_message(
+        {
             "recipient": {"id": recipient_id},
-            "messaging_type": "RESPONSE",
             "message": {"text": text[:1000]},
-        },
-        timeout=30,
+        }
     )
-    if response.status_code >= 400:
-        logger.error("Instagram DM send failed: %s - %s", response.status_code, response.text)
-        response.raise_for_status()
-    return response.json()
 
 
 def send_instagram_private_reply(*, comment_id: str, text: str) -> Dict[str, str]:
     """Send the one-time private reply supported for IG comments/live comments."""
-    creds = _get_instagram_messaging_credentials()
-    response = requests.post(
-        f"{GRAPH_API_BASE}/{creds['page_id']}/messages",
-        params={"access_token": creds["page_access_token"]},
-        json={
+    return _post_instagram_message(
+        {
             "recipient": {"comment_id": comment_id},
             "message": {"text": text[:1000]},
-        },
-        timeout=30,
+        }
     )
-    if response.status_code >= 400:
-        logger.error("Instagram private reply failed: %s - %s", response.status_code, response.text)
-        response.raise_for_status()
-    return response.json()
 
 
 def list_story_media_candidates(limit: int = 25) -> List[Dict[str, str]]:

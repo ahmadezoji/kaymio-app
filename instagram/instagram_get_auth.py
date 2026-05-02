@@ -20,18 +20,26 @@ from pathlib import Path
 import requests
 
 GRAPH_VERSION = "v21.0"
-AUTH_URL = f"https://www.facebook.com/{GRAPH_VERSION}/dialog/oauth"
+# AUTH_URL = f"https://www.facebook.com/{GRAPH_VERSION}/dialog/oauth"
+AUTH_URL = "https://api.instagram.com/oauth/authorize"
 TOKEN_URL = f"https://graph.facebook.com/{GRAPH_VERSION}/oauth/access_token"
+INSTAGRAM_GRAPH_URL = f"https://graph.instagram.com/{GRAPH_VERSION}"
 DEFAULT_REDIRECT_URI = "https://kaymio.mardomvpn.store/instagram/callback"
+WEBHOOK_FIELDS = ("messages", "comments", "live_comments")
 
 SCOPES = [
     "instagram_basic",
     "instagram_content_publish",
+    "instagram_manage_comments",
     "instagram_manage_messages",
     "pages_show_list",
     "pages_read_engagement",
     "pages_manage_metadata",
     "instagram_manage_insights",
+    "instagram_business_basic",
+    "instagram_business_manage_messages",
+    "instagram_business_manage_comments",
+    "instagram_business_content_publish",
 ]
 
 
@@ -164,6 +172,24 @@ def fetch_page_access_token(page_id: str, user_access_token: str) -> str:
     return str(page_access_token)
 
 
+def subscribe_instagram_webhooks(ig_user_id: str, user_access_token: str) -> dict:
+    url = f"{INSTAGRAM_GRAPH_URL}/{ig_user_id}/subscribed_apps"
+    response = requests.post(
+        url,
+        params={
+            "subscribed_fields": ",".join(WEBHOOK_FIELDS),
+            "access_token": user_access_token,
+        },
+        timeout=30,
+    )
+    if response.status_code >= 400:
+        raise RuntimeError(
+            "Unable to subscribe Instagram webhooks: "
+            f"{response.status_code} - {response.text}"
+        )
+    return response.json()
+
+
 def _choose_page(pages: list[dict]) -> dict:
     if not pages:
         raise RuntimeError(
@@ -248,6 +274,12 @@ def main() -> int:
         print(exc, file=sys.stderr)
         return 1
 
+    webhook_subscription_result = None
+    try:
+        webhook_subscription_result = subscribe_instagram_webhooks(ig_user_id, long_token)
+    except RuntimeError as exc:
+        print(f"Warning: {exc}", file=sys.stderr)
+
     token_path = _write_token_file(
         access_token=long_token,
         user_id=ig_user_id,
@@ -264,6 +296,11 @@ def main() -> int:
     print(f"FB_LONG_LIVED_USER_ACCESS_TOKEN={long_token}")
     print(f"FB_PAGE_ID={page_id}")
     print(f"Expires in: {long_payload.get('expires_in', 'unknown')} seconds")
+    if webhook_subscription_result is not None:
+        print(
+            f"Webhook subscription result ({','.join(WEBHOOK_FIELDS)}): "
+            f"{json.dumps(webhook_subscription_result)}"
+        )
     print(f"\nSaved JSON credentials to: {token_path}")
     return 0
 
