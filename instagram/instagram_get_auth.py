@@ -22,7 +22,9 @@ import requests
 GRAPH_VERSION = "v21.0"
 # AUTH_URL = f"https://www.facebook.com/{GRAPH_VERSION}/dialog/oauth"
 AUTH_URL = "https://api.instagram.com/oauth/authorize"
-TOKEN_URL = f"https://graph.facebook.com/{GRAPH_VERSION}/oauth/access_token"
+# TOKEN_URL = f"https://graph.facebook.com/{GRAPH_VERSION}/oauth/access_token"
+TOKEN_URL = "https://api.instagram.com/oauth/access_token"
+LONG_TOKEN_URL = "https://graph.instagram.com/access_token"
 INSTAGRAM_GRAPH_URL = f"https://graph.instagram.com/{GRAPH_VERSION}"
 DEFAULT_REDIRECT_URI = "https://kaymio.mardomvpn.store/instagram/callback"
 WEBHOOK_FIELDS = ("messages", "comments", "live_comments")
@@ -124,29 +126,34 @@ def build_auth_url(app_id: str, redirect_uri: str) -> str:
     return f"{AUTH_URL}?{urllib.parse.urlencode(params)}"
 
 
-def exchange_code_for_short_lived_token(
-    app_id: str,
-    app_secret: str,
-    code: str,
-    redirect_uri: str,
-) -> dict:
-    params = {
-        "client_id": app_id,
-        "client_secret": app_secret,
-        "redirect_uri": redirect_uri,
-        "code": code,
-    }
-    return _request_json(TOKEN_URL, params=params)
+def exchange_code_for_short_lived_token(app_id, app_secret, code, redirect_uri):
+    resp = requests.post(
+        TOKEN_URL,
+        data={
+            "client_id": app_id,
+            "client_secret": app_secret,
+            "grant_type": "authorization_code",
+            "redirect_uri": redirect_uri,
+            "code": code,
+        },
+        timeout=30,
+    )
+    resp.raise_for_status()
+    return resp.json()
 
 
-def exchange_for_long_lived_token(app_id: str, app_secret: str, short_token: str) -> dict:
-    params = {
-        "grant_type": "fb_exchange_token",
-        "client_id": app_id,
-        "client_secret": app_secret,
-        "fb_exchange_token": short_token,
-    }
-    return _request_json(TOKEN_URL, params=params)
+def exchange_for_long_lived_token(app_secret, short_token):
+    resp = requests.get(
+        LONG_TOKEN_URL,
+        params={
+            "grant_type": "ig_exchange_token",
+            "client_secret": app_secret,
+            "access_token": short_token,
+        },
+        timeout=30,
+    )
+    resp.raise_for_status()
+    return resp.json()
 
 
 def fetch_pages(access_token: str) -> list[dict]:
