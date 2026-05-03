@@ -128,16 +128,16 @@ def build_auth_url(app_id: str, redirect_uri: str) -> str:
 
 def exchange_code_for_short_lived_token(app_id, app_secret, code, redirect_uri):
     resp = requests.post(
-        TOKEN_URL,
-        data={
-            "client_id": app_id,
-            "client_secret": app_secret,
-            "grant_type": "authorization_code",
-            "redirect_uri": redirect_uri,
-            "code": code,
-        },
-        timeout=30,
-    )
+    TOKEN_URL,
+    data={
+        "client_id": app_id,
+        "client_secret": app_secret,
+        "grant_type": "authorization_code",
+        "redirect_uri": redirect_uri,
+        "code": code,
+    },
+    timeout=30,
+)
     resp.raise_for_status()
     return resp.json()
 
