@@ -38,7 +38,7 @@ class StoryCtaWidgetConfig:
     min_height_ratio: float = 0.12
     max_height_ratio: float = 0.22
     title_font_ratio: float = 0.22
-    body_font_ratio: float = 0.14
+    body_font_ratio: float = 0.18
     combined_target_width_px: int = 840
     combined_target_height_px: int = 210
     vertical_center_ratio: float = 0.68
