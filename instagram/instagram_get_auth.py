@@ -13,6 +13,7 @@ import requests
 AUTH_URL = "https://api.instagram.com/oauth/authorize"
 TOKEN_URL = "https://api.instagram.com/oauth/access_token"
 LONG_TOKEN_URL = "https://graph.instagram.com/access_token"
+SCRIPT_VERSION = "instagram-login-only-2026-05-04"
 SCOPES = [
     "instagram_business_basic",
     "instagram_business_content_publish",
@@ -28,7 +29,10 @@ def _require_env(name: str) -> str:
         raise RuntimeError(
             f"{name} is required. Set it in your environment or .env file before running this script."
         )
-    return value
+    cleaned = value.strip()
+    if len(cleaned) >= 2 and cleaned[0] == cleaned[-1] and cleaned[0] in ("'", '"'):
+        cleaned = cleaned[1:-1]
+    return cleaned
 
 
 def _load_dotenv() -> None:
@@ -59,6 +63,11 @@ def _load_dotenv() -> None:
 
 def _raise_for_status_with_body(response: requests.Response) -> None:
     if response.status_code >= 400:
+        request = response.request
+        print(
+            f"HTTP {response.status_code} for {request.method} {request.url}",
+            file=sys.stderr,
+        )
         print(response.text, file=sys.stderr)
     response.raise_for_status()
 
@@ -87,6 +96,13 @@ def _write_token_file(*, access_token: str, user_id: str, expires_in: object) ->
     }
     token_path.write_text(json.dumps(payload, indent=2) + "\n")
     return token_path
+
+
+def _print_runtime_summary(app_id: str, redirect_uri: str) -> None:
+    print(f"Script: {Path(__file__).resolve()}")
+    print(f"Version: {SCRIPT_VERSION}")
+    print(f"INSTAGRAM_APP_ID={app_id}")
+    print(f"INSTAGRAM_REDIRECT_URI={redirect_uri}")
 
 
 def build_auth_url(app_id: str, redirect_uri: str) -> str:
@@ -145,6 +161,7 @@ def main() -> int:
         print(exc, file=sys.stderr)
         return 1
 
+    _print_runtime_summary(app_id, redirect_uri)
     auth_url = build_auth_url(app_id, redirect_uri)
     print("\nVisit this URL to authorize Instagram Login:\n")
     print(auth_url)
