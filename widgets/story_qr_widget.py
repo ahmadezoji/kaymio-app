@@ -95,7 +95,7 @@ _STORY_PANEL_THEMES: tuple[StoryPanelTheme, ...] = (
     ),
 )
 
-STORY_CTA_STATIC_BODY = "Reply for info."
+STORY_CTA_STATIC_BODY = "Reply for more info."
 
 
 def _download_image_bytes(image_url: str, timeout_seconds: int) -> bytes:
