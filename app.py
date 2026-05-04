@@ -157,6 +157,13 @@ def _register_story_reply_route(media_id: str, candidate: Dict[str, Any]) -> Non
         "published_at": dt.datetime.utcnow().isoformat(),
     }
     _save_story_route_state(routes)
+    app.logger.info(
+        "Registered Instagram story reply route: media_id=%s product_id=%s affiliate_link_present=%s total_routes=%s",
+        normalized_media_id,
+        str(candidate.get("product_id") or ""),
+        bool(affiliate_link),
+        len(routes),
+    )
 
 
 def _build_instagram_affiliate_reply(route_entry: Dict[str, Any]) -> str:
