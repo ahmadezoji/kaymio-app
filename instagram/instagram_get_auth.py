@@ -74,17 +74,15 @@ def _raise_for_status_with_body(response: requests.Response) -> None:
 
 def _normalize_auth_code(raw_value: str) -> str:
     cleaned = raw_value.strip()
-    if not cleaned:
-        return ""
 
-    parsed = urllib.parse.urlparse(cleaned)
-    query_code = urllib.parse.parse_qs(parsed.query).get("code")
-    if query_code:
-        cleaned = query_code[0]
-    elif "code=" in cleaned:
-        cleaned = cleaned.split("code=", 1)[1].split("&", 1)[0]
+    if cleaned.startswith("http"):
+        parsed = urllib.parse.urlparse(cleaned)
+        cleaned = urllib.parse.parse_qs(parsed.query).get("code", [""])[0]
 
-    return urllib.parse.unquote(cleaned).replace("#_", "").strip()
+    # remove ANY fragment after #
+    cleaned = cleaned.split("#", 1)[0]
+
+    return urllib.parse.unquote(cleaned).strip()
 
 
 def _write_token_file(*, access_token: str, user_id: str, expires_in: object) -> Path:
