@@ -1,10 +1,4 @@
-"""Mint Instagram Graph credentials for publishing and DM automation.
-
-This repository's Instagram helpers expect a long-lived user token for content
-publishing plus the connected Page access token for reply automation. The
-script uses Facebook Login, resolves the connected Instagram professional
-account, and writes all required values to instagram_token.json.
-"""
+"""Helper script to mint Instagram Login credentials for server deployments."""
 
 from __future__ import annotations
 
@@ -13,27 +7,22 @@ import os
 import sys
 import urllib.parse
 from pathlib import Path
-from typing import Optional
-
 import requests
 
-GRAPH_VERSION = "v21.0"
-AUTH_URL = f"https://www.facebook.com/{GRAPH_VERSION}/dialog/oauth"
-TOKEN_URL = f"https://graph.facebook.com/{GRAPH_VERSION}/oauth/access_token"
-SCRIPT_VERSION = "facebook-login-publish-and-messaging-2026-05-04"
+AUTH_URL = "https://api.instagram.com/oauth/authorize"
+TOKEN_URL = "https://api.instagram.com/oauth/access_token"
+LONG_TOKEN_URL = "https://graph.instagram.com/access_token"
+SCRIPT_VERSION = "instagram-login-2026-05-04"
 SCOPES = [
-    "instagram_basic",
-    "instagram_content_publish",
-    "instagram_manage_comments",
-    "instagram_manage_messages",
-    "instagram_manage_insights",
-    "pages_show_list",
-    "pages_read_engagement",
-    "pages_manage_metadata",
+    "instagram_business_basic",
+    "instagram_business_content_publish",
+    "instagram_business_manage_comments",
+    "instagram_business_manage_messages",
+    "instagram_business_manage_insights",
 ]
 
 
-def _read_env(name: str) -> Optional[str]:
+def _read_env(name: str) -> str | None:
     value = os.getenv(name)
     if not value:
         return None
@@ -49,23 +38,6 @@ def _require_env(name: str) -> str:
         return value
     raise RuntimeError(
         f"{name} is required. Set it in your environment or .env file before running this script."
-    )
-
-
-def _resolve_app_credentials() -> tuple[str, str, str]:
-    fb_app_id = _read_env("FB_APP_ID")
-    fb_app_secret = _read_env("FB_APP_SECRET")
-    if fb_app_id and fb_app_secret:
-        return fb_app_id, fb_app_secret, "FB_APP_ID/FB_APP_SECRET"
-
-    instagram_app_id = _read_env("INSTAGRAM_APP_ID")
-    instagram_app_secret = _read_env("INSTAGRAM_APP_SECRET")
-    if instagram_app_id and instagram_app_secret:
-        return instagram_app_id, instagram_app_secret, "INSTAGRAM_APP_ID/INSTAGRAM_APP_SECRET"
-
-    raise RuntimeError(
-        "App credentials are required. Configure FB_APP_ID/FB_APP_SECRET "
-        "(preferred) or INSTAGRAM_APP_ID/INSTAGRAM_APP_SECRET."
     )
 
 
@@ -87,7 +59,10 @@ def _load_dotenv() -> None:
             if not stripped or stripped.startswith("#") or "=" not in stripped:
                 continue
             key, value = stripped.split("=", 1)
-            os.environ.setdefault(key.strip(), value.strip())
+            value = value.strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+                value = value[1:-1]
+            os.environ.setdefault(key.strip(), value)
         break
 
 
@@ -111,90 +86,22 @@ def _normalize_auth_code(raw_value: str) -> str:
     return urllib.parse.unquote(cleaned).strip()
 
 
-def _request_json(url: str, *, params: Optional[dict] = None) -> dict:
-    response = requests.get(url, params=params, timeout=30)
-    _raise_for_status_with_body(response)
-    payload = response.json()
-    if not isinstance(payload, dict):
-        raise RuntimeError(f"Unexpected response payload from {url}")
-    return payload
-
-
-def _write_token_file(
-    *,
-    access_token: str,
-    user_id: str,
-    page_access_token: str,
-    page_id: str,
-    expires_in: object,
-) -> Path:
+def _write_token_file(*, access_token: str, user_id: str, expires_in: object) -> Path:
     token_path = Path(__file__).with_name("instagram_token.json")
     payload = {
-        "AUTH_FLOW": "facebook_login_publish_and_messaging",
+        "AUTH_FLOW": "instagram_login",
         "INSTAGRAM_ACCESS_TOKEN": access_token,
         "INSTAGRAM_USER_ID": user_id,
-        "INSTAGRAM_PAGE_ACCESS_TOKEN": page_access_token,
-        "FACEBOOK_PAGE_ID": page_id,
-        "FB_LONG_LIVED_USER_ACCESS_TOKEN": access_token,
-        "FB_PAGE_ID": page_id,
         "EXPIRES_IN": expires_in,
     }
     token_path.write_text(json.dumps(payload, indent=2) + "\n")
     return token_path
 
 
-def _extract_page_id(page: dict) -> str:
-    page_id = str(page.get("id") or "").strip()
-    if not page_id:
-        raise RuntimeError("Selected page did not include an ID.")
-    return page_id
-
-
-def _extract_page_access_token(page: dict, user_access_token: str) -> str:
-    page_access_token = str(page.get("access_token") or "").strip()
-    if page_access_token:
-        return page_access_token
-
-    page_id = _extract_page_id(page)
-    payload = _request_json(
-        f"https://graph.facebook.com/{GRAPH_VERSION}/{page_id}",
-        params={"access_token": user_access_token, "fields": "access_token"},
-    )
-    page_access_token = str(payload.get("access_token") or "").strip()
-    if not page_access_token:
-        raise RuntimeError(
-            "Selected Facebook Page did not return an access_token. Confirm the app has "
-            "the required permissions and the user has page access."
-        )
-    return page_access_token
-
-
-def _extract_instagram_user_id(page: dict, user_access_token: str) -> str:
-    instagram_business_account = page.get("instagram_business_account") or {}
-    instagram_user_id = str(instagram_business_account.get("id") or "").strip()
-    if instagram_user_id:
-        return instagram_user_id
-
-    page_id = _extract_page_id(page)
-    payload = _request_json(
-        f"https://graph.facebook.com/{GRAPH_VERSION}/{page_id}",
-        params={"access_token": user_access_token, "fields": "instagram_business_account"},
-    )
-    instagram_business_account = payload.get("instagram_business_account") or {}
-    instagram_user_id = str(instagram_business_account.get("id") or "").strip()
-    if not instagram_user_id:
-        raise RuntimeError(
-            "No Instagram professional account found for the selected Page. Confirm the Page "
-            "is connected to the Instagram account and the account is Business or Creator."
-        )
-    return instagram_user_id
-
-
-def _print_runtime_summary(app_id: str, redirect_uri: str, credential_source: str) -> None:
+def _print_runtime_summary(app_id: str, redirect_uri: str) -> None:
     print(f"Script: {Path(__file__).resolve()}")
     print(f"Version: {SCRIPT_VERSION}")
-    print(f"App credentials: {credential_source}")
-    print(f"APP_ID={app_id}")
+    print(f"INSTAGRAM_APP_ID={app_id}")
     print(f"INSTAGRAM_REDIRECT_URI={redirect_uri}")
 
 
@@ -214,90 +121,58 @@ def exchange_code_for_short_lived_token(
     code: str,
     redirect_uri: str,
 ) -> dict:
-    return _request_json(
+    response = requests.post(
         TOKEN_URL,
-        params={
+        data={
             "client_id": app_id,
             "client_secret": app_secret,
+            "grant_type": "authorization_code",
             "redirect_uri": redirect_uri,
             "code": code,
         },
+        timeout=30,
     )
+    _raise_for_status_with_body(response)
+    payload = response.json()
+    if not isinstance(payload, dict):
+        raise RuntimeError("Unexpected short-lived token response.")
+    return payload
 
 
-def exchange_for_long_lived_token(app_id: str, app_secret: str, short_token: str) -> dict:
-    return _request_json(
-        TOKEN_URL,
+def exchange_for_long_lived_token(app_secret: str, short_token: str) -> dict:
+    response = requests.get(
+        LONG_TOKEN_URL,
         params={
-            "grant_type": "fb_exchange_token",
-            "client_id": app_id,
+            "grant_type": "ig_exchange_token",
             "client_secret": app_secret,
-            "fb_exchange_token": short_token,
+            "access_token": short_token,
         },
+        timeout=30,
     )
-
-
-def fetch_pages(access_token: str) -> list[dict]:
-    payload = _request_json(
-        f"https://graph.facebook.com/{GRAPH_VERSION}/me/accounts",
-        params={
-            "access_token": access_token,
-            "limit": 200,
-            "fields": "id,name,access_token,tasks,instagram_business_account",
-        },
-    )
-    pages = payload.get("data", [])
-    if not isinstance(pages, list):
-        return []
-    return [page for page in pages if isinstance(page, dict)]
-
-
-def _choose_page(pages: list[dict]) -> dict:
-    if not pages:
-        raise RuntimeError(
-            "No Facebook Pages returned. Ensure the user has a Page connected to the Instagram professional account."
-        )
-    if len(pages) == 1:
-        return pages[0]
-
-    print("\nSelect the Facebook Page connected to your Instagram professional account:\n")
-    for idx, page in enumerate(pages, start=1):
-        name = page.get("name", "Unknown")
-        page_id = page.get("id", "Unknown")
-        has_instagram = bool((page.get("instagram_business_account") or {}).get("id"))
-        tasks = ", ".join(str(task) for task in (page.get("tasks") or []))
-        print(
-            f"{idx}. {name} ({page_id}) "
-            f"[instagram_connected={'yes' if has_instagram else 'no'} tasks={tasks or 'unknown'}]"
-        )
-
-    while True:
-        choice = input("\nEnter page number: ").strip()
-        if not choice.isdigit():
-            print("Please enter a number.")
-            continue
-        index = int(choice)
-        if 1 <= index <= len(pages):
-            return pages[index - 1]
-        print("Invalid selection.")
+    _raise_for_status_with_body(response)
+    payload = response.json()
+    if not isinstance(payload, dict):
+        raise RuntimeError("Unexpected long-lived token response.")
+    return payload
 
 
 def main() -> int:
     _load_dotenv()
 
     try:
-        app_id, app_secret, credential_source = _resolve_app_credentials()
+        app_id = _require_env("INSTAGRAM_APP_ID")
+        app_secret = _require_env("INSTAGRAM_APP_SECRET")
         redirect_uri = _require_env("INSTAGRAM_REDIRECT_URI")
     except RuntimeError as exc:
         print(exc, file=sys.stderr)
         return 1
 
-    _print_runtime_summary(app_id, redirect_uri, credential_source)
+    _print_runtime_summary(app_id, redirect_uri)
     auth_url = build_auth_url(app_id, redirect_uri)
-    print("\nVisit this URL to authorize Instagram publishing and messaging:\n")
+    print("\nVisit this URL to authorize Instagram Login:\n")
     print(auth_url)
     print(
-        "\nAfter granting access, Facebook redirects to your redirect URI with a `code` parameter.\n"
+        "\nAfter granting access, Instagram redirects to your redirect URI with a `code` parameter.\n"
         "Paste either the full redirect URL or just the code below.\n"
     )
 
@@ -314,38 +189,29 @@ def main() -> int:
             redirect_uri=redirect_uri,
         )
         short_token = str(short_payload.get("access_token") or "").strip()
+        user_id = str(short_payload.get("user_id") or "").strip()
         if not short_token:
             raise RuntimeError("Short-lived token exchange did not return an access token.")
+        if not user_id:
+            raise RuntimeError("Short-lived token exchange did not return a user_id.")
 
-        long_payload = exchange_for_long_lived_token(app_id, app_secret, short_token)
+        long_payload = exchange_for_long_lived_token(app_secret, short_token)
         long_token = str(long_payload.get("access_token") or "").strip()
         if not long_token:
             raise RuntimeError("Long-lived token exchange did not return an access token.")
-
-        pages = fetch_pages(long_token)
-        page = _choose_page(pages)
-        page_id = _extract_page_id(page)
-        instagram_user_id = _extract_instagram_user_id(page, long_token)
-        page_access_token = _extract_page_access_token(page, long_token)
     except (requests.RequestException, RuntimeError) as exc:
         print(exc, file=sys.stderr)
         return 1
 
     token_path = _write_token_file(
         access_token=long_token,
-        user_id=instagram_user_id,
-        page_access_token=page_access_token,
-        page_id=page_id,
+        user_id=user_id,
         expires_in=long_payload.get("expires_in", "unknown"),
     )
 
     print("\nSuccess! Store these values in your environment:\n")
     print(f"INSTAGRAM_ACCESS_TOKEN={long_token}")
-    print(f"INSTAGRAM_USER_ID={instagram_user_id}")
-    print(f"INSTAGRAM_PAGE_ACCESS_TOKEN={page_access_token}")
-    print(f"FACEBOOK_PAGE_ID={page_id}")
-    print(f"FB_LONG_LIVED_USER_ACCESS_TOKEN={long_token}")
-    print(f"FB_PAGE_ID={page_id}")
+    print(f"INSTAGRAM_USER_ID={user_id}")
     print(f"Expires in: {long_payload.get('expires_in', 'unknown')} seconds")
     print(f"\nSaved JSON credentials to: {token_path}")
     return 0
