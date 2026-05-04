@@ -29,6 +29,18 @@ INSTAGRAM_ANALYTICS_WORKERS = int(os.getenv("INSTAGRAM_ANALYTICS_WORKERS", "6"))
 _INSTAGRAM_ANALYTICS_CACHE: Dict[str, object] = {"expires_at": 0.0, "payload": None}
 
 
+def _token_payload_looks_like_login_only(payload: Dict[str, str]) -> bool:
+    if not payload:
+        return False
+    required_publish_keys = (
+        "INSTAGRAM_PAGE_ACCESS_TOKEN",
+        "FACEBOOK_PAGE_ID",
+        "FB_PAGE_ID",
+        "FB_LONG_LIVED_USER_ACCESS_TOKEN",
+    )
+    return not any(payload.get(key) for key in required_publish_keys)
+
+
 def _load_token_file() -> Dict[str, str]:
     if not TOKEN_FILE.exists():
         return {}
@@ -43,11 +55,15 @@ def _load_token_file() -> Dict[str, str]:
 
 
 def _get_instagram_credentials() -> Dict[str, str]:
-    access_token = os.getenv("INSTAGRAM_ACCESS_TOKEN")
-    user_id = os.getenv("INSTAGRAM_USER_ID")
     token_payload = _load_token_file()
-    access_token = token_payload.get("INSTAGRAM_ACCESS_TOKEN", access_token)
-    user_id = token_payload.get("INSTAGRAM_USER_ID", user_id)
+    if _token_payload_looks_like_login_only(token_payload):
+        logger.warning(
+            "instagram_token.json appears to contain only Instagram Login credentials. "
+            "For publishing and DM automation, rerun instagram/instagram_get_auth.py "
+            "to resolve the Instagram professional account ID and page access token."
+        )
+    access_token = os.getenv("INSTAGRAM_ACCESS_TOKEN") or token_payload.get("INSTAGRAM_ACCESS_TOKEN")
+    user_id = os.getenv("INSTAGRAM_USER_ID") or token_payload.get("INSTAGRAM_USER_ID")
     if not access_token or not user_id:
         raise RuntimeError(
             "INSTAGRAM_ACCESS_TOKEN and INSTAGRAM_USER_ID must be configured "
@@ -66,29 +82,40 @@ def _get_instagram_messaging_credentials() -> Dict[str, str]:
     token_file_instagram_user_id = token_payload.get("INSTAGRAM_USER_ID")
 
     page_access_token = (
-        token_file_page_access_token
+        env_page_access_token
+        or token_file_page_access_token
         or token_file_fallback_access_token
-        or env_page_access_token
     )
-    instagram_user_id = token_file_instagram_user_id or env_instagram_user_id
+    instagram_user_id = env_instagram_user_id or token_file_instagram_user_id
+
+    if _token_payload_looks_like_login_only(token_payload):
+        logger.warning(
+            "instagram_token.json does not include page-level fields written by the "
+            "publishing/messaging auth flow. DM automation may fail until "
+            "instagram/instagram_get_auth.py is rerun."
+        )
 
     logger.warning(
         "Instagram messaging credentials resolved: "
         "token_source=%s instagram_user_id_source=%s token_file_present=%s "
         "token_file_has_page_token=%s token_file_has_fb_user_token=%s env_has_page_token=%s",
         (
-            "instagram_token.json:INSTAGRAM_PAGE_ACCESS_TOKEN"
-            if token_file_page_access_token
+            "env:INSTAGRAM_PAGE_ACCESS_TOKEN"
+            if env_page_access_token
             else (
-                "instagram_token.json:FB_LONG_LIVED_USER_ACCESS_TOKEN"
-                if token_file_fallback_access_token
-                else ("env:INSTAGRAM_PAGE_ACCESS_TOKEN" if env_page_access_token else "missing")
+                "instagram_token.json:INSTAGRAM_PAGE_ACCESS_TOKEN"
+                if token_file_page_access_token
+                else (
+                    "instagram_token.json:FB_LONG_LIVED_USER_ACCESS_TOKEN"
+                    if token_file_fallback_access_token
+                    else "missing"
+                )
             )
         ),
         (
-            "instagram_token.json:INSTAGRAM_USER_ID"
-            if token_file_instagram_user_id
-            else ("env:INSTAGRAM_USER_ID" if env_instagram_user_id else "missing")
+            "env:INSTAGRAM_USER_ID"
+            if env_instagram_user_id
+            else ("instagram_token.json:INSTAGRAM_USER_ID" if token_file_instagram_user_id else "missing")
         ),
         bool(token_payload),
         bool(token_file_page_access_token),
@@ -101,7 +128,8 @@ def _get_instagram_messaging_credentials() -> Dict[str, str]:
             "Instagram messaging credentials must be configured via "
             "INSTAGRAM_PAGE_ACCESS_TOKEN and INSTAGRAM_USER_ID, or "
             "FB_LONG_LIVED_USER_ACCESS_TOKEN plus INSTAGRAM_USER_ID in "
-            "instagram/instagram_token.json."
+            "instagram/instagram_token.json. Re-run instagram/instagram_get_auth.py "
+            "if your token file only contains login-only fields."
         )
     return {
         "page_access_token": page_access_token,
