@@ -152,6 +152,7 @@ def _register_story_reply_route(media_id: str, candidate: Dict[str, Any]) -> Non
     routes[normalized_media_id] = {
         "product_id": str(candidate.get("product_id") or ""),
         "affiliate_link": affiliate_link,
+        "product_url": str(candidate.get("product_url") or "").strip(),
         "title": str(candidate.get("title") or ""),
         "description": str(candidate.get("description") or ""),
         "published_at": dt.datetime.utcnow().isoformat(),
@@ -169,9 +170,15 @@ def _register_story_reply_route(media_id: str, candidate: Dict[str, Any]) -> Non
 def _build_instagram_affiliate_reply(route_entry: Dict[str, Any]) -> str:
     title = str(route_entry.get("title") or "").strip()
     affiliate_link = str(route_entry.get("affiliate_link") or "").strip()
+    product_url = str(route_entry.get("product_url") or "").strip()
+    parts: List[str] = []
     if title:
-        return f"{title}\n{affiliate_link}"
-    return affiliate_link
+        parts.append(title)
+    if affiliate_link:
+        parts.append(affiliate_link)
+    if product_url:
+        parts.append(f"You can also find it on our website:\n{product_url}")
+    return "\n\n".join(part for part in parts if part)
 
 
 def _random_affiliate_link_from_state() -> Optional[str]:
@@ -287,6 +294,7 @@ def _scheduled_story_candidates_from_state() -> List[Dict[str, str]]:
     for product_id, entry in products.items():
         platforms = entry.get("platforms") or {}
         instagram = platforms.get("instagram") or {}
+        website_state = platforms.get("website") or {}
         feed_state = instagram.get("instagram_feed") or {}
         if not feed_state:
             continue
@@ -307,6 +315,7 @@ def _scheduled_story_candidates_from_state() -> List[Dict[str, str]]:
                 "description": str(feed_state.get("description") or ""),
                 "caption": str(feed_state.get("caption") or ""),
                 "affiliate_link": affiliate_link,
+                "product_url": str(website_state.get("product_url") or ""),
                 "compose_source": compose_source,
                 "publish_source": publish_source,
             }
@@ -343,6 +352,7 @@ def _scheduled_story_candidates_from_website(limit: int = 100) -> List[Dict[str,
                 ),
                 "caption": "",
                 "affiliate_link": affiliate_link,
+                "product_url": str(product.get("permalink") or ""),
                 "compose_source": image_url,
                 "publish_source": image_url,
             }
@@ -2216,6 +2226,7 @@ def publish_instagram():
                 {
                     "product_id": product_id,
                     "affiliate_link": form_values.get("affiliate_link"),
+                    "product_url": get_website_product_url(product_id) or "",
                     "title": form_values.get("title_input") or preview_payload.get("title") or "",
                     "description": form_values.get("description_input") or preview_payload.get("description") or "",
                 },
