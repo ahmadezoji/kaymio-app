@@ -235,22 +235,31 @@
                 <p>Product images</p>
                 <div class="product-gallery-grid">
                   {% for image_choice in product_image_choices %}
-                    <label class="product-gallery-item">
-                      <input
-                        type="radio"
-                        name="selected_original_image"
-                        value="{{ image_choice.value }}"
-                        {% if image_choice.value == selected_original_image or loop.first %}checked{% endif %}
-                      />
-                      <img
-                        src="{{ image_choice.url }}"
-                        alt="Product image {{ loop.index }}"
-                        loading="lazy"
-                        class="product-gallery-preview"
-                        data-full-image-url="{{ image_choice.url }}"
+                    <div class="product-gallery-item">
+                      <a
+                        class="product-gallery-link"
+                        href="{{ image_choice.url }}"
+                        target="_blank"
+                        rel="noopener"
                         title="Open image in new tab"
-                      />
-                    </label>
+                      >
+                        <img
+                          src="{{ image_choice.url }}"
+                          alt="Product image {{ loop.index }}"
+                          loading="lazy"
+                          class="product-gallery-preview"
+                        />
+                      </a>
+                      <label class="product-gallery-selector">
+                        <input
+                          type="checkbox"
+                          class="product-gallery-checkbox"
+                          value="{{ image_choice.value }}"
+                          {% if image_choice.value == selected_original_image or loop.first %}checked{% endif %}
+                        />
+                        <span>Use this image</span>
+                      </label>
+                    </div>
                   {% endfor %}
                 </div>
                 <p class="muted">Pick the original image to use for Pinterest, Instagram, and video generation.</p>
@@ -1105,13 +1114,10 @@
       const durationInput = document.querySelector(
         'input[type="number"][name="video_duration_seconds"]'
       );
-      const selectedImageRadios = document.querySelectorAll(
-        'input[type="radio"][name="selected_original_image"]'
-      );
+      const selectedImageCheckboxes = document.querySelectorAll(".product-gallery-checkbox");
       const selectedImageHidden = document.querySelectorAll(
         'input[type="hidden"][name="selected_original_image"]'
       );
-      const galleryImages = document.querySelectorAll(".product-gallery-preview");
 
       function syncField(name, value) {
         document.querySelectorAll(`input[type="hidden"][name="${name}"]`).forEach((input) => {
@@ -1136,34 +1142,32 @@
         durationInput.addEventListener("input", () => syncField("video_duration_seconds", durationInput.value));
       }
 
-      if (selectedImageRadios.length) {
-        const checked = document.querySelector(
-          'input[type="radio"][name="selected_original_image"]:checked'
-        );
+      if (selectedImageCheckboxes.length) {
+        const checked = document.querySelector(".product-gallery-checkbox:checked");
         if (checked) {
           selectedImageHidden.forEach((input) => {
             input.value = checked.value || "";
           });
         }
-        selectedImageRadios.forEach((radio) => {
-          radio.addEventListener("change", () => {
-            if (radio.checked) {
-              selectedImageHidden.forEach((input) => {
-                input.value = radio.value || "";
-              });
+        selectedImageCheckboxes.forEach((checkbox) => {
+          checkbox.addEventListener("change", () => {
+            if (!checkbox.checked) {
+              checkbox.checked = true;
+              syncField("selected_original_image", checkbox.value);
+              return;
             }
+
+            selectedImageCheckboxes.forEach((otherCheckbox) => {
+              if (otherCheckbox !== checkbox) {
+                otherCheckbox.checked = false;
+              }
+            });
+            selectedImageHidden.forEach((input) => {
+              input.value = checkbox.value || "";
+            });
           });
         });
       }
-
-      galleryImages.forEach((image) => {
-        image.addEventListener("click", () => {
-          const fullImageUrl = image.dataset.fullImageUrl;
-          if (fullImageUrl) {
-            window.open(fullImageUrl, "_blank", "noopener");
-          }
-        });
-      });
     })();
   </script>
 </html>
