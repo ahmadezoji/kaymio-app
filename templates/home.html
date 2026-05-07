@@ -218,7 +218,7 @@
           <section class="card">
             <div class="card-header">
               <h2>Manual product assets</h2>
-              <p>Upload a clean product shot when the marketplace does not expose an API.</p>
+              <p>Upload product images, add more to the gallery, and choose the one to use across image and video generation.</p>
             </div>
             <label class="dropzone">
               <input
@@ -249,6 +249,7 @@
                 <p class="muted">Pick the original image to use for Pinterest, Instagram, and video generation.</p>
               </div>
             {% endif %}
+            <p class="muted">Upload another image at any time to add it into the gallery, then select it like any fetched Amazon image.</p>
             <label>
               <span>Product title</span>
               <input
@@ -303,6 +304,15 @@
                 formnovalidate
               >
                 Save
+              </button>
+              <button
+                type="submit"
+                class="ghost-btn"
+                formaction="{{ url_for('upload_product_image') }}"
+                formmethod="post"
+                formnovalidate
+              >
+                Add image to gallery
               </button>
             </div>
           </section>

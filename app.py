@@ -1057,6 +1057,26 @@ def save_original_image(bytes_data: bytes, original_filename: str) -> str:
     return _store_image(bytes_data, ORIGINALS_DIR, suffix)
 
 
+def store_uploaded_product_image(
+    image_file,
+    saved_state: Dict[str, Any],
+) -> tuple[str, Dict[str, Any]]:
+    if image_file is None or not image_file.filename:
+        raise ValueError("Choose an image file to upload first.")
+    if not allowed_file(image_file.filename):
+        raise ValueError("Unsupported image type. Use PNG, JPG, JPEG, GIF, or WEBP.")
+
+    original_bytes = image_file.read()
+    if not original_bytes:
+        raise ValueError("The uploaded image appears to be empty.")
+
+    original_image_path = save_original_image(original_bytes, image_file.filename)
+    return original_image_path, {
+        "original_image_path": original_image_path,
+        "original_image_paths": merge_original_image_paths(saved_state, original_image_path),
+    }
+
+
 def save_generated_image(bytes_data: bytes) -> str:
     return _store_image(bytes_data, GENERATED_DIR, ".png")
 
@@ -1203,6 +1223,8 @@ def build_product_image_choices(
         candidate_relative = preview_payload.get("original_image_path", "")
     if not candidate_relative:
         candidate_relative = form_values.get("original_image_path", "")
+    if not selected_value and candidate_relative:
+        selected_value = f"path:{candidate_relative}"
     for path in resolve_original_image_paths(saved_state, candidate_relative):
         image_url = url_for("serve_media", filename=path)
         if image_url not in seen:
@@ -1658,18 +1680,15 @@ def save_draft():
     image_file = request.files.get("product_image")
     assets = {}
     if image_file and image_file.filename:
-        if not allowed_file(image_file.filename):
-            flash("Unsupported image type. Use PNG, JPG, JPEG, GIF, or WEBP.", "error")
+        try:
+            original_image_path, assets = store_uploaded_product_image(image_file, saved_state)
+        except ValueError as exc:
+            flash(str(exc), "error")
             return render_home_view(form_values, product_id=product_id)
-        original_bytes = image_file.read()
-        if not original_bytes:
-            flash("The uploaded image appears to be empty.", "error")
-            return render_home_view(form_values, product_id=product_id)
-        original_image_path = save_original_image(original_bytes, image_file.filename)
         form_values["original_image_path"] = original_image_path
+        form_values["selected_original_image"] = f"path:{original_image_path}"
         raw_form_values["original_image_path"] = original_image_path
-        assets["original_image_path"] = original_image_path
-        assets["original_image_paths"] = merge_original_image_paths(saved_state, original_image_path)
+        raw_form_values["selected_original_image"] = f"path:{original_image_path}"
 
     preview_payload = rebuild_preview_payload(raw_form_values)
     update_product_state(
@@ -1679,6 +1698,46 @@ def save_draft():
         assets=assets,
     )
     flash("Draft saved. You can return later to continue.", "success")
+    saved_state = get_product_state(product_id)
+    form_values, preview_payload, pinterest_result = build_render_payload(saved_state)
+    website_result = get_platform_state(saved_state, "website") if saved_state else None
+    return render_home_view(
+        form_values,
+        preview_payload,
+        pinterest_result,
+        product_id=product_id,
+        website_result=website_result,
+        platform_states=(saved_state.get("platforms") or {}),
+    )
+
+
+@app.route("/upload-product-image", methods=["POST"])
+def upload_product_image():
+    raw_form_values = collect_form_values(request.form)
+    form_values = extract_form_defaults(raw_form_values)
+    product_id = resolve_product_id(form_values)
+    saved_state = get_product_state(product_id) if product_id else {}
+
+    if not product_id:
+        flash("Fetch or enter a product first before adding gallery images.", "error")
+        return render_home_view(form_values, product_id=product_id)
+
+    image_file = request.files.get("product_image")
+    try:
+        original_image_path, assets = store_uploaded_product_image(image_file, saved_state)
+    except ValueError as exc:
+        flash(str(exc), "error")
+        return render_home_view(form_values, product_id=product_id)
+
+    form_values["original_image_path"] = original_image_path
+    form_values["selected_original_image"] = f"path:{original_image_path}"
+    update_product_state(
+        product_id,
+        form_values=form_values,
+        assets=assets,
+    )
+
+    flash("Image added to the product gallery.", "success")
     saved_state = get_product_state(product_id)
     form_values, preview_payload, pinterest_result = build_render_payload(saved_state)
     website_result = get_platform_state(saved_state, "website") if saved_state else None
@@ -1742,11 +1801,13 @@ def generate_pinterest():
             return render_home_view(form_values, product_id=product_id)
 
     if image_file is not None and image_file.filename:
-        original_bytes = image_file.read()
-        if not original_bytes:
-            flash("The uploaded image appears to be empty.", "error")
+        try:
+            original_image_path, _ = store_uploaded_product_image(image_file, saved_state)
+        except ValueError as exc:
+            flash(str(exc), "error")
             return render_home_view(form_values, product_id=product_id)
-        original_image_path = save_original_image(original_bytes, image_file.filename)
+        form_values["selected_original_image"] = f"path:{original_image_path}"
+        original_bytes = load_stored_image(original_image_path)
     elif selected_source:
         original_image_path, original_bytes = selected_source
     else:
