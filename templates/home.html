@@ -242,7 +242,14 @@
                         value="{{ image_choice.value }}"
                         {% if image_choice.value == selected_original_image or loop.first %}checked{% endif %}
                       />
-                      <img src="{{ image_choice.url }}" alt="Product image {{ loop.index }}" loading="lazy" />
+                      <img
+                        src="{{ image_choice.url }}"
+                        alt="Product image {{ loop.index }}"
+                        loading="lazy"
+                        class="product-gallery-preview"
+                        data-full-image-url="{{ image_choice.url }}"
+                        title="Open image in new tab"
+                      />
                     </label>
                   {% endfor %}
                 </div>
@@ -1104,6 +1111,7 @@
       const selectedImageHidden = document.querySelectorAll(
         'input[type="hidden"][name="selected_original_image"]'
       );
+      const galleryImages = document.querySelectorAll(".product-gallery-preview");
 
       function syncField(name, value) {
         document.querySelectorAll(`input[type="hidden"][name="${name}"]`).forEach((input) => {
@@ -1147,6 +1155,15 @@
           });
         });
       }
+
+      galleryImages.forEach((image) => {
+        image.addEventListener("click", () => {
+          const fullImageUrl = image.dataset.fullImageUrl;
+          if (fullImageUrl) {
+            window.open(fullImageUrl, "_blank", "noopener");
+          }
+        });
+      });
     })();
   </script>
 </html>
