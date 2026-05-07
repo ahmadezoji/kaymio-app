@@ -59,7 +59,7 @@ app = Flask(__name__)
 app.register_blueprint(analytics_bp)
 app.register_blueprint(kaymio_wp_admin_bp)
 app.config["SECRET_KEY"] = os.getenv("FLASK_SECRET_KEY", "dev-secret-key")
-app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024  # 20MB uploads
+app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp"}
 ALLOWED_VIDEO_EXTENSIONS = {"mp4", "mov", "m4v", "webm"}
 STORAGE_ROOT = Path(app.root_path) / "template_images"
