@@ -218,7 +218,7 @@
           <section class="card">
             <div class="card-header">
               <h2>Manual product assets</h2>
-              <p>Upload a clean product shot when the marketplace does not expose an API.</p>
+              <p>Upload product images, add more to the gallery, and choose the one to use across image and video generation.</p>
             </div>
             <label class="dropzone">
               <input
@@ -235,20 +235,37 @@
                 <p>Product images</p>
                 <div class="product-gallery-grid">
                   {% for image_choice in product_image_choices %}
-                    <label class="product-gallery-item">
-                      <input
-                        type="radio"
-                        name="selected_original_image"
-                        value="{{ image_choice.value }}"
-                        {% if image_choice.value == selected_original_image or loop.first %}checked{% endif %}
-                      />
-                      <img src="{{ image_choice.url }}" alt="Product image {{ loop.index }}" loading="lazy" />
-                    </label>
+                    <div class="product-gallery-item">
+                      <a
+                        class="product-gallery-link"
+                        href="{{ image_choice.url }}"
+                        target="_blank"
+                        rel="noopener"
+                        title="Open image in new tab"
+                      >
+                        <img
+                          src="{{ image_choice.url }}"
+                          alt="Product image {{ loop.index }}"
+                          loading="lazy"
+                          class="product-gallery-preview"
+                        />
+                      </a>
+                      <label class="product-gallery-selector">
+                        <input
+                          type="checkbox"
+                          class="product-gallery-checkbox"
+                          value="{{ image_choice.value }}"
+                          {% if image_choice.value == selected_original_image or loop.first %}checked{% endif %}
+                        />
+                        <span>Use this image</span>
+                      </label>
+                    </div>
                   {% endfor %}
                 </div>
                 <p class="muted">Pick the original image to use for Pinterest, Instagram, and video generation.</p>
               </div>
             {% endif %}
+            <p class="muted">Upload another image at any time to add it into the gallery, then select it like any fetched Amazon image.</p>
             <label>
               <span>Product title</span>
               <input
@@ -303,6 +320,15 @@
                 formnovalidate
               >
                 Save
+              </button>
+              <button
+                type="submit"
+                class="ghost-btn"
+                formaction="{{ url_for('upload_product_image') }}"
+                formmethod="post"
+                formnovalidate
+              >
+                Add image to gallery
               </button>
             </div>
           </section>
@@ -1088,9 +1114,7 @@
       const durationInput = document.querySelector(
         'input[type="number"][name="video_duration_seconds"]'
       );
-      const selectedImageRadios = document.querySelectorAll(
-        'input[type="radio"][name="selected_original_image"]'
-      );
+      const selectedImageCheckboxes = document.querySelectorAll(".product-gallery-checkbox");
       const selectedImageHidden = document.querySelectorAll(
         'input[type="hidden"][name="selected_original_image"]'
       );
@@ -1118,22 +1142,29 @@
         durationInput.addEventListener("input", () => syncField("video_duration_seconds", durationInput.value));
       }
 
-      if (selectedImageRadios.length) {
-        const checked = document.querySelector(
-          'input[type="radio"][name="selected_original_image"]:checked'
-        );
+      if (selectedImageCheckboxes.length) {
+        const checked = document.querySelector(".product-gallery-checkbox:checked");
         if (checked) {
           selectedImageHidden.forEach((input) => {
             input.value = checked.value || "";
           });
         }
-        selectedImageRadios.forEach((radio) => {
-          radio.addEventListener("change", () => {
-            if (radio.checked) {
-              selectedImageHidden.forEach((input) => {
-                input.value = radio.value || "";
-              });
+        selectedImageCheckboxes.forEach((checkbox) => {
+          checkbox.addEventListener("change", () => {
+            if (!checkbox.checked) {
+              checkbox.checked = true;
+              syncField("selected_original_image", checkbox.value);
+              return;
             }
+
+            selectedImageCheckboxes.forEach((otherCheckbox) => {
+              if (otherCheckbox !== checkbox) {
+                otherCheckbox.checked = false;
+              }
+            });
+            selectedImageHidden.forEach((input) => {
+              input.value = checkbox.value || "";
+            });
           });
         });
       }
