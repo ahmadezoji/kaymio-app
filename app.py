@@ -45,6 +45,7 @@ from kaymio.wordpress.wordpress_api_helper import (
 )
 from PIL import Image, ImageOps
 from analytics_view import analytics_bp
+from file_manager_view import file_manager_bp
 from kaymio_wp_admin_view import kaymio_wp_admin_bp
 from widgets.story_qr_widget import (
     StoryCtaWidgetConfig,
@@ -57,6 +58,7 @@ load_dotenv()
 
 app = Flask(__name__)
 app.register_blueprint(analytics_bp)
+app.register_blueprint(file_manager_bp)
 app.register_blueprint(kaymio_wp_admin_bp)
 app.config["SECRET_KEY"] = os.getenv("FLASK_SECRET_KEY", "dev-secret-key")
 app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024

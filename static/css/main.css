@@ -461,6 +461,244 @@ button.primary:disabled {
   margin: 0;
 }
 
+.filter-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+}
+
+.file-manager-controls {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: flex-start;
+  gap: 1rem;
+}
+
+.sort-controls {
+  margin: 0;
+}
+
+.sort-controls label {
+  min-width: 180px;
+}
+
+.filter-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 5rem;
+  padding: 0.7rem 1rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  text-decoration: none;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.filter-pill.is-active {
+  color: var(--text);
+  border-color: rgba(232, 121, 249, 0.4);
+  background: rgba(232, 121, 249, 0.14);
+}
+
+.stats-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.stat-card {
+  padding: 1rem 1.1rem;
+  border-radius: 1rem;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.stat-label {
+  display: block;
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin-bottom: 0.35rem;
+}
+
+.stat-value {
+  font-size: 1.35rem;
+  font-weight: 600;
+}
+
+.stat-subtle {
+  display: block;
+  margin-top: 0.35rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.media-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+}
+
+.media-card {
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.media-card__preview {
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: #081120;
+  aspect-ratio: 1 / 1;
+  cursor: pointer;
+}
+
+.media-card__preview img,
+.media-card__preview video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.media-card__body {
+  display: grid;
+  gap: 0.85rem;
+  padding: 0.95rem;
+}
+
+.media-card__text {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.media-card__name {
+  margin: 0;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.media-card__meta {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.media-card__actions {
+  display: flex;
+  gap: 0.65rem;
+  align-items: center;
+}
+
+.media-card__actions form,
+.media-card__actions a,
+.media-card__actions button {
+  flex: 1 1 0;
+}
+
+.danger-btn {
+  width: 100%;
+  border: 1px solid rgba(248, 113, 113, 0.32);
+  background: rgba(248, 113, 113, 0.14);
+  color: #fecaca;
+  padding: 0.75rem 1rem;
+  border-radius: 0.7rem;
+  cursor: pointer;
+}
+
+body.media-viewer-open {
+  overflow: hidden;
+}
+
+.media-viewer[hidden] {
+  display: none;
+}
+
+.media-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+}
+
+.media-viewer__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(2, 6, 23, 0.84);
+  backdrop-filter: blur(8px);
+}
+
+.media-viewer__dialog {
+  position: relative;
+  z-index: 1;
+  width: min(1100px, calc(100vw - 2rem));
+  max-height: calc(100vh - 2rem);
+  margin: 1rem auto;
+  padding: 1rem;
+  border-radius: 1.2rem;
+  border: 1px solid var(--border);
+  background: rgba(7, 15, 28, 0.96);
+  display: grid;
+  gap: 1rem;
+}
+
+.media-viewer__close {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 1.4rem;
+}
+
+.media-viewer__stage {
+  min-height: 60vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: 1rem;
+  background: #020617;
+}
+
+.media-viewer__image,
+.media-viewer__video {
+  max-width: 100%;
+  max-height: 74vh;
+  display: block;
+}
+
+.media-viewer__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.media-viewer__title,
+.media-viewer__meta {
+  margin: 0;
+}
+
+.media-viewer__title {
+  font-weight: 600;
+}
+
+.media-viewer__meta {
+  color: var(--muted);
+  font-size: 0.9rem;
+  margin-top: 0.2rem;
+}
+
 .sr-only {
   position: absolute;
   width: 1px;
@@ -481,5 +719,23 @@ button.primary:disabled {
   .hero {
     flex-direction: column;
     text-align: left;
+  }
+
+  .media-viewer__footer {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .media-card__actions {
+    flex-direction: column;
+  }
+
+  .file-manager-controls {
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .sort-controls label {
+    min-width: 0;
   }
 }

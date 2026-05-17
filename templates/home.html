@@ -84,6 +84,7 @@
         </div>
         <div class="card-header-actions">
           <a class="ghost-btn" href="{{ url_for('analytics.analytics_view') }}">View analytics</a>
+          <a class="ghost-btn" href="{{ url_for('file_manager.file_manager_view') }}">File manager</a>
           <a class="ghost-btn" href="{{ url_for('kaymio_wp_admin.kaymio_wp_admin_view') }}">WP Admin</a>
         </div>
       </header>
@@ -101,6 +102,7 @@
       <main class="layout">
         <div class="card-header-actions" style="margin-bottom: 16px;">
           <a class="ghost-btn" href="{{ url_for('analytics.analytics_view') }}">Analytics dashboard</a>
+          <a class="ghost-btn" href="{{ url_for('file_manager.file_manager_view') }}">File manager</a>
           <a class="ghost-btn" href="{{ url_for('kaymio_wp_admin.kaymio_wp_admin_view') }}">WooCommerce admin</a>
         </div>
         {% set values = form_values or {} %}
