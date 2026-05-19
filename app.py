@@ -92,8 +92,14 @@ STORY_AUTOPUBLISH_TIME = os.getenv("INSTAGRAM_STORY_AUTOPUBLISH_TIME", "11:45")
 STORY_AUTOPUBLISH_COUNT = int(os.getenv("INSTAGRAM_STORY_AUTOPUBLISH_COUNT", "2"))
 STORY_AUTOPUBLISH_ENABLED = os.getenv("INSTAGRAM_STORY_AUTOPUBLISH_ENABLED", "1") in TRUTHY_VALUES
 STORY_AUTOPUBLISH_STATE_FILE = STATE_DIR / "instagram_story_scheduler.json"
-INSTAGRAM_STORY_ROUTE_FILE = STATE_DIR / "instagram_story_routes.json"
+INSTAGRAM_MEDIA_REPLY_ROUTE_FILE = STATE_DIR / "instagram_story_routes.json"
 INSTAGRAM_WEBHOOK_VERIFY_TOKEN = os.getenv("INSTAGRAM_WEBHOOK_VERIFY_TOKEN", "")
+INSTAGRAM_COMMENT_REPLY_TRIGGER_VALUES = {
+    token.strip().casefold()
+    for token in os.getenv("INSTAGRAM_COMMENT_REPLY_TRIGGER_VALUES", "5").split(",")
+    if token.strip()
+}
+INSTAGRAM_COMMENT_REPLY_ALLOWED_MEDIA_TYPES = {"FEED", "REELS"}
 STORY_QR_WATERMARK = os.getenv("INSTAGRAM_STORY_QR_WATERMARK", "https://kaymio.com")
 STORY_QR_SAFE_RIGHT_RATIO = float(os.getenv("INSTAGRAM_STORY_QR_SAFE_RIGHT_RATIO", "0.08"))
 STORY_QR_SAFE_BOTTOM_RATIO = float(os.getenv("INSTAGRAM_STORY_QR_SAFE_BOTTOM_RATIO", "0.12"))
@@ -129,44 +135,143 @@ def _save_story_scheduler_state(payload: Dict[str, Any]) -> None:
     STORY_AUTOPUBLISH_STATE_FILE.write_text(json.dumps(payload))
 
 
-def _load_story_route_state() -> Dict[str, Any]:
-    if not INSTAGRAM_STORY_ROUTE_FILE.exists():
+def _load_instagram_media_reply_route_state() -> Dict[str, Any]:
+    if not INSTAGRAM_MEDIA_REPLY_ROUTE_FILE.exists():
         return {}
     try:
-        payload = json.loads(INSTAGRAM_STORY_ROUTE_FILE.read_text())
+        payload = json.loads(INSTAGRAM_MEDIA_REPLY_ROUTE_FILE.read_text())
         return payload if isinstance(payload, dict) else {}
     except Exception:
         return {}
 
 
-def _save_story_route_state(payload: Dict[str, Any]) -> None:
-    INSTAGRAM_STORY_ROUTE_FILE.write_text(json.dumps(payload, indent=2))
+def _save_instagram_media_reply_route_state(payload: Dict[str, Any]) -> None:
+    INSTAGRAM_MEDIA_REPLY_ROUTE_FILE.write_text(json.dumps(payload, indent=2))
 
 
-def _register_story_reply_route(media_id: str, candidate: Dict[str, Any]) -> None:
+def _register_instagram_media_reply_route(
+    media_id: str,
+    candidate: Dict[str, Any],
+    *,
+    reply_surface: str,
+) -> None:
     normalized_media_id = str(media_id or "").strip()
     if not normalized_media_id:
         return
     affiliate_link = str(candidate.get("affiliate_link") or "").strip()
     if not affiliate_link:
         return
-    routes = _load_story_route_state()
+    routes = _load_instagram_media_reply_route_state()
     routes[normalized_media_id] = {
         "product_id": str(candidate.get("product_id") or ""),
         "affiliate_link": affiliate_link,
         "product_url": str(candidate.get("product_url") or "").strip(),
         "title": str(candidate.get("title") or ""),
         "description": str(candidate.get("description") or ""),
+        "reply_surface": reply_surface,
         "published_at": dt.datetime.utcnow().isoformat(),
     }
-    _save_story_route_state(routes)
+    _save_instagram_media_reply_route_state(routes)
     app.logger.info(
-        "Registered Instagram story reply route: media_id=%s product_id=%s affiliate_link_present=%s total_routes=%s",
+        "Registered Instagram media reply route: media_id=%s surface=%s product_id=%s affiliate_link_present=%s total_routes=%s",
         normalized_media_id,
+        reply_surface,
         str(candidate.get("product_id") or ""),
         bool(affiliate_link),
         len(routes),
     )
+
+
+def _register_story_reply_route(media_id: str, candidate: Dict[str, Any]) -> None:
+    _register_instagram_media_reply_route(media_id, candidate, reply_surface="story")
+
+
+def _build_instagram_reply_candidate(
+    *,
+    product_id: str,
+    form_values: Dict[str, Any],
+    preview_payload: Optional[Dict[str, Any]],
+) -> Dict[str, str]:
+    preview = preview_payload or {}
+    return {
+        "product_id": product_id,
+        "affiliate_link": str(form_values.get("affiliate_link") or ""),
+        "product_url": get_website_product_url(product_id) or "",
+        "title": str(
+            form_values.get("title_input")
+            or form_values.get("title")
+            or preview.get("title")
+            or ""
+        ),
+        "description": str(
+            form_values.get("description_input")
+            or form_values.get("description")
+            or preview.get("description")
+            or ""
+        ),
+    }
+
+
+def _build_instagram_media_reply_entry_from_state(media_id: str) -> Dict[str, str]:
+    if not media_id:
+        return {}
+    state = load_app_state()
+    products = state.get("products", {}) or {}
+    for product_id, entry in products.items():
+        platforms = entry.get("platforms") or {}
+        website_state = platforms.get("website") or {}
+        instagram_group = platforms.get("instagram") or {}
+        grouped_candidates = (
+            ("instagram_feed", instagram_group.get("instagram_feed") or {}),
+            ("instagram_story", instagram_group.get("instagram_story") or {}),
+            ("instagram_reel", instagram_group.get("instagram_reel") or {}),
+        )
+        flat_candidates = tuple(
+            (key, platforms.get(key) or {})
+            for key in ("instagram_feed", "instagram_story", "instagram_reel")
+        )
+        for surface_key, platform_state in (*grouped_candidates, *flat_candidates):
+            stored_media_id = str(
+                platform_state.get("instagram_media_id") or platform_state.get("media_id") or ""
+            )
+            if not stored_media_id or stored_media_id != str(media_id):
+                continue
+            return {
+                "product_id": str(product_id),
+                "affiliate_link": str(
+                    platform_state.get("affiliate_link")
+                    or website_state.get("affiliate_link")
+                    or ""
+                ).strip(),
+                "product_url": str(website_state.get("product_url") or "").strip(),
+                "title": str(
+                    platform_state.get("title")
+                    or website_state.get("title")
+                    or ""
+                ),
+                "description": str(
+                    platform_state.get("description")
+                    or website_state.get("description")
+                    or ""
+                ),
+                "reply_surface": surface_key.replace("instagram_", ""),
+            }
+    return {}
+
+
+def _reply_entry_for_instagram_media(media_id: str) -> Dict[str, str]:
+    if not media_id:
+        return {}
+    route_state = _load_instagram_media_reply_route_state()
+    route_entry = route_state.get(str(media_id))
+    base_entry = dict(route_entry) if isinstance(route_entry, dict) else {}
+    fallback_entry = _build_instagram_media_reply_entry_from_state(media_id)
+    merged_entry: Dict[str, str] = {}
+    for key in ("product_id", "affiliate_link", "product_url", "title", "description", "reply_surface"):
+        value = str(base_entry.get(key) or fallback_entry.get(key) or "").strip()
+        if value:
+            merged_entry[key] = value
+    return merged_entry
 
 
 def _build_instagram_affiliate_reply(route_entry: Dict[str, Any]) -> str:
@@ -200,67 +305,21 @@ def _random_affiliate_link_from_state() -> Optional[str]:
 def _affiliate_link_for_instagram_media(media_id: str) -> Optional[str]:
     if not media_id:
         return None
-    route_state = _load_story_route_state()
-    route_entry = route_state.get(str(media_id))
-    if isinstance(route_entry, dict):
-        affiliate_link = str(route_entry.get("affiliate_link") or "")
-        if affiliate_link:
-            return affiliate_link
-    state = load_app_state()
-    products = state.get("products", {}) or {}
-    for entry in products.values():
-        platforms = entry.get("platforms") or {}
-        instagram_group = platforms.get("instagram") or {}
-        for key in ("instagram_feed", "instagram_reel"):
-            p_state = instagram_group.get(key) or {}
-            stored_media_id = str(p_state.get("instagram_media_id") or p_state.get("media_id") or "")
-            if stored_media_id and stored_media_id == str(media_id):
-                affiliate = p_state.get("affiliate_link")
-                if affiliate:
-                    return affiliate
-        # Backward-compatible fallback for older flat structure.
-        for key in ("instagram_feed", "instagram_story", "instagram_reel"):
-            p_state = platforms.get(key) or {}
-            stored_media_id = str(p_state.get("instagram_media_id") or p_state.get("media_id") or "")
-            if stored_media_id and stored_media_id == str(media_id):
-                affiliate = p_state.get("affiliate_link")
-                if affiliate:
-                    return affiliate
-    return None
+    route_entry = _reply_entry_for_instagram_media(media_id)
+    affiliate_link = str(route_entry.get("affiliate_link") or "").strip()
+    return affiliate_link or None
 
 
 def _story_content_for_instagram_media(media_id: str) -> Dict[str, str]:
     if not media_id:
         return {}
-    route_state = _load_story_route_state()
-    route_entry = route_state.get(str(media_id))
-    if isinstance(route_entry, dict):
-        return {
-            "title": str(route_entry.get("title") or ""),
-            "description": str(route_entry.get("description") or ""),
-        }
-    state = load_app_state()
-    products = state.get("products", {}) or {}
-    for entry in products.values():
-        platforms = entry.get("platforms") or {}
-        instagram_group = platforms.get("instagram") or {}
-        for key in ("instagram_feed", "instagram_reel", "instagram_story"):
-            p_state = instagram_group.get(key) or {}
-            stored_media_id = str(p_state.get("instagram_media_id") or p_state.get("media_id") or "")
-            if stored_media_id and stored_media_id == str(media_id):
-                return {
-                    "title": str(p_state.get("title") or ""),
-                    "description": str(p_state.get("description") or ""),
-                }
-        for key in ("instagram_feed", "instagram_story", "instagram_reel"):
-            p_state = platforms.get(key) or {}
-            stored_media_id = str(p_state.get("instagram_media_id") or p_state.get("media_id") or "")
-            if stored_media_id and stored_media_id == str(media_id):
-                return {
-                    "title": str(p_state.get("title") or ""),
-                    "description": str(p_state.get("description") or ""),
-                }
-    return {}
+    route_entry = _reply_entry_for_instagram_media(media_id)
+    if not route_entry:
+        return {}
+    return {
+        "title": str(route_entry.get("title") or ""),
+        "description": str(route_entry.get("description") or ""),
+    }
 
 
 def _resolve_story_source_image(entry: Dict[str, Any], feed_state: Dict[str, Any]) -> Dict[str, str]:
@@ -478,6 +537,13 @@ def _extract_story_media_id(event: Dict[str, Any]) -> Optional[str]:
     return _find_nested_value(event, {"media_id", "story_id"})
 
 
+def _is_instagram_comment_reply_trigger(comment_text: str) -> bool:
+    normalized_text = str(comment_text or "").strip().casefold()
+    if not normalized_text:
+        return False
+    return normalized_text in INSTAGRAM_COMMENT_REPLY_TRIGGER_VALUES
+
+
 def _handle_instagram_messaging_event(event: Dict[str, Any]) -> None:
     sender = event.get("sender") or {}
     recipient_id = str(sender.get("id") or "")
@@ -495,12 +561,12 @@ def _handle_instagram_messaging_event(event: Dict[str, Any]) -> None:
         app.logger.warning("Instagram messaging event skipped: no story media id present. event=%s", event)
         return
     app.logger.warning("Instagram messaging event extracted media_id=%s", media_id)
-    route_entry = _load_story_route_state().get(media_id)
+    route_entry = _load_instagram_media_reply_route_state().get(media_id)
     if not isinstance(route_entry, dict):
         app.logger.warning(
             "Instagram messaging event skipped: no route for media_id=%s. known_route_ids=%s",
             media_id,
-            sorted(_load_story_route_state().keys()),
+            sorted(_load_instagram_media_reply_route_state().keys()),
         )
         return
     reply_text = _build_instagram_affiliate_reply(route_entry)
@@ -520,21 +586,63 @@ def _handle_instagram_messaging_event(event: Dict[str, Any]) -> None:
 def _handle_instagram_comment_change(change: Dict[str, Any]) -> None:
     value = change.get("value") or {}
     comment_id = str(value.get("id") or "")
+    comment_text = str(value.get("text") or "").strip()
     media_id = str(
         (value.get("media") or {}).get("id")
         or value.get("media_id")
         or ""
     )
+    media_product_type = str(
+        (value.get("media") or {}).get("media_product_type")
+        or value.get("media_product_type")
+        or ""
+    ).upper()
     if not comment_id or not media_id:
+        app.logger.warning(
+            "Instagram comment webhook skipped: missing comment_id/media_id. value=%s",
+            value,
+        )
         return
-    route_entry = _load_story_route_state().get(media_id)
-    if not isinstance(route_entry, dict):
+    if media_product_type and media_product_type not in INSTAGRAM_COMMENT_REPLY_ALLOWED_MEDIA_TYPES:
+        app.logger.warning(
+            "Instagram comment webhook skipped: unsupported media_product_type=%s media_id=%s comment_id=%s",
+            media_product_type,
+            media_id,
+            comment_id,
+        )
+        return
+    if not _is_instagram_comment_reply_trigger(comment_text):
+        app.logger.info(
+            "Instagram comment webhook skipped: comment text did not match trigger. media_id=%s comment_id=%s text=%r",
+            media_id,
+            comment_id,
+            comment_text,
+        )
+        return
+    route_entry = _reply_entry_for_instagram_media(media_id)
+    if not route_entry:
+        app.logger.warning(
+            "Instagram comment webhook skipped: no registered reply route for media_id=%s comment_id=%s",
+            media_id,
+            comment_id,
+        )
         return
     reply_text = _build_instagram_affiliate_reply(route_entry)
     if not reply_text:
+        app.logger.warning(
+            "Instagram comment webhook skipped: empty reply text for media_id=%s comment_id=%s",
+            media_id,
+            comment_id,
+        )
         return
     send_instagram_private_reply(comment_id=comment_id, text=reply_text)
-    app.logger.info("Instagram private reply sent for comment %s on media %s.", comment_id, media_id)
+    app.logger.info(
+        "Instagram private reply sent for comment %s on media %s (surface=%s text=%r).",
+        comment_id,
+        media_id,
+        route_entry.get("reply_surface", ""),
+        comment_text,
+    )
 
 
 def _instagram_story_scheduler_loop() -> None:
@@ -2284,15 +2392,24 @@ def publish_instagram():
             },
         )
         if target == "story" and media_id:
-            _register_story_reply_route(
+            _register_instagram_media_reply_route(
                 str(media_id),
-                {
-                    "product_id": product_id,
-                    "affiliate_link": form_values.get("affiliate_link"),
-                    "product_url": get_website_product_url(product_id) or "",
-                    "title": form_values.get("title_input") or preview_payload.get("title") or "",
-                    "description": form_values.get("description_input") or preview_payload.get("description") or "",
-                },
+                _build_instagram_reply_candidate(
+                    product_id=product_id,
+                    form_values=form_values,
+                    preview_payload=preview_payload,
+                ),
+                reply_surface="story",
+            )
+        elif target == "feed" and media_id:
+            _register_instagram_media_reply_route(
+                str(media_id),
+                _build_instagram_reply_candidate(
+                    product_id=product_id,
+                    form_values=form_values,
+                    preview_payload=preview_payload,
+                ),
+                reply_surface="feed",
             )
     except Exception as exc:
         app.logger.exception("Instagram publish failed")
@@ -2334,7 +2451,18 @@ def receive_instagram_webhook():
                 _handle_instagram_messaging_event(event)
             except Exception:
                 app.logger.exception("Instagram messaging webhook handler failed.")
+        comment_changes: List[Dict[str, Any]] = []
+        if entry.get("field") in {"comments", "live_comments"} and isinstance(entry.get("value"), dict):
+            comment_changes.append(
+                {
+                    "field": entry.get("field"),
+                    "value": entry.get("value"),
+                }
+            )
         for change in entry.get("changes", []):
+            if isinstance(change, dict):
+                comment_changes.append(change)
+        for change in comment_changes:
             app.logger.warning(
                 "Instagram webhook change received: field=%s value_keys=%s",
                 change.get("field", "") if isinstance(change, dict) else "",
@@ -2392,6 +2520,16 @@ def publish_instagram_reel_route():
                 }
             },
         )
+        if media_id:
+            _register_instagram_media_reply_route(
+                str(media_id),
+                _build_instagram_reply_candidate(
+                    product_id=product_id,
+                    form_values=form_values,
+                    preview_payload=preview_payload,
+                ),
+                reply_surface="reel",
+            )
     except Exception as exc:
         app.logger.exception("Instagram Reel publish failed")
         flash(f"Unable to publish the Instagram Reel: {exc}", "error")
