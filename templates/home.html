@@ -450,7 +450,19 @@
           {% if has_preview %}
             <div class="preview-grid">
               <div class="preview-image">
-                <img src="data:image/png;base64,{{ preview_data.image_data }}" alt="Generated Pinterest pin preview" />
+                {% if preview_data.generated_image_url %}
+                  <img
+                    src="{{ preview_data.generated_image_url }}"
+                    alt="Generated Pinterest pin preview"
+                  />
+                {% elif preview_data.image_data %}
+                  <img
+                    src="data:image/png;base64,{{ preview_data.image_data }}"
+                    alt="Generated Pinterest pin preview"
+                  />
+                {% else %}
+                  <p class="muted">Preview image is unavailable. Regenerate the Pinterest visual.</p>
+                {% endif %}
               </div>
               <div class="preview-meta">
                 <dl>

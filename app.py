@@ -1031,6 +1031,23 @@ def collect_form_values(form_data) -> Dict[str, str]:
     return raw
 
 
+def redirect_home_view():
+    return redirect(url_for("home"))
+
+
+def _merge_saved_form_values(
+    saved_form_values: Dict[str, str],
+    current_form_values: Optional[Dict[str, str]],
+) -> Dict[str, str]:
+    if not saved_form_values:
+        return current_form_values or {}
+    if not current_form_values:
+        return dict(saved_form_values)
+    merged = dict(saved_form_values)
+    merged.update(current_form_values)
+    return merged
+
+
 def render_home_view(
     form_values: Optional[Dict[str, str]],
     preview_payload: Optional[Dict[str, Any]] = None,
@@ -1044,8 +1061,15 @@ def render_home_view(
     product_ids = list((state.get("products") or {}).keys())
     last_product_id = state.get("last_product_id") or ""
     state_entry: Optional[Dict[str, Any]] = None
-    if product_id and (website_result is None or platform_states is None):
+    if product_id:
         state_entry = get_product_state(product_id)
+    if state_entry:
+        saved_form_values, saved_preview_payload, saved_pinterest_result = build_render_payload(state_entry)
+        form_values = _merge_saved_form_values(saved_form_values, form_values)
+        if preview_payload is None:
+            preview_payload = saved_preview_payload
+        if pinterest_result is None:
+            pinterest_result = saved_pinterest_result
     if website_result is None:
         if state_entry:
             website_result = get_platform_state(state_entry, "website")
@@ -1773,7 +1797,7 @@ def fetch_amazon_product():
         assets=assets,
     )
     flash("Amazon product data loaded. Review and edit the fields below.", "success")
-    return render_home_view(updated_values, product_id=product_id)
+    return redirect_home_view()
 
 
 @app.route("/save-draft", methods=["POST"])
@@ -1808,17 +1832,7 @@ def save_draft():
         assets=assets,
     )
     flash("Draft saved. You can return later to continue.", "success")
-    saved_state = get_product_state(product_id)
-    form_values, preview_payload, pinterest_result = build_render_payload(saved_state)
-    website_result = get_platform_state(saved_state, "website") if saved_state else None
-    return render_home_view(
-        form_values,
-        preview_payload,
-        pinterest_result,
-        product_id=product_id,
-        website_result=website_result,
-        platform_states=(saved_state.get("platforms") or {}),
-    )
+    return redirect_home_view()
 
 
 @app.route("/upload-product-image", methods=["POST"])
@@ -1848,17 +1862,7 @@ def upload_product_image():
     )
 
     flash("Image added to the product gallery.", "success")
-    saved_state = get_product_state(product_id)
-    form_values, preview_payload, pinterest_result = build_render_payload(saved_state)
-    website_result = get_platform_state(saved_state, "website") if saved_state else None
-    return render_home_view(
-        form_values,
-        preview_payload,
-        pinterest_result,
-        product_id=product_id,
-        website_result=website_result,
-        platform_states=(saved_state.get("platforms") or {}),
-    )
+    return redirect_home_view()
 
 
 @app.route("/generate-pinterest", methods=["POST"])
@@ -2090,7 +2094,8 @@ def generate_pinterest():
             "generated_image_path": generated_image_path,
         },
     )
-    return render_home_view(form_values, preview_payload, product_id=product_id)
+    return redirect_home_view()
+
 
 def ensure_dimensions(image_bytes: bytes, size: tuple[int, int]) -> bytes:
     """Resize image bytes to the requested size without distorting the aspect ratio."""
@@ -2106,7 +2111,26 @@ def ensure_dimensions(image_bytes: bytes, size: tuple[int, int]) -> bytes:
         return output.getvalue()
     except Exception:
         return image_bytes
-    
+
+
+def _validate_pinterest_publish_response(
+    payload: Optional[Dict[str, Any]],
+    *,
+    asset_label: str,
+) -> Optional[str]:
+    if not isinstance(payload, dict):
+        return f"Pinterest did not return a valid {asset_label} publish response."
+    status = str(payload.get("status") or "").strip().lower()
+    if status == "skipped":
+        return (
+            f"Pinterest {asset_label} publish was skipped because the Pinterest credentials "
+            "or board configuration are missing."
+        )
+    if not payload.get("id") and not payload.get("url"):
+        return f"Pinterest did not return a {asset_label} ID or URL."
+    return None
+
+
 @app.route("/confirm-pinterest", methods=["POST"])
 def confirm_pinterest():
     raw_form_values = collect_form_values(request.form)
@@ -2143,6 +2167,11 @@ def confirm_pinterest():
         flash(f"Unable to publish Pinterest pin: {exc}", "error")
         return render_home_view(form_values, preview_payload, product_id=product_id)
 
+    publish_error = _validate_pinterest_publish_response(pin_response, asset_label="pin")
+    if publish_error:
+        flash(publish_error, "error")
+        return render_home_view(form_values, preview_payload, product_id=product_id)
+
     flash("Pinterest pin published successfully!", "success")
     result = {
         "title": raw_form_values.get("title", ""),
@@ -2171,7 +2200,7 @@ def confirm_pinterest():
             "generated_image_path": generated_image_path,
         },
     )
-    return render_home_view(form_values, pinterest_result=result, product_id=product_id)
+    return redirect_home_view()
 
 
 @app.route("/publish-pinterest-video", methods=["POST"])
@@ -2213,6 +2242,10 @@ def publish_pinterest_video():
             tags=tags,
             cover_image_url=cover_image_url,
         )
+        publish_error = _validate_pinterest_publish_response(pin_response, asset_label="video pin")
+        if publish_error:
+            flash(publish_error, "error")
+            return render_home_view(form_values, preview_payload, product_id=product_id)
         flash("Pinterest video published successfully!", "success")
         update_product_state(
             product_id,
@@ -2230,8 +2263,9 @@ def publish_pinterest_video():
     except Exception as exc:
         app.logger.exception("Pinterest video publish failed")
         flash(f"Unable to publish video to Pinterest: {exc}", "error")
+        return render_home_view(form_values, preview_payload, product_id=product_id)
 
-    return render_home_view(form_values, preview_payload, product_id=product_id)
+    return redirect_home_view()
 
 
 @app.route("/generate-instagram-image", methods=["POST"])
@@ -2338,7 +2372,7 @@ def generate_instagram_image():
         },
         assets={"instagram_image_path": instagram_image_path},
     )
-    return render_home_view(form_values, preview_payload, product_id=product_id)
+    return redirect_home_view()
 
 
 @app.route("/publish-instagram", methods=["POST"])
@@ -2414,8 +2448,9 @@ def publish_instagram():
     except Exception as exc:
         app.logger.exception("Instagram publish failed")
         flash(f"Unable to publish to Instagram: {exc}", "error")
+        return render_home_view(form_values, preview_payload, product_id=product_id)
 
-    return render_home_view(form_values, preview_payload, product_id=product_id)
+    return redirect_home_view()
 
 
 @app.route("/webhooks/instagram", methods=["GET"])
@@ -2533,8 +2568,9 @@ def publish_instagram_reel_route():
     except Exception as exc:
         app.logger.exception("Instagram Reel publish failed")
         flash(f"Unable to publish the Instagram Reel: {exc}", "error")
+        return render_home_view(form_values, preview_payload, product_id=product_id)
 
-    return render_home_view(form_values, preview_payload, product_id=product_id)
+    return redirect_home_view()
 
 
 @app.route("/publish-website", methods=["POST"])
@@ -2676,14 +2712,7 @@ def publish_website():
         },
         results={"website": website_result},
     )
-    pinterest_result = get_platform_result(product_id, "pinterest")
-    return render_home_view(
-        form_values,
-        preview_payload,
-        pinterest_result=pinterest_result,
-        product_id=product_id,
-        website_result=website_result,
-    )
+    return redirect_home_view()
 
 
 @app.route("/generate-video/<platform>", methods=["POST"])
@@ -2908,7 +2937,7 @@ def generate_platform_video(platform: str):
         platforms={platform_key: platform_payload},
         assets={"generated_video_path": video_path},
     )
-    return render_home_view(form_values, preview_payload, product_id=product_id)
+    return redirect_home_view()
 
 
 @app.route("/upload-video/<platform>", methods=["POST"])
@@ -2964,7 +2993,7 @@ def upload_platform_video(platform: str):
         platforms={platform_key: platform_payload},
         assets={"generated_video_path": video_path},
     )
-    return render_home_view(form_values, preview_payload, product_id=product_id)
+    return redirect_home_view()
 
 
 @app.route("/publish-youtube", methods=["POST"])
@@ -3040,8 +3069,9 @@ def publish_youtube():
     except Exception as exc:
         app.logger.exception("YouTube publish failed")
         flash(f"Unable to publish to YouTube: {exc}", "error")
+        return render_home_view(form_values, preview_payload, product_id=product_id)
 
-    return render_home_view(form_values, preview_payload, product_id=product_id)
+    return redirect_home_view()
 
 
 @app.route("/publish-tiktok", methods=["POST"])
@@ -3096,8 +3126,9 @@ def publish_tiktok():
     except Exception as exc:
         app.logger.exception("TikTok publish failed")
         flash(f"Unable to publish to TikTok: {exc}", "error")
+        return render_home_view(form_values, preview_payload, product_id=product_id)
 
-    return render_home_view(form_values, preview_payload, product_id=product_id)
+    return redirect_home_view()
 
 
 if __name__ == "__main__":
