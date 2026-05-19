@@ -1304,17 +1304,37 @@ def build_website_description(title: str, base_description: str, boost_prompt: s
 
 def resolve_amazon_domain(raw_url: str) -> str:
     if not raw_url:
-        return "com"
+        return "US"
     parsed = urlparse(raw_url)
     host = (parsed.netloc or "").lower()
     if not host:
-        return "com"
+        return "US"
     if "amazon." not in host:
-        return "com"
+        return "US"
     suffix = host.split("amazon.", 1)[-1]
     if not suffix:
-        return "com"
-    return suffix
+        return "US"
+    marketplace_map = {
+        "com": "US",
+        "co.uk": "UK",
+        "com.tr": "TR",
+        "de": "DE",
+        "fr": "FR",
+        "it": "IT",
+        "es": "ES",
+        "ca": "CA",
+        "com.mx": "MX",
+        "com.br": "BR",
+        "co.jp": "JP",
+        "nl": "NL",
+        "pl": "PL",
+        "se": "SE",
+        "ae": "AE",
+        "sa": "SA",
+        "sg": "SG",
+        "com.au": "AU",
+    }
+    return marketplace_map.get(suffix, suffix.split(".")[-1].upper())
 
 
 def guess_filename_from_url(raw_url: str, default_name: str = "amazon") -> str:
@@ -1765,9 +1785,13 @@ def fetch_amazon_product():
         flash(str(exc), "error")
         return render_home_view(form_values, product_id=product_id)
 
-    # domain = resolve_amazon_domain(sku_or_url)
     try:
-        fetched = fetch_product_from_canopy(asin)
+        marketplace = resolve_amazon_domain(sku_or_url)
+        fetched = fetch_product_from_canopy(
+            asin,
+            marketplace,
+            product_url=sku_or_url,
+        )
     except Exception as exc:
         app.logger.exception("Amazon product fetch failed")
         flash(f"Unable to fetch Amazon product data: {exc}", "error")
