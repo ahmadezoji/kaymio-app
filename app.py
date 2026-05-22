@@ -94,11 +94,20 @@ STORY_AUTOPUBLISH_ENABLED = os.getenv("INSTAGRAM_STORY_AUTOPUBLISH_ENABLED", "1"
 STORY_AUTOPUBLISH_STATE_FILE = STATE_DIR / "instagram_story_scheduler.json"
 INSTAGRAM_MEDIA_REPLY_ROUTE_FILE = STATE_DIR / "instagram_story_routes.json"
 INSTAGRAM_WEBHOOK_VERIFY_TOKEN = os.getenv("INSTAGRAM_WEBHOOK_VERIFY_TOKEN", "")
-INSTAGRAM_COMMENT_REPLY_TRIGGER_VALUES = {
-    token.strip().casefold()
-    for token in os.getenv("INSTAGRAM_COMMENT_REPLY_TRIGGER_VALUES", "5").split(",")
+INSTAGRAM_COMMENT_REPLY_TRIGGER_TOKENS = [
+    token.strip()
+    for token in os.getenv("INSTAGRAM_COMMENT_REPLY_TRIGGER_VALUES", "buy").split(",")
     if token.strip()
+]
+INSTAGRAM_COMMENT_REPLY_TRIGGER_VALUES = {
+    token.casefold()
+    for token in INSTAGRAM_COMMENT_REPLY_TRIGGER_TOKENS
 }
+INSTAGRAM_COMMENT_REPLY_DISPLAY_TRIGGER = (
+    INSTAGRAM_COMMENT_REPLY_TRIGGER_TOKENS[0]
+    if INSTAGRAM_COMMENT_REPLY_TRIGGER_TOKENS
+    else "buy"
+)
 INSTAGRAM_COMMENT_REPLY_ALLOWED_MEDIA_TYPES = {"FEED", "REELS"}
 STORY_QR_WATERMARK = os.getenv("INSTAGRAM_STORY_QR_WATERMARK", "https://kaymio.com")
 STORY_QR_SAFE_RIGHT_RATIO = float(os.getenv("INSTAGRAM_STORY_QR_SAFE_RIGHT_RATIO", "0.08"))
@@ -544,6 +553,19 @@ def _is_instagram_comment_reply_trigger(comment_text: str) -> bool:
     return normalized_text in INSTAGRAM_COMMENT_REPLY_TRIGGER_VALUES
 
 
+def _build_instagram_comment_reply_caption_cta() -> str:
+    trigger = str(INSTAGRAM_COMMENT_REPLY_DISPLAY_TRIGGER or "buy").strip().upper()
+    return f'COMMENT "{trigger}" FOR PRODUCT INFO + LINK'
+
+
+def _prepend_instagram_comment_reply_caption_cta(caption: str) -> str:
+    base_caption = str(caption or "").strip()
+    cta = _build_instagram_comment_reply_caption_cta()
+    if base_caption.casefold().startswith(cta.casefold()):
+        return base_caption
+    return f"{cta}\n\n{base_caption}" if base_caption else cta
+
+
 def _handle_instagram_messaging_event(event: Dict[str, Any]) -> None:
     sender = event.get("sender") or {}
     recipient_id = str(sender.get("id") or "")
@@ -650,7 +672,6 @@ def _instagram_story_scheduler_loop() -> None:
     while True:
         try:
             now = dt.datetime.now()
-            print(f"Instagram scheduler loop running at {now.isoformat()}")
             target_hour, target_minute = [int(part) for part in STORY_AUTOPUBLISH_TIME.split(":", 1)]
             state = _load_story_scheduler_state()
             last_run_date = state.get("last_run_date")
@@ -1511,11 +1532,13 @@ def ensure_downloaded_original_images(
     form_values: Dict[str, str],
     saved_state: Dict[str, Any],
     preview_payload: Optional[Dict[str, Any]] = None,
+    preferred_primary_path: Optional[str] = None,
 ) -> List[str]:
+    existing_paths = resolve_original_image_paths(saved_state, preferred_primary_path)
     image_urls = resolve_source_image_urls(saved_state)
     if not image_urls:
-        return []
-    image_paths: List[str] = []
+        return existing_paths
+    downloaded_paths: List[str] = []
     for index, image_url in enumerate(image_urls):
         try:
             image_bytes = download_image_bytes(image_url)
@@ -1524,19 +1547,27 @@ def ensure_downloaded_original_images(
             continue
         filename = guess_filename_from_url(image_url, default_name=f"amazon_{index + 1}")
         image_relative = save_original_image(image_bytes, filename)
-        image_paths.append(image_relative)
-    if not image_paths:
+        downloaded_paths.append(image_relative)
+
+    merged_paths: List[str] = []
+    for path in (preferred_primary_path, *existing_paths, *downloaded_paths):
+        if not path or path in merged_paths:
+            continue
+        if resolve_storage_path(path):
+            merged_paths.append(path)
+
+    if not merged_paths:
         return []
-    primary_image = image_paths[0]
+    primary_image = merged_paths[0]
     form_values["original_image_path"] = primary_image
     update_product_state(
         product_id,
         form_values=form_values,
-        assets={"original_image_path": primary_image, "original_image_paths": image_paths},
+        assets={"original_image_path": primary_image, "original_image_paths": merged_paths},
     )
     if preview_payload is not None:
         preview_payload["original_image_path"] = primary_image
-    return image_paths
+    return merged_paths
 
 
 def extract_form_defaults(raw_form_values: Dict[str, str]) -> Dict[str, str]:
@@ -2028,6 +2059,7 @@ def generate_pinterest():
             generated_description,
             call_to_action=form_values.get("pinterest_extra"),
         )
+        instagram_caption = _prepend_instagram_comment_reply_caption_cta(instagram_caption)
         instagram_hashtags = generate_hashtags_for_instagram(refined_title, generated_description)
         tiktok_caption = generate_caption_for_tiktok(refined_title, generated_description)
         tiktok_hashtags = generate_hashtags_for_tiktok(refined_title, generated_description)
@@ -2415,16 +2447,17 @@ def publish_instagram():
         return render_home_view(form_values, preview_payload, product_id=product_id)
 
     caption = raw_form_values.get("instagram_caption", "")
+    caption_with_comment_cta = _prepend_instagram_comment_reply_caption_cta(caption)
     hashtags = parse_tags_payload(raw_form_values.get("instagram_hashtags_payload", "[]"))
     normalized_tags = [tag.lstrip("#").replace(" ", "") for tag in hashtags if tag]
     if normalized_tags:
         tags_block = " ".join(f"#{tag}" for tag in normalized_tags)
-        caption_to_publish = caption.strip()
+        caption_to_publish = caption_with_comment_cta.strip()
         caption_to_publish = (
             f"{caption_to_publish}\n\n{tags_block}" if caption_to_publish else tags_block
         )
     else:
-        caption_to_publish = caption.strip()
+        caption_to_publish = caption_with_comment_cta.strip()
 
     target = raw_form_values.get("target", "feed")
     try:
@@ -2549,7 +2582,9 @@ def publish_instagram_reel_route():
         flash("Generate the Instagram Reel video first, then publish.", "error")
         return render_home_view(form_values, preview_payload, product_id=product_id)
 
-    caption = raw_form_values.get("instagram_caption", "")
+    caption = _prepend_instagram_comment_reply_caption_cta(
+        raw_form_values.get("instagram_caption", "")
+    )
     hashtags = parse_tags_payload(raw_form_values.get("instagram_hashtags_payload", "[]"))
     normalized_tags = [tag.lstrip("#").replace(" ", "") for tag in hashtags if tag]
     if normalized_tags:
@@ -2646,10 +2681,28 @@ def publish_website():
 
     image_relative = _resolve_image_path()
     image_paths = resolve_original_image_paths(saved_state, image_relative)
-    if not image_paths:
+    source_image_urls = resolve_source_image_urls(saved_state)
+    if source_image_urls:
         try:
             image_paths = ensure_downloaded_original_images(
-                product_id, form_values, saved_state, preview_payload
+                product_id,
+                form_values,
+                saved_state,
+                preview_payload,
+                preferred_primary_path=image_relative,
+            )
+        except Exception as exc:
+            app.logger.exception("Source image download failed")
+            flash(f"Unable to download product images: {exc}", "error")
+        image_paths = [path for path in image_paths if resolve_storage_path(path)]
+    elif not image_paths:
+        try:
+            image_paths = ensure_downloaded_original_images(
+                product_id,
+                form_values,
+                saved_state,
+                preview_payload,
+                preferred_primary_path=image_relative,
             )
         except Exception as exc:
             app.logger.exception("Source image download failed")
