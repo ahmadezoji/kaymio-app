@@ -50,10 +50,29 @@
       <input type="hidden" name="instagram_image_path" value="{{ preview.instagram_image_path | e }}" />
       <input
         type="hidden"
+        name="image_generation_model"
+        value="{{ (values.get('image_generation_model') or image_generation_options.default_model or '') | e }}"
+      />
+      <input
+        type="hidden"
         name="video_duration_seconds"
         value="{{ (values.get('video_duration_seconds') or preview.video_duration_seconds or '8') | e }}"
       />
       <input type="hidden" name="selected_original_image" value="{{ values.get('selected_original_image', '') | e }}" />
+    {%- endmacro %}
+    {% macro editable_term_textarea(name, label, items, placeholder, disabled=false, help_text='') -%}
+      <label>
+        <span>{{ label }}</span>
+        <textarea
+          name="{{ name }}"
+          rows="2"
+          placeholder="{{ placeholder }}"
+          {% if disabled %}disabled{% endif %}
+        >{{ (items or []) | join(', ') }}</textarea>
+      </label>
+      {% if help_text %}
+        <p class="muted">{{ help_text }}</p>
+      {% endif %}
     {%- endmacro %}
     {% macro platform_reset_button(platform, label, sku) -%}
       <div class="card-header-actions">
@@ -79,7 +98,7 @@
         </div>
         <div class="hero-pill">
           <span>Multi-market ready</span>
-          <span>Gemini visuals</span>
+          <span>Multi-model visuals</span>
           <span>Pinterest automation</span>
         </div>
         <div class="card-header-actions">
@@ -129,6 +148,7 @@
         {% set instagram_reel_published = instagram_state.get('instagram_reel', {}).get('status') == 'published' %}
         {% set youtube_published = platform_states.get('youtube', {}).get('status') == 'published' %}
         {% set tiktok_published = platform_states.get('tiktok', {}).get('status') == 'published' %}
+        {% set active_image_generation_model = values.get('image_generation_model') or image_generation_options.default_model %}
         {% if product_ids %}
           <form method="post" action="{{ url_for('select_product') }}" class="card">
             <div class="card-header">
@@ -268,6 +288,27 @@
               </div>
             {% endif %}
             <p class="muted">Upload another image at any time to add it into the gallery, then select it like any fetched Amazon image.</p>
+            <div class="field-grid">
+              <label>
+                <span>Image generation model</span>
+                <div class="input-shell">
+                  <select name="image_generation_model" id="image-generation-model-select">
+                    {% for group in image_generation_options.groups %}
+                      {% if group.models %}
+                        <optgroup label="{{ group.label }}">
+                          {% for model_name in group.models %}
+                            <option value="{{ model_name }}" {% if model_name == active_image_generation_model %}selected{% endif %}>
+                              {{ model_name }}
+                            </option>
+                          {% endfor %}
+                        </optgroup>
+                      {% endif %}
+                    {% endfor %}
+                  </select>
+                </div>
+              </label>
+            </div>
+            <p class="muted">Default uses OpenAI GPT Image 2 edits and keeps the selected product image as the exact visual reference.</p>
             <label>
               <span>Product title</span>
               <input
@@ -516,11 +557,20 @@
                       <input type="hidden" name="price" value="{{ values.get('price', '') }}" />
                       <input type="hidden" name="website_boost_prompt_pref" value="{{ values.get('website_boost_prompt', '') }}" />
                       <input type="hidden" name="youtube_boost_prompt" value="{{ values.get('youtube_boost_prompt', '') }}" />
+                      <input type="hidden" name="image_generation_model" value="{{ active_image_generation_model }}" />
                       <input type="hidden" name="use_affiliate_link_pref" value="{{ values.get('use_affiliate_link', '1') }}" />
                       <button type="submit" class="ghost-btn">Regenerate visual</button>
                     </form>
                     <form method="post" action="{{ url_for('confirm_pinterest') }}" id="pinterest-publish-form">
                       {{ preview_hidden_inputs(preview_data, values) }}
+                      {{ editable_term_textarea(
+                        'tags',
+                        'Edit Pinterest tags',
+                        preview_data.tags,
+                        'Comma-separated tags, e.g. kitchen gadgets, smoothie recipes, gift ideas',
+                        false,
+                        'Adjust the generated tags before publishing. Comma-separated works best.'
+                      ) }}
                       <input type="hidden" name="use_affiliate_link" value="0" />
                       <label class="checkbox">
                         <input
@@ -558,6 +608,14 @@
                 {% if preview_data.video_url %}
                   <form method="post" action="{{ url_for('publish_pinterest_video') }}">
                     {{ preview_hidden_inputs(preview_data, values) }}
+                    {{ editable_term_textarea(
+                      'tags',
+                      'Edit Pinterest video tags',
+                      preview_data.tags,
+                      'Comma-separated tags for the video pin',
+                      platforms_locked,
+                      'These tags are used for the Pinterest video pin too.'
+                    ) }}
                     <input type="hidden" name="use_affiliate_link" value="0" />
                     <label class="checkbox">
                       <input
@@ -729,6 +787,14 @@
                 <h3>Publish feed or story</h3>
                 <form method="post" action="{{ url_for('publish_instagram') }}">
                   {{ preview_hidden_inputs(preview_data, values) }}
+                  {{ editable_term_textarea(
+                    'instagram_hashtags_payload',
+                    'Edit Instagram hashtags',
+                    preview_data.instagram_hashtags,
+                    'Comma-separated hashtags, with or without #',
+                    platforms_locked,
+                    'You can paste hashtags with or without #. They will be normalized on publish.'
+                  ) }}
                   <input type="hidden" name="use_affiliate_link" value="0" />
                   <label class="checkbox">
                     <input
@@ -834,6 +900,14 @@
                 {% if preview_data.video_url %}
                   <form method="post" action="{{ url_for('publish_instagram_reel_route') }}">
                     {{ preview_hidden_inputs(preview_data, values) }}
+                    {{ editable_term_textarea(
+                      'instagram_hashtags_payload',
+                      'Edit Reel hashtags',
+                      preview_data.instagram_hashtags,
+                      'Comma-separated Reel hashtags',
+                      platforms_locked,
+                      'These hashtags will be appended to the Reel caption.'
+                    ) }}
                     <input type="hidden" name="use_affiliate_link" value="0" />
                     <label class="checkbox">
                       <input
@@ -981,6 +1055,14 @@
               {% if preview_data.video_url %}
                 <form method="post" action="{{ url_for('publish_youtube') }}">
                   {{ preview_hidden_inputs(preview_data, values) }}
+                  {{ editable_term_textarea(
+                    'youtube_keywords_payload',
+                    'Edit YouTube keywords',
+                    preview_data.youtube_keywords,
+                    'Comma-separated keywords',
+                    platforms_locked,
+                    'Use short search-friendly keywords separated by commas.'
+                  ) }}
                   <input type="hidden" name="use_affiliate_link" value="0" />
                   <label class="checkbox">
                     <input
@@ -1078,6 +1160,14 @@
               {% if preview_data.video_url %}
                 <form method="post" action="{{ url_for('publish_tiktok') }}">
                   {{ preview_hidden_inputs(preview_data, values) }}
+                  {{ editable_term_textarea(
+                    'tiktok_hashtags_payload',
+                    'Edit TikTok hashtags',
+                    preview_data.tiktok_hashtags,
+                    'Comma-separated TikTok hashtags',
+                    platforms_locked,
+                    'These hashtags will be appended to the TikTok caption.'
+                  ) }}
                   <input type="hidden" name="use_affiliate_link" value="0" />
                   <label class="checkbox">
                     <input
@@ -1125,6 +1215,9 @@
     (function () {
       const boostInput = document.querySelector('textarea[name="youtube_boost_prompt"]');
       const instagramBoostInput = document.querySelector('textarea[name="instagram_boost_prompt"]');
+      const imageGenerationModelSelect = document.querySelector(
+        'select[name="image_generation_model"]'
+      );
       const durationInput = document.querySelector(
         'input[type="number"][name="video_duration_seconds"]'
       );
@@ -1148,6 +1241,13 @@
         syncField("instagram_boost_prompt", instagramBoostInput.value);
         instagramBoostInput.addEventListener("input", () =>
           syncField("instagram_boost_prompt", instagramBoostInput.value)
+        );
+      }
+
+      if (imageGenerationModelSelect) {
+        syncField("image_generation_model", imageGenerationModelSelect.value);
+        imageGenerationModelSelect.addEventListener("change", () =>
+          syncField("image_generation_model", imageGenerationModelSelect.value)
         );
       }
 

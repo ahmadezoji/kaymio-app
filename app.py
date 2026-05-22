@@ -803,6 +803,18 @@ def _hydrate_preview(preview: Optional[Dict[str, Any]]) -> Optional[Dict[str, An
     if not preview:
         return preview
     hydrated = dict(preview)
+    if "tags" in hydrated:
+        hydrated["tags"] = sanitize_tag_list(hydrated.get("tags") or [])
+        hydrated["tags_payload"] = json.dumps(hydrated["tags"])
+    if "instagram_hashtags" in hydrated:
+        hydrated["instagram_hashtags"] = sanitize_tag_list(hydrated.get("instagram_hashtags") or [])
+        hydrated["instagram_hashtags_payload"] = json.dumps(hydrated["instagram_hashtags"])
+    if "tiktok_hashtags" in hydrated:
+        hydrated["tiktok_hashtags"] = sanitize_tag_list(hydrated.get("tiktok_hashtags") or [])
+        hydrated["tiktok_hashtags_payload"] = json.dumps(hydrated["tiktok_hashtags"])
+    if "youtube_keywords" in hydrated:
+        hydrated["youtube_keywords"] = sanitize_tag_list(hydrated.get("youtube_keywords") or [])
+        hydrated["youtube_keywords_payload"] = json.dumps(hydrated["youtube_keywords"])
     image_path = hydrated.get("generated_image_path")
     if image_path and not hydrated.get("image_data"):
         try:
@@ -1337,10 +1349,30 @@ def parse_tags_payload(raw_tags: str) -> List[str]:
     try:
         loaded = json.loads(raw_tags)
         if isinstance(loaded, list):
-            return [str(item).strip() for item in loaded if str(item).strip()]
+            return sanitize_tag_list([str(item) for item in loaded])
     except json.JSONDecodeError:
         pass
-    return [segment.strip() for segment in raw_tags.split(",") if segment.strip()]
+    normalized = str(raw_tags).replace("\n", ",")
+    return sanitize_tag_list(normalized.split(","))
+
+
+def sanitize_tag_list(raw_items: List[str]) -> List[str]:
+    cleaned: List[str] = []
+    seen = set()
+    for raw_item in raw_items:
+        token = str(raw_item or "").strip()
+        if not token:
+            continue
+        token = token.lstrip("#").strip()
+        token = token.strip(" \t\r\n.,:;!?/\\|()[]{}<>\"'`")
+        if not token or token in {"&", "+", "-", "_"}:
+            continue
+        normalized_key = token.casefold()
+        if normalized_key in seen:
+            continue
+        cleaned.append(token)
+        seen.add(normalized_key)
+    return cleaned
 
 
 def resolve_destination_url(product_id: str, affiliate_link: str, use_affiliate_link: bool) -> str:
@@ -2122,20 +2154,25 @@ def generate_pinterest():
                 raw_description or "Compelling Pinterest-ready description."
             )
 
-        tags = generate_tags_for_product_for_pintrest(
+        tags = sanitize_tag_list(generate_tags_for_product_for_pintrest(
             refined_title,
             generated_description,
-        )
+        ))
         instagram_caption = generate_caption_for_instagram(
             refined_title,
             generated_description,
             call_to_action=form_values.get("pinterest_extra"),
         )
         instagram_caption = _prepend_instagram_comment_reply_caption_cta(instagram_caption)
-        instagram_hashtags = generate_hashtags_for_instagram(refined_title, generated_description)
+        instagram_hashtags = sanitize_tag_list(
+            generate_hashtags_for_instagram(refined_title, generated_description)
+        )
         tiktok_caption = generate_caption_for_tiktok(refined_title, generated_description)
-        tiktok_hashtags = generate_hashtags_for_tiktok(refined_title, generated_description)
+        tiktok_hashtags = sanitize_tag_list(
+            generate_hashtags_for_tiktok(refined_title, generated_description)
+        )
         youtube_metadata = generate_youtube_metadata(refined_title, generated_description)
+        youtube_metadata["keywords"] = sanitize_tag_list(youtube_metadata.get("keywords") or [])
 
         context_prompt = build_prompt_context({**form_values, "title": refined_title})
         current_saved_state = get_product_state(product_id) if product_id else saved_state
