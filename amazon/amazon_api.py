@@ -8,7 +8,7 @@ CANOPY_API_KEY = "0f4b7573-08b4-4e7f-b771-fe75e16535fb"
 CANOPY_REST_ENDPOINT = "https://rest.canopyapi.co/api/amazon/product"
 
 
-STORE_ID = "kaymio-20"
+STORE_ID = "kaymio09-20"
 
 
 # ============ HELPERS =============
