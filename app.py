@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 from flask import Flask, abort, flash, redirect, render_template, request, send_from_directory, url_for
 
 from amazon.amazon_api import build_affiliate_link, extract_asin, fetch_product_from_canopy
-from gemeni_api_helper import edit_image as edit_image_with_gemini, generate_video_from_image
+from gemeni_api_helper import edit_image as edit_image_with_gemini, generate_video_from_image as generate_video_with_gemini
 from image_generation_config import build_image_generation_options, resolve_image_generation_choice
 from instagram.instagram_api_helper import (
     get_latest_instagram_media_id,
@@ -29,6 +29,7 @@ from instagram.instagram_api_helper import (
 )
 from openai_helper import (
     edit_image as edit_image_with_openai,
+    generate_video_from_image as generate_video_with_openai,
     generate_caption_for_instagram,
     generate_caption_for_tiktok,
     generate_hashtags_for_instagram,
@@ -37,6 +38,7 @@ from openai_helper import (
     generate_text,
     generate_youtube_metadata,
 )
+from video_generation_config import build_video_generation_options, resolve_video_generation_choice
 from pintrest.pinterest_helper import create_pinterest_pin, create_pinterest_video_pin
 from tiktok.tiktok_api_helper import publish_tiktok_post
 from youtube.youtube_api_helper import publish_short_video
@@ -88,6 +90,7 @@ RESETTABLE_PLATFORMS = {"pinterest", "instagram", "youtube", "tiktok"}
 PREVIEW_BINARY_FIELDS = {"image_data", "instagram_image_data"}
 TRUTHY_VALUES = {"1", "true", "yes", "on"}
 IMAGE_GENERATION_OPTIONS = build_image_generation_options()
+VIDEO_GENERATION_OPTIONS = build_video_generation_options()
 VIDEO_DURATION_DEFAULT = 8
 VIDEO_DURATION_MIN = 4
 VIDEO_DURATION_MAX = 60
@@ -795,6 +798,7 @@ FORM_COMMON_KEYS = {
     "selected_original_image",
     "original_image_path",
     "image_generation_model",
+    "video_generation_model",
     "video_hook_style",
 }
 
@@ -1090,6 +1094,11 @@ def normalize_image_generation_model(raw_model: str) -> str:
     return resolved_model
 
 
+def normalize_video_generation_model(raw_model: str) -> str:
+    _, resolved_model = resolve_video_generation_choice(raw_model)
+    return resolved_model
+
+
 def load_generation_reference_images(
     saved_state: Dict[str, Any],
     primary_image_path: str,
@@ -1141,6 +1150,38 @@ def generate_platform_image_with_selected_model(
     )
 
 
+def generate_platform_video_with_selected_model(
+    base_image_bytes: bytes,
+    *,
+    video_generation_model: str,
+    prompt: str,
+    context: str,
+    duration_seconds: int,
+    aspect_ratio: str,
+    resolution: str,
+) -> bytes:
+    provider, resolved_model = resolve_video_generation_choice(video_generation_model)
+    if provider == "openai":
+        return generate_video_with_openai(
+            prompt=prompt,
+            image=base_image_bytes,
+            duration_seconds=duration_seconds,
+            aspect_ratio=aspect_ratio,
+            resolution=resolution,
+            model=resolved_model,
+            context=context,
+        )
+    return generate_video_with_gemini(
+        prompt=prompt,
+        image=base_image_bytes,
+        duration_seconds=duration_seconds,
+        aspect_ratio=aspect_ratio,
+        resolution=resolution,
+        model=resolved_model,
+        context=context,
+    )
+
+
 def render_home_view(
     form_values: Optional[Dict[str, str]],
     preview_payload: Optional[Dict[str, Any]] = None,
@@ -1177,6 +1218,9 @@ def render_home_view(
     effective_form_values["image_generation_model"] = normalize_image_generation_model(
         effective_form_values.get("image_generation_model", "")
     )
+    effective_form_values["video_generation_model"] = normalize_video_generation_model(
+        effective_form_values.get("video_generation_model", "")
+    )
     product_image_choices, selected_original_image = build_product_image_choices(
         effective_form_values, preview_payload, product_id
     )
@@ -1193,6 +1237,7 @@ def render_home_view(
         product_ids=product_ids,
         last_product_id=last_product_id,
         image_generation_options=IMAGE_GENERATION_OPTIONS,
+        video_generation_options=VIDEO_GENERATION_OPTIONS,
     )
 
 
@@ -1685,6 +1730,7 @@ def extract_form_defaults(raw_form_values: Dict[str, str]) -> Dict[str, str]:
             "use_affiliate_link",
             "selected_original_image",
             "image_generation_model",
+            "video_generation_model",
         )
     }
     defaults["website_boost_prompt"] = (
@@ -1711,6 +1757,9 @@ def extract_form_defaults(raw_form_values: Dict[str, str]) -> Dict[str, str]:
     )
     defaults["image_generation_model"] = normalize_image_generation_model(
         raw_form_values.get("image_generation_model", defaults.get("image_generation_model", ""))
+    )
+    defaults["video_generation_model"] = normalize_video_generation_model(
+        raw_form_values.get("video_generation_model", defaults.get("video_generation_model", ""))
     )
     return defaults
 
@@ -2921,6 +2970,9 @@ def generate_platform_video(platform: str):
 
     raw_form_values = collect_form_values(request.form)
     form_values = extract_form_defaults(raw_form_values)
+    form_values["video_generation_model"] = normalize_video_generation_model(
+        raw_form_values.get("video_generation_model", form_values.get("video_generation_model", ""))
+    )
     use_affiliate_link_flag = str(form_values.get("use_affiliate_link", "0")).lower() in TRUTHY_VALUES
     product_id = resolve_product_id(form_values)
     preview_payload = rebuild_preview_payload(raw_form_values)
@@ -3050,6 +3102,7 @@ def generate_platform_video(platform: str):
         cut_style=cut_style,
         moves=move_list,
     )
+    video_context_prompt = build_prompt_context({**form_values, "title": raw_form_values.get("title", "")})
     boost_prompt = ""
     if target == "youtube":
         boost_prompt = (
@@ -3090,9 +3143,11 @@ def generate_platform_video(platform: str):
 
     fitted_base_bytes = ensure_dimensions(base_bytes, (720, 1280))
     try:
-        video_bytes = generate_video_from_image(
+        video_bytes = generate_platform_video_with_selected_model(
+            fitted_base_bytes,
             prompt=prompt,
-            image=fitted_base_bytes,
+            video_generation_model=form_values.get("video_generation_model", ""),
+            context=video_context_prompt,
             duration_seconds=duration_seconds,
             aspect_ratio="9:16",
             resolution="720p",

@@ -6,6 +6,7 @@ import io
 import json
 import logging
 import os
+import time
 from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 import requests
@@ -16,15 +17,23 @@ from image_generation_config import (
     get_openai_image_models,
     resolve_image_generation_choice,
 )
+from video_generation_config import (
+    build_reference_preserving_video_prompt,
+    get_openai_video_models,
+    normalize_openai_video_seconds,
+    resolve_video_generation_choice,
+    resolve_video_size,
+)
 
 logger = logging.getLogger(__name__)
 
 _client: OpenAI | None = None
 
 try:  # Optional dependency
-    from PIL import Image  # type: ignore
+    from PIL import Image, ImageOps  # type: ignore
 except ImportError:  # pragma: no cover
     Image = None  # type: ignore
+    ImageOps = None  # type: ignore
 
 
 def _get_client() -> OpenAI:
@@ -92,6 +101,31 @@ def _aspect_ratio_to_openai_size(aspect_ratio: Optional[str]) -> str:
     if ratio > 1.05:
         return "1536x1024"
     return "1024x1024"
+
+
+def _prepare_video_reference_image(
+    image: Union[bytes, bytearray, str, "Image.Image"],
+    *,
+    size: str,
+) -> Tuple[bytes, str, str]:
+    image_bytes = _coerce_image_bytes(image)
+    width_str, height_str = size.split("x", 1)
+    target_size = (int(width_str), int(height_str))
+
+    if Image is None:
+        return image_bytes, "input_reference.png", "image/png"
+
+    try:
+        with Image.open(io.BytesIO(image_bytes)) as source_image:
+            prepared = source_image.convert("RGB")
+            prepared = ImageOps.fit(prepared, target_size, method=Image.LANCZOS)
+            output = io.BytesIO()
+            prepared.save(output, format="JPEG", quality=92, optimize=True)
+            return output.getvalue(), "input_reference.jpg", "image/jpeg"
+    except Exception:
+        logger.debug("Unable to normalize OpenAI video reference image; using original bytes.")
+        mime_type, file_name = _detect_image_upload_meta(image_bytes, fallback_index=1)
+        return image_bytes, file_name, mime_type
 
 
 def edit_image(
@@ -184,6 +218,114 @@ def edit_image(
         with open(output_path, "wb") as handle:
             handle.write(image_bytes)
     return image_bytes
+
+
+def generate_video_from_image(
+    prompt: str,
+    image: Union[bytes, bytearray, str, "Image.Image"],
+    duration_seconds: int = 8,
+    aspect_ratio: str = "9:16",
+    resolution: str = "720p",
+    output_path: Optional[str] = None,
+    poll_interval: float = 10.0,
+    model: Optional[str] = None,
+    context: Optional[str] = None,
+) -> bytes:
+    """Generate a video with OpenAI Sora using the product image as an input reference."""
+
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY is not configured")
+
+    resolved_provider, resolved_model = resolve_video_generation_choice(model or "")
+    if resolved_provider != "openai" or not resolved_model:
+        video_models = get_openai_video_models()
+        if not video_models:
+            raise RuntimeError("No OpenAI video model is configured")
+        resolved_model = video_models[0]
+
+    size = resolve_video_size(aspect_ratio=aspect_ratio, resolution=resolution)
+    normalized_seconds = normalize_openai_video_seconds(duration_seconds)
+    final_prompt = build_reference_preserving_video_prompt(prompt, context=context or "")
+    reference_bytes, file_name, mime_type = _prepare_video_reference_image(image, size=size)
+
+    try:
+        create_response = requests.post(
+            "https://api.openai.com/v1/videos",
+            headers={"Authorization": f"Bearer {api_key}"},
+            data={
+                "model": resolved_model,
+                "prompt": final_prompt,
+                "size": size,
+                "seconds": str(normalized_seconds),
+            },
+            files={
+                "input_reference": (file_name, reference_bytes, mime_type),
+            },
+            timeout=120,
+        )
+        create_response.raise_for_status()
+    except requests.HTTPError as exc:  # pragma: no cover
+        detail = ""
+        try:
+            detail = create_response.text
+        except Exception:
+            detail = ""
+        raise RuntimeError(
+            f"OpenAI video create failed ({getattr(create_response, 'status_code', 'unknown')}): {detail or exc}"
+        ) from exc
+    except requests.RequestException as exc:  # pragma: no cover
+        raise RuntimeError(f"OpenAI video request failed: {exc}") from exc
+
+    job_payload = create_response.json()
+    video_id = str(job_payload.get("id") or "").strip()
+    if not video_id:
+        raise RuntimeError("OpenAI video create did not return a video id.")
+
+    status_payload = job_payload
+    while str(status_payload.get("status") or "").strip() in {"queued", "in_progress"}:
+        time.sleep(max(5.0, poll_interval))
+        try:
+            status_response = requests.get(
+                f"https://api.openai.com/v1/videos/{video_id}",
+                headers={"Authorization": f"Bearer {api_key}"},
+                timeout=60,
+            )
+            status_response.raise_for_status()
+            status_payload = status_response.json()
+        except requests.RequestException as exc:  # pragma: no cover
+            raise RuntimeError(f"OpenAI video polling failed: {exc}") from exc
+
+    final_status = str(status_payload.get("status") or "").strip()
+    if final_status != "completed":
+        error_payload = status_payload.get("error") or {}
+        error_message = error_payload.get("message") or final_status or "unknown error"
+        raise RuntimeError(f"OpenAI video generation failed: {error_message}")
+
+    try:
+        content_response = requests.get(
+            f"https://api.openai.com/v1/videos/{video_id}/content",
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=120,
+        )
+        content_response.raise_for_status()
+    except requests.HTTPError as exc:  # pragma: no cover
+        detail = ""
+        try:
+            detail = content_response.text
+        except Exception:
+            detail = ""
+        raise RuntimeError(
+            f"OpenAI video download failed ({getattr(content_response, 'status_code', 'unknown')}): {detail or exc}"
+        ) from exc
+    except requests.RequestException as exc:  # pragma: no cover
+        raise RuntimeError(f"OpenAI video download failed: {exc}") from exc
+
+    video_bytes = content_response.content
+    if output_path:
+        with open(output_path, "wb") as handle:
+            handle.write(video_bytes)
+    return video_bytes
 
 
 def generate_text(

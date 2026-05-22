@@ -55,6 +55,11 @@
       />
       <input
         type="hidden"
+        name="video_generation_model"
+        value="{{ (values.get('video_generation_model') or video_generation_options.default_model or '') | e }}"
+      />
+      <input
+        type="hidden"
         name="video_duration_seconds"
         value="{{ (values.get('video_duration_seconds') or preview.video_duration_seconds or '8') | e }}"
       />
@@ -149,6 +154,7 @@
         {% set youtube_published = platform_states.get('youtube', {}).get('status') == 'published' %}
         {% set tiktok_published = platform_states.get('tiktok', {}).get('status') == 'published' %}
         {% set active_image_generation_model = values.get('image_generation_model') or image_generation_options.default_model %}
+        {% set active_video_generation_model = values.get('video_generation_model') or video_generation_options.default_model %}
         {% if product_ids %}
           <form method="post" action="{{ url_for('select_product') }}" class="card">
             <div class="card-header">
@@ -307,8 +313,27 @@
                   </select>
                 </div>
               </label>
+              <label>
+                <span>Video generation model</span>
+                <div class="input-shell">
+                  <select name="video_generation_model" id="video-generation-model-select">
+                    {% for group in video_generation_options.groups %}
+                      {% if group.models %}
+                        <optgroup label="{{ group.label }}">
+                          {% for model_name in group.models %}
+                            <option value="{{ model_name }}" {% if model_name == active_video_generation_model %}selected{% endif %}>
+                              {{ model_name }}
+                            </option>
+                          {% endfor %}
+                        </optgroup>
+                      {% endif %}
+                    {% endfor %}
+                  </select>
+                </div>
+              </label>
             </div>
             <p class="muted">Default uses OpenAI GPT Image 2 edits and keeps the selected product image as the exact visual reference.</p>
+            <p class="muted">Video generation defaults to Gemini and uses the selected product image as the exact first-frame reference.</p>
             <label>
               <span>Product title</span>
               <input
@@ -1218,6 +1243,9 @@
       const imageGenerationModelSelect = document.querySelector(
         'select[name="image_generation_model"]'
       );
+      const videoGenerationModelSelect = document.querySelector(
+        'select[name="video_generation_model"]'
+      );
       const durationInput = document.querySelector(
         'input[type="number"][name="video_duration_seconds"]'
       );
@@ -1248,6 +1276,13 @@
         syncField("image_generation_model", imageGenerationModelSelect.value);
         imageGenerationModelSelect.addEventListener("change", () =>
           syncField("image_generation_model", imageGenerationModelSelect.value)
+        );
+      }
+
+      if (videoGenerationModelSelect) {
+        syncField("video_generation_model", videoGenerationModelSelect.value);
+        videoGenerationModelSelect.addEventListener("change", () =>
+          syncField("video_generation_model", videoGenerationModelSelect.value)
         );
       }
 
