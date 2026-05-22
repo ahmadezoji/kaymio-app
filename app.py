@@ -16,7 +16,8 @@ from dotenv import load_dotenv
 from flask import Flask, abort, flash, redirect, render_template, request, send_from_directory, url_for
 
 from amazon.amazon_api import build_affiliate_link, extract_asin, fetch_product_from_canopy
-from gemeni_api_helper import edit_image, generate_video_from_image
+from gemeni_api_helper import edit_image as edit_image_with_gemini, generate_video_from_image
+from image_generation_config import build_image_generation_options, resolve_image_generation_choice
 from instagram.instagram_api_helper import (
     get_latest_instagram_media_id,
     publish_instagram_post,
@@ -27,6 +28,7 @@ from instagram.instagram_api_helper import (
     send_instagram_private_reply,
 )
 from openai_helper import (
+    edit_image as edit_image_with_openai,
     generate_caption_for_instagram,
     generate_caption_for_tiktok,
     generate_hashtags_for_instagram,
@@ -85,6 +87,7 @@ MARKET_OPTIONS = [
 RESETTABLE_PLATFORMS = {"pinterest", "instagram", "youtube", "tiktok"}
 PREVIEW_BINARY_FIELDS = {"image_data", "instagram_image_data"}
 TRUTHY_VALUES = {"1", "true", "yes", "on"}
+IMAGE_GENERATION_OPTIONS = build_image_generation_options()
 VIDEO_DURATION_DEFAULT = 8
 VIDEO_DURATION_MIN = 4
 VIDEO_DURATION_MAX = 60
@@ -791,6 +794,7 @@ FORM_COMMON_KEYS = {
     "use_affiliate_link",
     "selected_original_image",
     "original_image_path",
+    "image_generation_model",
     "video_hook_style",
 }
 
@@ -1069,6 +1073,62 @@ def _merge_saved_form_values(
     return merged
 
 
+def normalize_image_generation_model(raw_model: str) -> str:
+    _, resolved_model = resolve_image_generation_choice(raw_model)
+    return resolved_model
+
+
+def load_generation_reference_images(
+    saved_state: Dict[str, Any],
+    primary_image_path: str,
+    *,
+    limit: int = 2,
+) -> List[bytes]:
+    reference_bytes: List[bytes] = []
+    for image_path in resolve_original_image_paths(saved_state, primary_image_path):
+        if not image_path or image_path == primary_image_path:
+            continue
+        try:
+            reference_bytes.append(load_stored_media(image_path))
+        except Exception as exc:
+            app.logger.warning("Unable to load reference image %s: %s", image_path, exc)
+            continue
+        if len(reference_bytes) >= limit:
+            break
+    return reference_bytes
+
+
+def generate_platform_image_with_selected_model(
+    base_image_bytes: bytes,
+    *,
+    saved_state: Dict[str, Any],
+    primary_image_path: str,
+    image_generation_model: str,
+    prompt: str,
+    context: str,
+    aspect_ratio: str,
+) -> bytes:
+    provider, resolved_model = resolve_image_generation_choice(image_generation_model)
+    reference_images = load_generation_reference_images(saved_state, primary_image_path)
+    if provider == "gemini":
+        return edit_image_with_gemini(
+            base_image_bytes,
+            context=context,
+            prompt=prompt,
+            aspect_ratio=aspect_ratio,
+            model=resolved_model,
+            reference_images=reference_images,
+        )
+    return edit_image_with_openai(
+        base_image_bytes,
+        context=context,
+        prompt=prompt,
+        aspect_ratio=aspect_ratio,
+        model=resolved_model,
+        reference_images=reference_images,
+    )
+
+
 def render_home_view(
     form_values: Optional[Dict[str, str]],
     preview_payload: Optional[Dict[str, Any]] = None,
@@ -1101,13 +1161,17 @@ def render_home_view(
             platform_states = state_entry.get("platforms") or {}
         else:
             platform_states = {}
+    effective_form_values = dict(form_values or {})
+    effective_form_values["image_generation_model"] = normalize_image_generation_model(
+        effective_form_values.get("image_generation_model", "")
+    )
     product_image_choices, selected_original_image = build_product_image_choices(
-        form_values or {}, preview_payload, product_id
+        effective_form_values, preview_payload, product_id
     )
     return render_template(
         "home.html",
         markets=MARKET_OPTIONS,
-        form_values=form_values or {},
+        form_values=effective_form_values,
         preview=preview_payload,
         result=pinterest_result,
         website_result=website_result,
@@ -1116,6 +1180,7 @@ def render_home_view(
         selected_original_image=selected_original_image,
         product_ids=product_ids,
         last_product_id=last_product_id,
+        image_generation_options=IMAGE_GENERATION_OPTIONS,
     )
 
 
@@ -1587,6 +1652,7 @@ def extract_form_defaults(raw_form_values: Dict[str, str]) -> Dict[str, str]:
             "instagram_boost_prompt",
             "use_affiliate_link",
             "selected_original_image",
+            "image_generation_model",
         )
     }
     defaults["website_boost_prompt"] = (
@@ -1610,6 +1676,9 @@ def extract_form_defaults(raw_form_values: Dict[str, str]) -> Dict[str, str]:
     defaults["use_affiliate_link"] = next(
         (val for val in prefer_order if val not in (None, "")),
         "0",
+    )
+    defaults["image_generation_model"] = normalize_image_generation_model(
+        raw_form_values.get("image_generation_model", defaults.get("image_generation_model", ""))
     )
     return defaults
 
@@ -1925,6 +1994,9 @@ def generate_pinterest():
     raw_form_values = collect_form_values(request.form)
     original_image_path = raw_form_values.pop("original_image_path", "")
     form_values = dict(raw_form_values)
+    form_values["image_generation_model"] = normalize_image_generation_model(
+        raw_form_values.get("image_generation_model", "")
+    )
     saved_state = get_product_state(resolve_product_id(form_values))
     if not original_image_path and saved_state:
         assets = saved_state.get("assets") or {}
@@ -2066,8 +2138,12 @@ def generate_pinterest():
         youtube_metadata = generate_youtube_metadata(refined_title, generated_description)
 
         context_prompt = build_prompt_context({**form_values, "title": refined_title})
-        generated_image = edit_image(
+        current_saved_state = get_product_state(product_id) if product_id else saved_state
+        generated_image = generate_platform_image_with_selected_model(
             original_bytes,
+            saved_state=current_saved_state,
+            primary_image_path=original_image_path,
+            image_generation_model=form_values.get("image_generation_model", ""),
             context=context_prompt,
             prompt=(
                 "Design a polished product visual with a clear hero focus, scroll-stopping composition, "
@@ -2328,6 +2404,9 @@ def publish_pinterest_video():
 def generate_instagram_image():
     raw_form_values = collect_form_values(request.form)
     form_values = extract_form_defaults(raw_form_values)
+    form_values["image_generation_model"] = normalize_image_generation_model(
+        raw_form_values.get("image_generation_model", form_values.get("image_generation_model", ""))
+    )
     use_affiliate_link_flag = str(form_values.get("use_affiliate_link", "0")).lower() in TRUTHY_VALUES
     product_id = resolve_product_id(form_values)
     preview_payload = rebuild_preview_payload(raw_form_values)
@@ -2391,8 +2470,12 @@ def generate_instagram_image():
         )
 
     try:
-        instagram_image = edit_image(
+        current_saved_state = get_product_state(product_id) if product_id else saved_state
+        instagram_image = generate_platform_image_with_selected_model(
             base_bytes,
+            saved_state=current_saved_state,
+            primary_image_path=base_image_path,
+            image_generation_model=form_values.get("image_generation_model", ""),
             context=context_prompt,
             prompt=inst_prompt,
             aspect_ratio=aspect_ratio,

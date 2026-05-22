@@ -5,11 +5,17 @@ import io
 import logging
 import os
 import time
-from typing import Optional, Union
+from typing import Optional, Sequence, Union
 from google.genai import types as gemtype
 
 logger = logging.getLogger(__name__)
 from dotenv import load_dotenv
+from image_generation_config import (
+    build_reference_preserving_prompt,
+    get_gemini_image_models,
+    resolve_image_generation_choice,
+)
+
 load_dotenv()
 
 try:  # Optional dependency
@@ -53,6 +59,8 @@ def edit_image(
     context: Optional[str] = None,
     aspect_ratio: Optional[str] = None,
     output_path: Optional[str] = None,
+    model: Optional[str] = None,
+    reference_images: Optional[Sequence[Union[bytes, bytearray, str, "Image.Image"]]] = None,
 ) -> bytes:
     """General-purpose Gemini image edit helper.
 
@@ -81,8 +89,12 @@ def edit_image(
         return original_bytes
 
     genai.configure(api_key=api_key)
-    model_name = os.getenv("GEMINI_IMAGE_MODEL", "imagen-3.0")
-    model = genai.GenerativeModel(model_name=model_name)
+    resolved_provider, resolved_model = resolve_image_generation_choice(model or "")
+    if resolved_provider != "gemini" or not resolved_model:
+        gemini_models = get_gemini_image_models()
+        resolved_model = gemini_models[0] if gemini_models else os.getenv("GEMINI_IMAGE_MODEL", "imagen-3.0")
+    model_name = resolved_model
+    model_client = genai.GenerativeModel(model_name=model_name)
 
     base_context = (
         "You are a senior brand designer creating high-performing visuals for affiliate marketing."
@@ -90,9 +102,10 @@ def edit_image(
     if context:
         base_context = f"{base_context}\nContext: {context}"
 
-    final_prompt = prompt or (
+    raw_prompt = prompt or (
         "Enhance the uploaded photo with vibrant lighting, clean typography overlays, and platform-friendly framing."
     )
+    final_prompt = build_reference_preserving_prompt(raw_prompt, context=base_context)
 
     types_module = getattr(genai, "types", None)
     image_config = None
@@ -139,15 +152,25 @@ def edit_image(
         if generation_config is not None:
             generation_kwargs["generation_config"] = generation_config
 
-        combined_prompt = f"{base_context}\n\nInstructions:\n{final_prompt}"
-        response = model.generate_content(
+        parts = [{"text": final_prompt}]
+        image_inputs = [original_bytes]
+        for image in reference_images or []:
+            try:
+                image_inputs.append(_coerce_image_bytes(image))
+            except Exception:
+                logger.debug("Skipping invalid Gemini reference image input.", exc_info=True)
+                continue
+
+        for image_bytes in image_inputs:
+            parts.append({"inline_data": {"mime_type": "image/png", "data": image_bytes}})
+            if len(parts) >= 5:
+                break
+
+        response = model_client.generate_content(
             contents=[
                 {
                     "role": "user",
-                    "parts": [
-                        {"text": combined_prompt},
-                        {"inline_data": {"mime_type": "image/png", "data": original_bytes}},
-                    ],
+                    "parts": parts,
                 }
             ],
             **generation_kwargs,

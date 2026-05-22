@@ -1,16 +1,30 @@
-"""OpenAI helpers for Pinterest copywriting."""
+"""OpenAI helpers for copywriting and image generation."""
 from __future__ import annotations
 
+import base64
+import io
 import json
 import logging
 import os
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Sequence, Tuple, Union
 
+import requests
 from openai import OpenAI
+
+from image_generation_config import (
+    build_reference_preserving_prompt,
+    get_openai_image_models,
+    resolve_image_generation_choice,
+)
 
 logger = logging.getLogger(__name__)
 
 _client: OpenAI | None = None
+
+try:  # Optional dependency
+    from PIL import Image  # type: ignore
+except ImportError:  # pragma: no cover
+    Image = None  # type: ignore
 
 
 def _get_client() -> OpenAI:
@@ -29,6 +43,147 @@ def _safe_json_loads(payload: str) -> Dict[str, str]:
     except json.JSONDecodeError:
         logger.warning("OpenAI response was not valid JSON: %s", payload)
         return {}
+
+
+def _coerce_image_bytes(
+    base_image: Union[bytes, bytearray, str, "Image.Image"],
+) -> bytes:
+    if isinstance(base_image, (bytes, bytearray)):
+        return bytes(base_image)
+    if isinstance(base_image, str):
+        with open(base_image, "rb") as handle:
+            return handle.read()
+    if Image is not None and isinstance(base_image, Image.Image):
+        buffer = io.BytesIO()
+        base_image.save(buffer, format="PNG")
+        return buffer.getvalue()
+    raise TypeError("base_image must be bytes, a file path, or a PIL image")
+
+
+def _detect_image_upload_meta(image_bytes: bytes, *, fallback_index: int) -> Tuple[str, str]:
+    mime_type = "image/png"
+    extension = "png"
+    if Image is None:
+        return mime_type, f"reference_{fallback_index}.{extension}"
+    try:
+        with Image.open(io.BytesIO(image_bytes)) as image:
+            image_format = (image.format or "PNG").upper()
+        mime_type = Image.MIME.get(image_format, mime_type)
+        extension = "jpg" if image_format == "JPEG" else image_format.lower()
+    except Exception:
+        logger.debug("Unable to infer image type for OpenAI upload; defaulting to PNG.")
+    return mime_type, f"reference_{fallback_index}.{extension}"
+
+
+def _aspect_ratio_to_openai_size(aspect_ratio: Optional[str]) -> str:
+    if not aspect_ratio or ":" not in aspect_ratio:
+        return "1024x1024"
+    try:
+        width_raw, height_raw = aspect_ratio.split(":", 1)
+        width = float(width_raw)
+        height = float(height_raw)
+        if width <= 0 or height <= 0:
+            return "1024x1024"
+        ratio = width / height
+    except (TypeError, ValueError):
+        return "1024x1024"
+    if ratio < 0.95:
+        return "1024x1536"
+    if ratio > 1.05:
+        return "1536x1024"
+    return "1024x1024"
+
+
+def edit_image(
+    base_image: Union[bytes, bytearray, str, "Image.Image"],
+    *,
+    prompt: Optional[str] = None,
+    context: Optional[str] = None,
+    aspect_ratio: Optional[str] = None,
+    output_path: Optional[str] = None,
+    model: Optional[str] = None,
+    reference_images: Optional[Sequence[Union[bytes, bytearray, str, "Image.Image"]]] = None,
+    quality: Optional[str] = None,
+) -> bytes:
+    """Edit an image with OpenAI using the source product image as an exact reference."""
+
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY is not configured")
+
+    resolved_provider, resolved_model = resolve_image_generation_choice(model or "")
+    if resolved_provider != "openai" or not resolved_model:
+        openai_models = get_openai_image_models()
+        if not openai_models:
+            raise RuntimeError("No OpenAI image model is configured")
+        resolved_model = openai_models[0]
+
+    original_bytes = _coerce_image_bytes(base_image)
+    requested_quality = (quality or os.getenv("OPENAI_IMAGE_QUALITY", "medium")).strip() or "medium"
+    final_prompt = build_reference_preserving_prompt(prompt or "", context=context or "")
+    size = _aspect_ratio_to_openai_size(aspect_ratio)
+
+    normalized_references: List[bytes] = [original_bytes]
+    for image in reference_images or []:
+        try:
+            coerced = _coerce_image_bytes(image)
+        except Exception:
+            logger.debug("Skipping invalid OpenAI reference image input.", exc_info=True)
+            continue
+        if coerced:
+            normalized_references.append(coerced)
+        if len(normalized_references) >= 4:
+            break
+
+    files = []
+    for index, image_bytes in enumerate(normalized_references, start=1):
+        mime_type, file_name = _detect_image_upload_meta(image_bytes, fallback_index=index)
+        files.append(("image[]", (file_name, image_bytes, mime_type)))
+
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/images/edits",
+            headers={"Authorization": f"Bearer {api_key}"},
+            data={
+                "model": resolved_model,
+                "prompt": final_prompt,
+                "size": size,
+                "quality": requested_quality,
+                "output_format": "png",
+            },
+            files=files,
+            timeout=120,
+        )
+        response.raise_for_status()
+    except requests.HTTPError as exc:  # pragma: no cover - network/runtime guard
+        detail = ""
+        try:
+            detail = response.text
+        except Exception:
+            detail = ""
+        raise RuntimeError(
+            f"OpenAI image edit failed ({getattr(response, 'status_code', 'unknown')}): {detail or exc}"
+        ) from exc
+    except requests.RequestException as exc:  # pragma: no cover
+        raise RuntimeError(f"OpenAI image edit request failed: {exc}") from exc
+
+    try:
+        payload = response.json()
+    except ValueError as exc:  # pragma: no cover
+        raise RuntimeError("OpenAI image edit returned invalid JSON.") from exc
+
+    data_items = payload.get("data") or []
+    if not data_items:
+        raise RuntimeError("OpenAI image edit returned no image data.")
+    image_base64 = str(data_items[0].get("b64_json") or "").strip()
+    if not image_base64:
+        raise RuntimeError("OpenAI image edit did not include a base64 image result.")
+
+    image_bytes = base64.b64decode(image_base64)
+    if output_path:
+        with open(output_path, "wb") as handle:
+            handle.write(image_bytes)
+    return image_bytes
 
 
 def generate_text(
