@@ -5,6 +5,7 @@ import base64
 import io
 import json
 import logging
+import math
 import os
 import time
 from typing import Dict, List, Optional, Sequence, Tuple, Union
@@ -107,25 +108,73 @@ def _prepare_video_reference_image(
     image: Union[bytes, bytearray, str, "Image.Image"],
     *,
     size: str,
+    reference_images: Optional[Sequence[Union[bytes, bytearray, str, "Image.Image"]]] = None,
 ) -> Tuple[bytes, str, str]:
-    image_bytes = _coerce_image_bytes(image)
     width_str, height_str = size.split("x", 1)
     target_size = (int(width_str), int(height_str))
+    normalized_images: List[bytes] = [_coerce_image_bytes(image)]
+    for reference_image in reference_images or []:
+        try:
+            normalized_images.append(_coerce_image_bytes(reference_image))
+        except Exception:
+            logger.debug("Skipping invalid OpenAI video reference image input.", exc_info=True)
+            continue
+        if len(normalized_images) >= 4:
+            break
+
+    image_bytes = normalized_images[0]
 
     if Image is None:
         return image_bytes, "input_reference.png", "image/png"
 
     try:
-        with Image.open(io.BytesIO(image_bytes)) as source_image:
-            prepared = source_image.convert("RGB")
-            prepared = ImageOps.fit(prepared, target_size, method=Image.LANCZOS)
-            output = io.BytesIO()
-            prepared.save(output, format="JPEG", quality=92, optimize=True)
-            return output.getvalue(), "input_reference.jpg", "image/jpeg"
+        images: List["Image.Image"] = []
+        for raw_bytes in normalized_images:
+            with Image.open(io.BytesIO(raw_bytes)) as source_image:
+                images.append(source_image.convert("RGB"))
+
+        if len(images) == 1:
+            prepared = ImageOps.fit(images[0], target_size, method=Image.LANCZOS)
+        else:
+            prepared = _build_video_reference_sheet(images, target_size)
+
+        output = io.BytesIO()
+        prepared.save(output, format="JPEG", quality=92, optimize=True)
+        return output.getvalue(), "input_reference.jpg", "image/jpeg"
     except Exception:
         logger.debug("Unable to normalize OpenAI video reference image; using original bytes.")
         mime_type, file_name = _detect_image_upload_meta(image_bytes, fallback_index=1)
         return image_bytes, file_name, mime_type
+
+
+def _build_video_reference_sheet(
+    images: Sequence["Image.Image"],
+    target_size: Tuple[int, int],
+) -> "Image.Image":
+    width, height = target_size
+    gap = max(8, min(width, height) // 60)
+
+    if len(images) == 2:
+        columns, rows = 1, 2
+    else:
+        columns = 2
+        rows = int(math.ceil(len(images) / columns))
+
+    canvas = Image.new("RGB", target_size, color=(248, 248, 248))
+    inner_width = width - gap * (columns + 1)
+    inner_height = height - gap * (rows + 1)
+    tile_width = max(1, inner_width // columns)
+    tile_height = max(1, inner_height // rows)
+
+    for index, image in enumerate(images):
+        row = index // columns
+        col = index % columns
+        tile = ImageOps.fit(image, (tile_width, tile_height), method=Image.LANCZOS)
+        left = gap + col * (tile_width + gap)
+        top = gap + row * (tile_height + gap)
+        canvas.paste(tile, (left, top))
+
+    return canvas
 
 
 def edit_image(
@@ -223,6 +272,7 @@ def edit_image(
 def generate_video_from_image(
     prompt: str,
     image: Union[bytes, bytearray, str, "Image.Image"],
+    reference_images: Optional[Sequence[Union[bytes, bytearray, str, "Image.Image"]]] = None,
     duration_seconds: int = 8,
     aspect_ratio: str = "9:16",
     resolution: str = "720p",
@@ -247,7 +297,16 @@ def generate_video_from_image(
     size = resolve_video_size(aspect_ratio=aspect_ratio, resolution=resolution)
     normalized_seconds = normalize_openai_video_seconds(duration_seconds)
     final_prompt = build_reference_preserving_video_prompt(prompt, context=context or "")
-    reference_bytes, file_name, mime_type = _prepare_video_reference_image(image, size=size)
+    if reference_images:
+        final_prompt = (
+            f"{final_prompt} Additional reference angles are included in the uploaded reference sheet. "
+            "Preserve the same product details consistently across all provided views."
+        )
+    reference_bytes, file_name, mime_type = _prepare_video_reference_image(
+        image,
+        size=size,
+        reference_images=reference_images,
+    )
 
     try:
         create_response = requests.post(

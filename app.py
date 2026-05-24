@@ -7,7 +7,7 @@ import time
 from io import BytesIO
 from pathlib import Path
 import random
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 from urllib.parse import urlparse
 from uuid import uuid4
 
@@ -797,6 +797,7 @@ FORM_COMMON_KEYS = {
     "instagram_boost_prompt",
     "use_affiliate_link",
     "selected_original_image",
+    "selected_original_images",
     "original_image_path",
     "image_generation_model",
     "video_generation_model",
@@ -1101,6 +1102,46 @@ def normalize_video_generation_model(raw_model: str) -> str:
     return resolved_model
 
 
+def parse_selected_original_images_payload(
+    raw_payload: str,
+    *,
+    fallback: str = "",
+) -> List[str]:
+    candidates: List[str] = []
+    normalized_payload = str(raw_payload or "").strip()
+    if normalized_payload:
+        try:
+            decoded = json.loads(normalized_payload)
+        except json.JSONDecodeError:
+            decoded = None
+        if isinstance(decoded, list):
+            for item in decoded:
+                item_value = str(item or "").strip()
+                if item_value:
+                    candidates.append(item_value)
+        elif normalized_payload:
+            candidates.append(normalized_payload)
+
+    fallback_value = str(fallback or "").strip()
+    if fallback_value and fallback_value not in candidates:
+        candidates.insert(0, fallback_value)
+
+    selected_values: List[str] = []
+    for candidate in candidates:
+        if candidate and candidate not in selected_values:
+            selected_values.append(candidate)
+    return selected_values
+
+
+def serialize_selected_original_images_payload(selected_values: Sequence[str]) -> str:
+    normalized = [str(value).strip() for value in selected_values if str(value).strip()]
+    deduped: List[str] = []
+    for value in normalized:
+        if value not in deduped:
+            deduped.append(value)
+    return json.dumps(deduped)
+
+
 def load_generation_reference_images(
     saved_state: Dict[str, Any],
     primary_image_path: str,
@@ -1130,9 +1171,13 @@ def generate_platform_image_with_selected_model(
     prompt: str,
     context: str,
     aspect_ratio: str,
+    reference_images: Optional[Sequence[bytes]] = None,
 ) -> bytes:
     provider, resolved_model = resolve_image_generation_choice(image_generation_model)
-    reference_images = load_generation_reference_images(saved_state, primary_image_path)
+    if reference_images is None:
+        resolved_reference_images = load_generation_reference_images(saved_state, primary_image_path)
+    else:
+        resolved_reference_images = list(reference_images)
     if provider == "gemini":
         return edit_image_with_gemini(
             base_image_bytes,
@@ -1140,7 +1185,7 @@ def generate_platform_image_with_selected_model(
             prompt=prompt,
             aspect_ratio=aspect_ratio,
             model=resolved_model,
-            reference_images=reference_images,
+            reference_images=resolved_reference_images,
         )
     return edit_image_with_openai(
         base_image_bytes,
@@ -1148,7 +1193,7 @@ def generate_platform_image_with_selected_model(
         prompt=prompt,
         aspect_ratio=aspect_ratio,
         model=resolved_model,
-        reference_images=reference_images,
+        reference_images=resolved_reference_images,
     )
 
 
@@ -1161,12 +1206,14 @@ def generate_platform_video_with_selected_model(
     duration_seconds: int,
     aspect_ratio: str,
     resolution: str,
+    reference_images: Optional[Sequence[bytes]] = None,
 ) -> bytes:
     provider, resolved_model = resolve_video_generation_choice(video_generation_model)
     if provider == "openai":
         return generate_video_with_openai(
             prompt=prompt,
             image=base_image_bytes,
+            reference_images=reference_images,
             duration_seconds=duration_seconds,
             aspect_ratio=aspect_ratio,
             resolution=resolution,
@@ -1176,6 +1223,7 @@ def generate_platform_video_with_selected_model(
     return generate_video_with_gemini(
         prompt=prompt,
         image=base_image_bytes,
+        reference_images=reference_images,
         duration_seconds=duration_seconds,
         aspect_ratio=aspect_ratio,
         resolution=resolution,
@@ -1223,8 +1271,12 @@ def render_home_view(
     effective_form_values["video_generation_model"] = normalize_video_generation_model(
         effective_form_values.get("video_generation_model", "")
     )
-    product_image_choices, selected_original_image = build_product_image_choices(
+    product_image_choices, selected_original_image, selected_original_images = build_product_image_choices(
         effective_form_values, preview_payload, product_id
+    )
+    effective_form_values["selected_original_image"] = selected_original_image
+    effective_form_values["selected_original_images"] = serialize_selected_original_images_payload(
+        selected_original_images
     )
     return render_template(
         "home.html",
@@ -1236,6 +1288,7 @@ def render_home_view(
         platform_states=platform_states or {},
         product_image_choices=product_image_choices,
         selected_original_image=selected_original_image,
+        selected_original_images=selected_original_images,
         product_ids=product_ids,
         last_product_id=last_product_id,
         image_generation_options=IMAGE_GENERATION_OPTIONS,
@@ -1526,12 +1579,16 @@ def build_product_image_choices(
     form_values: Dict[str, str],
     preview_payload: Optional[Dict[str, Any]],
     product_id: str,
-) -> tuple[List[Dict[str, str]], str]:
+) -> tuple[List[Dict[str, str]], str, List[str]]:
     saved_state = get_product_state(product_id) if product_id else {}
     source_urls = resolve_source_image_urls(saved_state)
     choices: List[Dict[str, str]] = []
     seen = set()
     selected_value = form_values.get("selected_original_image", "")
+    selected_values = parse_selected_original_images_payload(
+        form_values.get("selected_original_images", ""),
+        fallback=selected_value,
+    )
     if source_urls:
         for url in source_urls:
             if url and url not in seen:
@@ -1542,16 +1599,91 @@ def build_product_image_choices(
         candidate_relative = preview_payload.get("original_image_path", "")
     if not candidate_relative:
         candidate_relative = form_values.get("original_image_path", "")
-    if not selected_value and candidate_relative:
-        selected_value = f"path:{candidate_relative}"
+    if not selected_values and candidate_relative:
+        selected_values = [f"path:{candidate_relative}"]
+    if selected_values:
+        selected_value = selected_values[0]
     for path in resolve_original_image_paths(saved_state, candidate_relative):
         image_url = url_for("serve_media", filename=path)
         if image_url not in seen:
             choices.append({"value": f"path:{path}", "url": image_url})
             seen.add(image_url)
-    if choices and selected_value not in {choice["value"] for choice in choices}:
-        selected_value = choices[0]["value"]
-    return choices, selected_value
+    valid_values = {choice["value"] for choice in choices}
+    selected_values = [value for value in selected_values if value in valid_values]
+    if choices and not selected_values:
+        selected_values = [choices[0]["value"]]
+    selected_value = selected_values[0] if selected_values else ""
+    return choices, selected_value, selected_values
+
+
+def resolve_selected_original_images(
+    raw_form_values: Dict[str, str],
+    form_values: Dict[str, str],
+    product_id: str,
+    preview_payload: Optional[Dict[str, Any]],
+) -> List[tuple[str, Optional[bytes]]]:
+    saved_state = get_product_state(product_id) if product_id else {}
+    selected_values = parse_selected_original_images_payload(
+        raw_form_values.get("selected_original_images", ""),
+        fallback=raw_form_values.get("selected_original_image", ""),
+    )
+    if not selected_values:
+        return []
+
+    resolved_sources: List[tuple[str, Optional[bytes]]] = []
+    normalized_selected_values: List[str] = []
+
+    for selected in selected_values:
+        if selected.startswith("url:"):
+            image_url = selected[4:]
+            if not image_url:
+                continue
+            image_bytes = download_image_bytes(image_url)
+            filename = guess_filename_from_url(image_url)
+            image_relative = save_original_image(image_bytes, filename)
+            normalized_selected_values.append(f"path:{image_relative}")
+            resolved_sources.append((image_relative, image_bytes))
+            continue
+
+        if selected.startswith("path:"):
+            image_relative = selected[5:]
+            if resolve_storage_path(image_relative):
+                normalized_selected_values.append(f"path:{image_relative}")
+                resolved_sources.append((image_relative, None))
+
+    deduped_sources: List[tuple[str, Optional[bytes]]] = []
+    seen_paths = set()
+    deduped_selected_values: List[str] = []
+    for path, image_bytes in resolved_sources:
+        if not path or path in seen_paths:
+            continue
+        seen_paths.add(path)
+        deduped_sources.append((path, image_bytes))
+        deduped_selected_values.append(f"path:{path}")
+
+    if not deduped_sources:
+        return []
+
+    primary_image_path = deduped_sources[0][0]
+    form_values["original_image_path"] = primary_image_path
+    form_values["selected_original_image"] = deduped_selected_values[0]
+    form_values["selected_original_images"] = serialize_selected_original_images_payload(
+        deduped_selected_values
+    )
+    update_product_state(
+        product_id,
+        form_values=form_values,
+        assets={
+            "original_image_path": primary_image_path,
+            "original_image_paths": merge_original_image_paths(
+                saved_state,
+                *[path for path, _ in deduped_sources],
+            ),
+        },
+    )
+    if preview_payload is not None:
+        preview_payload["original_image_path"] = primary_image_path
+    return deduped_sources
 
 
 def resolve_selected_original_image(
@@ -1560,45 +1692,36 @@ def resolve_selected_original_image(
     product_id: str,
     preview_payload: Optional[Dict[str, Any]],
 ) -> Optional[tuple[str, Optional[bytes]]]:
-    saved_state = get_product_state(product_id) if product_id else {}
-    selected = raw_form_values.get("selected_original_image", "")
-    if not selected:
-        return None
-    if selected.startswith("url:"):
-        image_url = selected[4:]
-        if not image_url:
-            return None
-        image_bytes = download_image_bytes(image_url)
-        filename = guess_filename_from_url(image_url)
-        image_relative = save_original_image(image_bytes, filename)
-        form_values["original_image_path"] = image_relative
-        update_product_state(
-            product_id,
-            form_values=form_values,
-            assets={
-                "original_image_path": image_relative,
-                "original_image_paths": merge_original_image_paths(saved_state, image_relative),
-            },
-        )
-        if preview_payload is not None:
-            preview_payload["original_image_path"] = image_relative
-        return image_relative, image_bytes
-    if selected.startswith("path:"):
-        image_relative = selected[5:]
-        if resolve_storage_path(image_relative):
-            form_values["original_image_path"] = image_relative
-            update_product_state(
-                product_id,
-                form_values=form_values,
-                assets={
-                    "original_image_path": image_relative,
-                    "original_image_paths": merge_original_image_paths(saved_state, image_relative),
-                },
-            )
-            if preview_payload is not None:
-                preview_payload["original_image_path"] = image_relative
-            return image_relative, None
-    return None
+    selected_sources = resolve_selected_original_images(
+        raw_form_values,
+        form_values,
+        product_id,
+        preview_payload,
+    )
+    return selected_sources[0] if selected_sources else None
+
+
+def load_resolved_reference_images(
+    resolved_sources: Sequence[tuple[str, Optional[bytes]]],
+    *,
+    primary_image_path: str = "",
+    limit: Optional[int] = 3,
+) -> List[bytes]:
+    reference_bytes: List[bytes] = []
+    for image_path, image_bytes in resolved_sources:
+        if not image_path or image_path == primary_image_path:
+            continue
+        resolved_bytes = image_bytes
+        if resolved_bytes is None:
+            try:
+                resolved_bytes = load_stored_media(image_path)
+            except Exception as exc:
+                app.logger.warning("Unable to load selected reference image %s: %s", image_path, exc)
+                continue
+        reference_bytes.append(resolved_bytes)
+        if limit is not None and len(reference_bytes) >= limit:
+            break
+    return reference_bytes
 
 
 def resolve_original_image_paths(
@@ -1731,6 +1854,7 @@ def extract_form_defaults(raw_form_values: Dict[str, str]) -> Dict[str, str]:
             "instagram_boost_prompt",
             "use_affiliate_link",
             "selected_original_image",
+            "selected_original_images",
             "image_generation_model",
             "video_generation_model",
             "video_duration_seconds",
@@ -1763,6 +1887,12 @@ def extract_form_defaults(raw_form_values: Dict[str, str]) -> Dict[str, str]:
     )
     defaults["video_generation_model"] = normalize_video_generation_model(
         raw_form_values.get("video_generation_model", defaults.get("video_generation_model", ""))
+    )
+    defaults["selected_original_images"] = serialize_selected_original_images_payload(
+        parse_selected_original_images_payload(
+            raw_form_values.get("selected_original_images", defaults.get("selected_original_images", "")),
+            fallback=defaults.get("selected_original_image", ""),
+        )
     )
     return defaults
 
@@ -1814,6 +1944,7 @@ def rebuild_preview_payload(raw_form_values: Dict[str, str]):
         "video_hook_style": raw_form_values.get("video_hook_style", ""),
         "youtube_boost_prompt": raw_form_values.get("youtube_boost_prompt", ""),
         "video_duration_seconds": raw_form_values.get("video_duration_seconds", ""),
+        "selected_original_images": raw_form_values.get("selected_original_images", ""),
         "use_affiliate_link": (
             raw_form_values.get("use_affiliate_link")
             or raw_form_values.get("use_affiliate_link_pref")
@@ -2030,8 +2161,14 @@ def save_draft():
             return render_home_view(form_values, product_id=product_id)
         form_values["original_image_path"] = original_image_path
         form_values["selected_original_image"] = f"path:{original_image_path}"
+        form_values["selected_original_images"] = serialize_selected_original_images_payload(
+            [f"path:{original_image_path}"]
+        )
         raw_form_values["original_image_path"] = original_image_path
         raw_form_values["selected_original_image"] = f"path:{original_image_path}"
+        raw_form_values["selected_original_images"] = serialize_selected_original_images_payload(
+            [f"path:{original_image_path}"]
+        )
 
     preview_payload = rebuild_preview_payload(raw_form_values)
     update_product_state(
@@ -2064,6 +2201,9 @@ def upload_product_image():
 
     form_values["original_image_path"] = original_image_path
     form_values["selected_original_image"] = f"path:{original_image_path}"
+    form_values["selected_original_images"] = serialize_selected_original_images_payload(
+        [f"path:{original_image_path}"]
+    )
     update_product_state(
         product_id,
         form_values=form_values,
@@ -2092,6 +2232,7 @@ def generate_pinterest():
     product_id = resolve_product_id(form_values)
     image_file = request.files.get("product_image")
     errors = []
+    selected_sources: List[tuple[str, Optional[bytes]]] = []
 
     if not form_values.get("market"):
         errors.append("Please choose a marketplace before continuing.")
@@ -2115,10 +2256,9 @@ def generate_pinterest():
             flash(message, "error")
         return render_home_view(form_values, product_id=product_id)
 
-    selected_source = None
-    if raw_form_values.get("selected_original_image"):
+    if raw_form_values.get("selected_original_image") or raw_form_values.get("selected_original_images"):
         try:
-            selected_source = resolve_selected_original_image(
+            selected_sources = resolve_selected_original_images(
                 raw_form_values, form_values, product_id, preview_payload=None
             )
         except Exception as exc:
@@ -2133,9 +2273,12 @@ def generate_pinterest():
             flash(str(exc), "error")
             return render_home_view(form_values, product_id=product_id)
         form_values["selected_original_image"] = f"path:{original_image_path}"
+        form_values["selected_original_images"] = serialize_selected_original_images_payload(
+            [f"path:{original_image_path}"]
+        )
         original_bytes = load_stored_image(original_image_path)
-    elif selected_source:
-        original_image_path, original_bytes = selected_source
+    elif selected_sources:
+        original_image_path, original_bytes = selected_sources[0]
     else:
         if not original_image_path:
             try:
@@ -2163,6 +2306,10 @@ def generate_pinterest():
         except Exception:
             flash("Unable to load the selected image. Please try again.", "error")
             return render_home_view(form_values, product_id=product_id)
+    selected_reference_images = load_resolved_reference_images(
+        selected_sources,
+        primary_image_path=original_image_path,
+    )
 
     raw_title = form_values.get("title", "")
     raw_description = form_values.get("description", "")
@@ -2240,6 +2387,7 @@ def generate_pinterest():
                 "and cohesive lighting suitable for social platforms. Do not add any on-screen text—the output must be a pure image."
             ),
             aspect_ratio="2:3",
+            reference_images=(selected_reference_images if selected_sources else None),
         )
         generated_image = ensure_dimensions(generated_image, (1000, 1500))
         generated_image_path = save_generated_image(generated_image)
@@ -2506,17 +2654,18 @@ def generate_instagram_image():
     )
 
     base_bytes = None
-    if raw_form_values.get("selected_original_image"):
+    selected_sources: List[tuple[str, Optional[bytes]]] = []
+    if raw_form_values.get("selected_original_image") or raw_form_values.get("selected_original_images"):
         try:
-            selected_source = resolve_selected_original_image(
+            selected_sources = resolve_selected_original_images(
                 raw_form_values, form_values, product_id, preview_payload
             )
         except Exception as exc:
             app.logger.exception("Selected image download failed")
             flash(f"Unable to download the selected image: {exc}", "error")
             return render_home_view(form_values, preview_payload, product_id=product_id)
-        if selected_source:
-            base_image_path, base_bytes = selected_source
+        if selected_sources:
+            base_image_path, base_bytes = selected_sources[0]
     if not base_image_path:
         try:
             downloaded = ensure_downloaded_original_image(
@@ -2538,6 +2687,10 @@ def generate_instagram_image():
         except Exception:
             flash("Unable to load the base image. Please regenerate your creative first.", "error")
             return render_home_view(form_values, preview_payload, product_id=product_id)
+    selected_reference_images = load_resolved_reference_images(
+        selected_sources,
+        primary_image_path=base_image_path,
+    )
 
     variant = raw_form_values.get("instagram_variant", "feed").lower()
     aspect_ratio = "4:5" if variant == "feed" else "9:16"
@@ -2569,6 +2722,7 @@ def generate_instagram_image():
             context=context_prompt,
             prompt=inst_prompt,
             aspect_ratio=aspect_ratio,
+            reference_images=(selected_reference_images if selected_sources else None),
         )
         target_dimensions = (1080, 1350) if variant_label == "feed" else (1080, 1920)
         instagram_image = ensure_dimensions(instagram_image, target_dimensions)
@@ -2988,17 +3142,18 @@ def generate_platform_video(platform: str):
     )
 
     base_bytes = None
-    if raw_form_values.get("selected_original_image"):
+    selected_sources: List[tuple[str, Optional[bytes]]] = []
+    if raw_form_values.get("selected_original_image") or raw_form_values.get("selected_original_images"):
         try:
-            selected_source = resolve_selected_original_image(
+            selected_sources = resolve_selected_original_images(
                 raw_form_values, form_values, product_id, preview_payload
             )
         except Exception as exc:
             app.logger.exception("Selected image download failed")
             flash(f"Unable to download the selected image: {exc}", "error")
             return render_home_view(form_values, preview_payload, product_id=product_id)
-        if selected_source:
-            base_image_path, base_bytes = selected_source
+        if selected_sources:
+            base_image_path, base_bytes = selected_sources[0]
     if not base_image_path:
         try:
             downloaded = ensure_downloaded_original_image(
@@ -3020,6 +3175,10 @@ def generate_platform_video(platform: str):
         except Exception:
             flash("Unable to load the base visual. Please regenerate it.", "error")
             return render_home_view(form_values, preview_payload, product_id=product_id)
+    selected_reference_images = load_resolved_reference_images(
+        selected_sources,
+        primary_image_path=base_image_path,
+    )
 
     title = raw_form_values.get("title") or form_values.get("title") or "this product"
     product_context = title
@@ -3144,6 +3303,20 @@ def generate_platform_video(platform: str):
     except (TypeError, ValueError):
         duration_seconds = VIDEO_DURATION_DEFAULT
     duration_seconds = max(VIDEO_DURATION_MIN, min(VIDEO_DURATION_MAX, duration_seconds))
+    video_provider, resolved_video_model = resolve_video_generation_choice(
+        form_values.get("video_generation_model", "")
+    )
+    if (
+        video_provider == "gemini"
+        and selected_reference_images
+        and resolved_video_model == "veo-3.1-generate-preview"
+        and duration_seconds != 8
+    ):
+        duration_seconds = 8
+        flash(
+            "Gemini Veo multi-image reference mode currently generates 8-second clips, so Kaymio used 8 seconds.",
+            "info",
+        )
 
     fitted_base_bytes = ensure_dimensions(base_bytes, (720, 1280))
     try:
@@ -3155,6 +3328,7 @@ def generate_platform_video(platform: str):
             duration_seconds=duration_seconds,
             aspect_ratio="9:16",
             resolution="720p",
+            reference_images=selected_reference_images,
         )
     except Exception as exc:
         flash(f"Unable to generate the {target} video: {exc}", "error")

@@ -66,6 +66,11 @@
         />
       {% endif %}
       <input type="hidden" name="selected_original_image" value="{{ values.get('selected_original_image', '') | e }}" />
+      <input
+        type="hidden"
+        name="selected_original_images"
+        value="{{ values.get('selected_original_images', '[]') | e }}"
+      />
     {%- endmacro %}
     {% macro editable_term_textarea(name, label, items, placeholder, disabled=false, help_text='') -%}
       <label>
@@ -279,11 +284,13 @@
             </button>
           </section>
           <input type="hidden" name="use_affiliate_link" value="{{ values.get('use_affiliate_link', '0') }}" />
+          <input type="hidden" name="selected_original_image" value="{{ values.get('selected_original_image', '') | e }}" />
+          <input type="hidden" name="selected_original_images" value="{{ values.get('selected_original_images', '[]') | e }}" />
 
           <section class="card">
             <div class="card-header">
               <h2>Manual product assets</h2>
-              <p>Upload product images, add more to the gallery, and choose the one to use across image and video generation.</p>
+              <p>Upload product images, add more to the gallery, and choose one or more to use across image and video generation.</p>
             </div>
             <label class="dropzone">
               <input
@@ -320,14 +327,14 @@
                           type="checkbox"
                           class="product-gallery-checkbox"
                           value="{{ image_choice.value }}"
-                          {% if image_choice.value == selected_original_image or loop.first %}checked{% endif %}
+                          {% if image_choice.value in selected_original_images %}checked{% endif %}
                         />
                         <span>Use this image</span>
                       </label>
                     </div>
                   {% endfor %}
                 </div>
-                <p class="muted">Pick the original image to use for Pinterest, Instagram, and video generation.</p>
+                <p class="muted">All checked images are used as product references. The first checked image becomes the main source.</p>
               </div>
             {% endif %}
             <p class="muted">Upload another image at any time to add it into the gallery, then select it like any fetched Amazon image.</p>
@@ -1281,6 +1288,9 @@
       const selectedImageHidden = document.querySelectorAll(
         'input[type="hidden"][name="selected_original_image"]'
       );
+      const selectedImagesHidden = document.querySelectorAll(
+        'input[type="hidden"][name="selected_original_images"]'
+      );
 
       function syncField(name, value) {
         document.querySelectorAll(`input[type="hidden"][name="${name}"]`).forEach((input) => {
@@ -1397,28 +1407,37 @@
       syncVideoDurationMode();
 
       if (selectedImageCheckboxes.length) {
+        function syncSelectedImages() {
+          const selectedValues = Array.from(selectedImageCheckboxes)
+            .filter((checkbox) => checkbox.checked)
+            .map((checkbox) => checkbox.value)
+            .filter(Boolean);
+
+          const primaryValue = selectedValues[0] || "";
+          selectedImageHidden.forEach((input) => {
+            input.value = primaryValue;
+          });
+          selectedImagesHidden.forEach((input) => {
+            input.value = JSON.stringify(selectedValues);
+          });
+        }
+
         const checked = document.querySelector(".product-gallery-checkbox:checked");
         if (checked) {
-          selectedImageHidden.forEach((input) => {
-            input.value = checked.value || "";
-          });
+          syncSelectedImages();
+        } else if (selectedImageCheckboxes[0]) {
+          selectedImageCheckboxes[0].checked = true;
+          syncSelectedImages();
         }
         selectedImageCheckboxes.forEach((checkbox) => {
           checkbox.addEventListener("change", () => {
-            if (!checkbox.checked) {
+            const checkedCount = Array.from(selectedImageCheckboxes).filter((item) => item.checked).length;
+            if (!checkbox.checked && checkedCount === 0) {
               checkbox.checked = true;
-              syncField("selected_original_image", checkbox.value);
+              syncSelectedImages();
               return;
             }
-
-            selectedImageCheckboxes.forEach((otherCheckbox) => {
-              if (otherCheckbox !== checkbox) {
-                otherCheckbox.checked = false;
-              }
-            });
-            selectedImageHidden.forEach((input) => {
-              input.value = checkbox.value || "";
-            });
+            syncSelectedImages();
           });
         });
       }
