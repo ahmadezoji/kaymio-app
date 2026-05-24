@@ -38,7 +38,11 @@ from openai_helper import (
     generate_text,
     generate_youtube_metadata,
 )
-from video_generation_config import build_video_generation_options, resolve_video_generation_choice
+from video_generation_config import (
+    build_video_generation_options,
+    normalize_openai_video_seconds,
+    resolve_video_generation_choice,
+)
 from pintrest.pinterest_helper import create_pinterest_pin, create_pinterest_video_pin
 from tiktok.tiktok_api_helper import publish_tiktok_post
 from youtube.youtube_api_helper import publish_short_video
@@ -1230,6 +1234,193 @@ def generate_platform_video_with_selected_model(
         model=resolved_model,
         context=context,
     )
+
+
+def _video_platform_state_key(target: str) -> str:
+    return "instagram_reel" if target == "instagram" else target
+
+
+def _video_generation_processing_payload(target: str) -> Dict[str, Any]:
+    if target == "pinterest":
+        return {"generation_status": "processing", "generation_error": ""}
+    return {"generation_status": "processing", "generation_error": "", "status": "processing"}
+
+
+def _video_generation_ready_payload(
+    *,
+    target: str,
+    video_path: str,
+    base_image_path: str,
+    use_affiliate_link_flag: bool,
+) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {
+        "generation_status": "ready",
+        "generation_error": "",
+        "video_path": video_path,
+        "base_image_path": base_image_path,
+        "use_affiliate_link": use_affiliate_link_flag,
+    }
+    if target == "pinterest":
+        payload["video_status"] = "pending"
+    else:
+        payload["status"] = "pending"
+    return payload
+
+
+def _video_generation_error_payload(target: str, message: str) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {
+        "generation_status": "error",
+        "generation_error": message,
+    }
+    if target != "pinterest":
+        payload["status"] = "pending"
+    return payload
+
+
+def _complete_video_generation_state(
+    *,
+    target: str,
+    product_id: str,
+    form_values: Dict[str, str],
+    preview_payload: Dict[str, Any],
+    video_path: str,
+    duration_seconds: int,
+    boost_prompt: str,
+    base_image_path: str,
+    use_affiliate_link_flag: bool,
+) -> None:
+    if target == "youtube":
+        preview_payload["youtube_boost_prompt"] = boost_prompt
+    elif target == "instagram":
+        preview_payload["instagram_boost_prompt"] = boost_prompt
+    preview_payload["generated_video_path"] = video_path
+    preview_payload["video_duration_seconds"] = str(duration_seconds)
+    try:
+        preview_payload["video_url"] = url_for("serve_media", filename=video_path)
+        preview_payload["video_public_url"] = url_for(
+            "serve_media", filename=video_path, _external=True
+        )
+        preview_payload["video_download_url"] = url_for("download_media", filename=video_path)
+    except RuntimeError:
+        preview_payload["video_url"] = ""
+        preview_payload["video_public_url"] = ""
+        preview_payload["video_download_url"] = ""
+
+    update_product_state(
+        product_id,
+        form_values=form_values,
+        preview=preview_payload,
+        platforms={
+            _video_platform_state_key(target): _video_generation_ready_payload(
+                target=target,
+                video_path=video_path,
+                base_image_path=base_image_path,
+                use_affiliate_link_flag=use_affiliate_link_flag,
+            )
+        },
+        assets={"generated_video_path": video_path},
+    )
+
+
+def _run_openai_video_generation_async(
+    *,
+    target: str,
+    product_id: str,
+    form_values: Dict[str, str],
+    preview_payload: Dict[str, Any],
+    base_image_bytes: bytes,
+    reference_images: Sequence[bytes],
+    prompt: str,
+    context: str,
+    duration_seconds: int,
+    base_image_path: str,
+    boost_prompt: str,
+    use_affiliate_link_flag: bool,
+) -> None:
+    try:
+        with app.app_context():
+            video_bytes = generate_platform_video_with_selected_model(
+                base_image_bytes,
+                prompt=prompt,
+                video_generation_model=form_values.get("video_generation_model", ""),
+                context=context,
+                duration_seconds=duration_seconds,
+                aspect_ratio="9:16",
+                resolution="720p",
+                reference_images=reference_images,
+            )
+            video_path = save_generated_video(video_bytes)
+            _complete_video_generation_state(
+                target=target,
+                product_id=product_id,
+                form_values=form_values,
+                preview_payload=preview_payload,
+                video_path=video_path,
+                duration_seconds=duration_seconds,
+                boost_prompt=boost_prompt,
+                base_image_path=base_image_path,
+                use_affiliate_link_flag=use_affiliate_link_flag,
+            )
+    except Exception as exc:
+        app.logger.exception("Async OpenAI video generation failed for %s", target)
+        with app.app_context():
+            update_product_state(
+                product_id,
+                form_values=form_values,
+                preview=preview_payload,
+                platforms={
+                    _video_platform_state_key(target): _video_generation_error_payload(
+                        target,
+                        str(exc),
+                    )
+                },
+            )
+
+
+def _start_openai_video_generation_job(
+    *,
+    target: str,
+    product_id: str,
+    form_values: Dict[str, str],
+    preview_payload: Dict[str, Any],
+    base_image_bytes: bytes,
+    reference_images: Sequence[bytes],
+    prompt: str,
+    context: str,
+    duration_seconds: int,
+    base_image_path: str,
+    boost_prompt: str,
+    use_affiliate_link_flag: bool,
+) -> None:
+    update_product_state(
+        product_id,
+        form_values=form_values,
+        preview=preview_payload,
+        platforms={
+            _video_platform_state_key(target): _video_generation_processing_payload(target)
+        },
+    )
+
+    thread = threading.Thread(
+        target=_run_openai_video_generation_async,
+        kwargs={
+            "target": target,
+            "product_id": product_id,
+            "form_values": dict(form_values),
+            "preview_payload": dict(preview_payload),
+            "base_image_bytes": bytes(base_image_bytes),
+            "reference_images": list(reference_images),
+            "prompt": prompt,
+            "context": context,
+            "duration_seconds": duration_seconds,
+            "base_image_path": base_image_path,
+            "boost_prompt": boost_prompt,
+            "use_affiliate_link_flag": use_affiliate_link_flag,
+        },
+        name=f"openai-video-{target}-{product_id[:24]}",
+        daemon=True,
+    )
+    thread.start()
 
 
 def render_home_view(
@@ -3135,6 +3326,11 @@ def generate_platform_video(platform: str):
     product_id = resolve_product_id(form_values)
     preview_payload = rebuild_preview_payload(raw_form_values)
     saved_state = get_product_state(product_id) if product_id else {}
+    if product_id:
+        active_video_state = get_platform_state(saved_state, _video_platform_state_key(target))
+        if active_video_state.get("generation_status") == "processing":
+            flash("A video generation job is already running for this platform. Refresh in a moment.", "info")
+            return render_home_view(form_values, preview_payload, product_id=product_id)
     base_image_path = (
         raw_form_values.get("original_image_path")
         or raw_form_values.get("instagram_image_path")
@@ -3306,6 +3502,14 @@ def generate_platform_video(platform: str):
     video_provider, resolved_video_model = resolve_video_generation_choice(
         form_values.get("video_generation_model", "")
     )
+    if video_provider == "openai":
+        normalized_openai_seconds = normalize_openai_video_seconds(duration_seconds)
+        if normalized_openai_seconds != duration_seconds:
+            duration_seconds = normalized_openai_seconds
+            flash(
+                f"OpenAI video generation supports 4, 8, or 12 seconds. Kaymio used {duration_seconds} seconds.",
+                "info",
+            )
     if (
         video_provider == "gemini"
         and selected_reference_images
@@ -3319,6 +3523,28 @@ def generate_platform_video(platform: str):
         )
 
     fitted_base_bytes = ensure_dimensions(base_bytes, (720, 1280))
+    preview_payload = preview_payload or {}
+    if video_provider == "openai" and product_id:
+        _start_openai_video_generation_job(
+            target=target,
+            product_id=product_id,
+            form_values=form_values,
+            preview_payload=preview_payload,
+            base_image_bytes=fitted_base_bytes,
+            reference_images=selected_reference_images,
+            prompt=prompt,
+            context=video_context_prompt,
+            duration_seconds=duration_seconds,
+            base_image_path=base_image_path,
+            boost_prompt=boost_prompt,
+            use_affiliate_link_flag=use_affiliate_link_flag,
+        )
+        flash(
+            f"{('Instagram Reel' if target == 'instagram' else target.title())} video generation started. Refresh in a moment to see the result.",
+            "info",
+        )
+        return redirect_home_view()
+
     try:
         video_bytes = generate_platform_video_with_selected_model(
             fitted_base_bytes,
@@ -3335,37 +3561,19 @@ def generate_platform_video(platform: str):
         return render_home_view(form_values, preview_payload, product_id=product_id)
 
     video_path = save_generated_video(video_bytes)
-    preview_payload = preview_payload or {}
-    if target == "youtube":
-        preview_payload["youtube_boost_prompt"] = boost_prompt
-    elif target == "instagram":
-        preview_payload["instagram_boost_prompt"] = boost_prompt
-    preview_payload["generated_video_path"] = video_path
-    preview_payload["video_duration_seconds"] = str(duration_seconds)
-    preview_payload["video_url"] = url_for("serve_media", filename=video_path)
-    preview_payload["video_public_url"] = url_for(
-        "serve_media", filename=video_path, _external=True
-    )
-
     target_label = "Instagram" if target == "instagram" else target.title()
     platform_key = "instagram_reel" if target == "instagram" else target
-    platform_payload = {
-        "status": "pending",
-        "video_path": video_path,
-        "base_image_path": base_image_path,
-        "use_affiliate_link": use_affiliate_link_flag,
-    }
-    if target == "pinterest":
-        # Keep image pin publication status intact; track video state separately.
-        platform_payload.pop("status", None)
-        platform_payload["video_status"] = "pending"
     flash(f"{target_label} video generated.", "success")
-    update_product_state(
-        product_id,
+    _complete_video_generation_state(
+        target=target,
+        product_id=product_id,
         form_values=form_values,
-        preview=preview_payload,
-        platforms={platform_key: platform_payload},
-        assets={"generated_video_path": video_path},
+        preview_payload=preview_payload,
+        video_path=video_path,
+        duration_seconds=duration_seconds,
+        boost_prompt=boost_prompt,
+        base_image_path=base_image_path,
+        use_affiliate_link_flag=use_affiliate_link_flag,
     )
     return redirect_home_view()
 

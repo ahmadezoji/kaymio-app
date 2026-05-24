@@ -190,11 +190,22 @@
         {% set platforms_locked = not website_published %}
         {% set has_saved_image = preview_data.original_image_path or values.get('original_image_path') %}
         {% set instagram_state = platform_states.get('instagram', {}) %}
+        {% set instagram_reel_state = instagram_state.get('instagram_reel', {}) %}
         {% set instagram_feed_published = instagram_state.get('instagram_feed', {}).get('status') == 'published' %}
         {% set instagram_story_published = instagram_state.get('instagram_story', {}).get('status') == 'published' %}
-        {% set instagram_reel_published = instagram_state.get('instagram_reel', {}).get('status') == 'published' %}
-        {% set youtube_published = platform_states.get('youtube', {}).get('status') == 'published' %}
-        {% set tiktok_published = platform_states.get('tiktok', {}).get('status') == 'published' %}
+        {% set instagram_reel_published = instagram_reel_state.get('status') == 'published' %}
+        {% set instagram_reel_generating = instagram_reel_state.get('generation_status') == 'processing' %}
+        {% set instagram_reel_generation_error = instagram_reel_state.get('generation_error', '') %}
+        {% set youtube_state = platform_states.get('youtube', {}) %}
+        {% set youtube_published = youtube_state.get('status') == 'published' %}
+        {% set youtube_generating = youtube_state.get('generation_status') == 'processing' %}
+        {% set youtube_generation_error = youtube_state.get('generation_error', '') %}
+        {% set tiktok_state = platform_states.get('tiktok', {}) %}
+        {% set tiktok_published = tiktok_state.get('status') == 'published' %}
+        {% set tiktok_generating = tiktok_state.get('generation_status') == 'processing' %}
+        {% set tiktok_generation_error = tiktok_state.get('generation_error', '') %}
+        {% set pinterest_video_generating = pinterest_state.get('generation_status') == 'processing' %}
+        {% set pinterest_video_generation_error = pinterest_state.get('generation_error', '') %}
         {% set active_image_generation_model = values.get('image_generation_model') or image_generation_options.default_model %}
         {% set active_video_generation_model = values.get('video_generation_model') or video_generation_options.default_model %}
         {% if product_ids %}
@@ -666,10 +677,15 @@
                 {% else %}
                   <p class="muted">Generate a Pinterest-ready video from the current visual.</p>
                 {% endif %}
+                {% if pinterest_video_generating %}
+                  <p class="muted">Video generation is running in the background. Refresh in a moment.</p>
+                {% elif pinterest_video_generation_error %}
+                  <p class="muted">Last video generation failed: {{ pinterest_video_generation_error }}</p>
+                {% endif %}
                 {% if has_preview %}
                   <form method="post" action="{{ url_for('generate_platform_video', platform='pinterest') }}">
                     {{ preview_hidden_inputs(preview_data, values) }}
-                    <button type="submit" class="ghost-btn" {% if platforms_locked %}disabled{% endif %}>
+                    <button type="submit" class="ghost-btn" {% if platforms_locked or pinterest_video_generating %}disabled{% endif %}>
                       Generate Pinterest video
                     </button>
                   </form>
@@ -920,6 +936,11 @@
                 {% else %}
                   <p class="muted">Generate a Reel-ready video to unlock publishing.</p>
                 {% endif %}
+                {% if instagram_reel_generating %}
+                  <p class="muted">Video generation is running in the background. Refresh in a moment.</p>
+                {% elif instagram_reel_generation_error %}
+                  <p class="muted">Last video generation failed: {{ instagram_reel_generation_error }}</p>
+                {% endif %}
                 {% if has_preview or has_saved_image %}
                   <form method="post" action="{{ url_for('generate_platform_video', platform='instagram') }}">
                   <p class="muted">Tip: add wardrobe, lighting, or mood references to guide the Reel.</p>
@@ -941,7 +962,7 @@
                   </label>
                   {{ video_duration_fields(values, preview_data, 'Reel duration (seconds)', instagram_reel_published or platforms_locked) }}
                   {{ preview_hidden_inputs(preview_data, values, include_video_duration=false) }}
-                  <button type="submit" class="ghost-btn" {% if instagram_reel_published or platforms_locked %}disabled{% endif %}>
+                  <button type="submit" class="ghost-btn" {% if instagram_reel_published or platforms_locked or instagram_reel_generating %}disabled{% endif %}>
                     Generate Instagram Reel
                   </button>
                 </form>
@@ -1025,6 +1046,11 @@
               {% else %}
                 <p class="muted">Use the generate button to create a Short before publishing.</p>
               {% endif %}
+              {% if youtube_generating %}
+                <p class="muted">Video generation is running in the background. Refresh in a moment.</p>
+              {% elif youtube_generation_error %}
+                <p class="muted">Last video generation failed: {{ youtube_generation_error }}</p>
+              {% endif %}
               <dl>
                 <dt>Title</dt>
                 <dd>{{ preview_data.youtube_title if has_preview else 'Awaiting creative...' }}</dd>
@@ -1085,7 +1111,7 @@
                     Tip: remind Gemini the footage is brand-safe (e.g., “feature a generic model wearing this stylish jacket, no logos visible”).
                   </p>
                   {{ preview_hidden_inputs(preview_data, values, include_video_duration=false) }}
-                  <button type="submit" class="ghost-btn" {% if youtube_published or platforms_locked %}disabled{% endif %}>
+                  <button type="submit" class="ghost-btn" {% if youtube_published or platforms_locked or youtube_generating %}disabled{% endif %}>
                     Generate YouTube Short
                   </button>
                 </form>
@@ -1209,12 +1235,17 @@
                       <option value="aesthetic" {% if hook_pref == 'aesthetic' %}selected{% endif %}>Aesthetic</option>
                     </select>
                   </label>
-                  <button type="submit" class="ghost-btn" {% if tiktok_published or platforms_locked %}disabled{% endif %}>
+                  <button type="submit" class="ghost-btn" {% if tiktok_published or platforms_locked or tiktok_generating %}disabled{% endif %}>
                     Generate TikTok video
                   </button>
                 </form>
               {% else %}
                 <p class="muted">Generate a Shorts-style video before sending it to TikTok.</p>
+              {% endif %}
+              {% if tiktok_generating %}
+                <p class="muted">Video generation is running in the background. Refresh in a moment.</p>
+              {% elif tiktok_generation_error %}
+                <p class="muted">Last video generation failed: {{ tiktok_generation_error }}</p>
               {% endif %}
               {% if preview_data.video_url %}
                 <form method="post" action="{{ url_for('publish_tiktok') }}">
