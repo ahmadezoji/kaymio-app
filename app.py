@@ -3389,7 +3389,7 @@ def publish_tiktok():
 
 if __name__ == "__main__":
     debug_enabled = True
-    # if not debug_enabled or os.getenv("WERKZEUG_RUN_MAIN") == "true":
-        # start_instagram_story_scheduler()
-    # app.run(debug=debug_enabled, host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
-    update_affiliate_links()
+    if not debug_enabled or os.getenv("WERKZEUG_RUN_MAIN") == "true":
+        start_instagram_story_scheduler()
+    app.run(debug=debug_enabled, host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
+    # update_affiliate_links()
