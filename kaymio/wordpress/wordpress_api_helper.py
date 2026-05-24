@@ -338,8 +338,8 @@ def update_affiliate_links():
     Fetch all WooCommerce products, find products with Amazon affiliate links
     containing the old tag, and update them with the new tag.
     """
-    old_tag = "picksmix01-20"
-    new_tag = "kaymio-20"
+    old_tag = "kaymio-20"
+    new_tag = "kaymio09-20"
     amazon_url_pattern = r"https://www\.amazon\.com/dp/([A-Z0-9]{10})\?tag=" + old_tag
 
     try:
@@ -436,5 +436,5 @@ def delete_woocommerce_product(product_id: int):
 
 if __name__ == "__main__":
     # ppid  = get_category_id_by_name("🧒 Kids & Baby")
-    print(f"Category ID for '🧒 Kids & Baby':")
-    # update_affiliate_links()
+    # print(f"Category ID for '🧒 Kids & Baby':")
+    update_affiliate_links()

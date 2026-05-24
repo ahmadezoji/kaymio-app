@@ -13,7 +13,7 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}" />
   </head>
   <body>
-    {% macro preview_hidden_inputs(preview, values) -%}
+    {% macro preview_hidden_inputs(preview, values, include_video_duration=true) -%}
       <input type="hidden" name="market" value="{{ values.get('market', '') | e }}" />
       <input type="hidden" name="sku_or_url" value="{{ values.get('sku_or_url', '') | e }}" />
       <input type="hidden" name="title" value="{{ preview.title | e }}" />
@@ -58,11 +58,13 @@
         name="video_generation_model"
         value="{{ (values.get('video_generation_model') or video_generation_options.default_model or '') | e }}"
       />
-      <input
-        type="hidden"
-        name="video_duration_seconds"
-        value="{{ (values.get('video_duration_seconds') or preview.video_duration_seconds or '8') | e }}"
-      />
+      {% if include_video_duration %}
+        <input
+          type="hidden"
+          name="video_duration_seconds"
+          value="{{ (values.get('video_duration_seconds') or preview.video_duration_seconds or '8') | e }}"
+        />
+      {% endif %}
       <input type="hidden" name="selected_original_image" value="{{ values.get('selected_original_image', '') | e }}" />
     {%- endmacro %}
     {% macro editable_term_textarea(name, label, items, placeholder, disabled=false, help_text='') -%}
@@ -78,6 +80,41 @@
       {% if help_text %}
         <p class="muted">{{ help_text }}</p>
       {% endif %}
+    {%- endmacro %}
+    {% macro video_duration_fields(values, preview, label='Video duration (seconds)', disabled=false) -%}
+      {% set current_duration = values.get('video_duration_seconds') or preview.video_duration_seconds or '8' %}
+      <div class="video-duration-control" data-video-duration-control>
+        <label data-video-duration-mode="gemini">
+          <span>{{ label }}</span>
+          <input
+            type="number"
+            name="video_duration_seconds"
+            min="4"
+            max="60"
+            step="1"
+            value="{{ current_duration | e }}"
+            data-video-duration-input="gemini"
+            {% if disabled %}disabled{% endif %}
+          />
+        </label>
+        <label data-video-duration-mode="openai" hidden>
+          <span>{{ label }}</span>
+          <div class="input-shell">
+            <select
+              name="video_duration_seconds"
+              data-video-duration-input="openai"
+              {% if disabled %}disabled{% endif %}
+            >
+              {% for seconds in video_generation_options.openai_allowed_seconds %}
+                <option value="{{ seconds }}" {% if seconds|string == current_duration|string %}selected{% endif %}>
+                  {{ seconds }} seconds
+                </option>
+              {% endfor %}
+            </select>
+          </div>
+          <p class="muted">OpenAI video supports only {{ video_generation_options.openai_allowed_seconds | join(', ') }} seconds.</p>
+        </label>
+      </div>
     {%- endmacro %}
     {% macro platform_reset_button(platform, label, sku) -%}
       <div class="card-header-actions">
@@ -321,7 +358,7 @@
                       {% if group.models %}
                         <optgroup label="{{ group.label }}">
                           {% for model_name in group.models %}
-                            <option value="{{ model_name }}" {% if model_name == active_video_generation_model %}selected{% endif %}>
+                            <option value="{{ model_name }}" data-provider="{{ group.provider }}" {% if model_name == active_video_generation_model %}selected{% endif %}>
                               {{ model_name }}
                             </option>
                           {% endfor %}
@@ -895,7 +932,8 @@
                       <option value="aesthetic" {% if hook_pref == 'aesthetic' %}selected{% endif %}>Aesthetic</option>
                     </select>
                   </label>
-                  {{ preview_hidden_inputs(preview_data, values) }}
+                  {{ video_duration_fields(values, preview_data, 'Reel duration (seconds)', instagram_reel_published or platforms_locked) }}
+                  {{ preview_hidden_inputs(preview_data, values, include_video_duration=false) }}
                   <button type="submit" class="ghost-btn" {% if instagram_reel_published or platforms_locked %}disabled{% endif %}>
                     Generate Instagram Reel
                   </button>
@@ -1006,7 +1044,7 @@
               {% endif %}
               {% if has_preview %}
                 <form method="post" action="{{ url_for('generate_platform_video', platform='youtube') }}">
-                                    <label>
+                  <label>
                     <span>Hook style</span>
                     <select name="video_hook_style" {% if youtube_published or platforms_locked %}disabled{% endif %}>
                       {% set hook_pref = values.get('video_hook_style', '') %}
@@ -1022,18 +1060,7 @@
                       <option value="aesthetic" {% if hook_pref == 'aesthetic' %}selected{% endif %}>Aesthetic</option>
                     </select>
                   </label>
-<label>
-                    <span>Short duration (seconds)</span>
-                    <input
-                      type="number"
-                      name="video_duration_seconds"
-                      min="4"
-                      max="60"
-                      step="1"
-                      value="{{ preview_data.video_duration_seconds or 8 }}"
-                      {% if youtube_published or platforms_locked %}disabled{% endif %}
-                    />
-                  </label>
+                  {{ video_duration_fields(values, preview_data, 'Short duration (seconds)', youtube_published or platforms_locked) }}
                   {% set youtube_boost_pref = values.get('youtube_boost_prompt', '') %}
                   {% if not youtube_boost_pref %}
                     {% set youtube_boost_pref = preview_data.youtube_boost_prompt | default('', true) %}
@@ -1050,7 +1077,7 @@
                   <p class="muted">
                     Tip: remind Gemini the footage is brand-safe (e.g., “feature a generic model wearing this stylish jacket, no logos visible”).
                   </p>
-                  {{ preview_hidden_inputs(preview_data, values) }}
+                  {{ preview_hidden_inputs(preview_data, values, include_video_duration=false) }}
                   <button type="submit" class="ghost-btn" {% if youtube_published or platforms_locked %}disabled{% endif %}>
                     Generate YouTube Short
                   </button>
@@ -1238,6 +1265,7 @@
   </body>
   <script>
     (function () {
+      const openAIDurationOptions = {{ video_generation_options.openai_allowed_seconds | tojson }};
       const boostInput = document.querySelector('textarea[name="youtube_boost_prompt"]');
       const instagramBoostInput = document.querySelector('textarea[name="instagram_boost_prompt"]');
       const imageGenerationModelSelect = document.querySelector(
@@ -1246,9 +1274,9 @@
       const videoGenerationModelSelect = document.querySelector(
         'select[name="video_generation_model"]'
       );
-      const durationInput = document.querySelector(
-        'input[type="number"][name="video_duration_seconds"]'
-      );
+      const videoDurationControls = document.querySelectorAll("[data-video-duration-control]");
+      const videoDurationInputs = document.querySelectorAll('[data-video-duration-input="gemini"]');
+      const videoDurationSelects = document.querySelectorAll('[data-video-duration-input="openai"]');
       const selectedImageCheckboxes = document.querySelectorAll(".product-gallery-checkbox");
       const selectedImageHidden = document.querySelectorAll(
         'input[type="hidden"][name="selected_original_image"]'
@@ -1258,6 +1286,79 @@
         document.querySelectorAll(`input[type="hidden"][name="${name}"]`).forEach((input) => {
           input.value = value || "";
         });
+      }
+
+      function getSelectedVideoProvider() {
+        if (!videoGenerationModelSelect) {
+          return "gemini";
+        }
+        const selectedOption =
+          videoGenerationModelSelect.options[videoGenerationModelSelect.selectedIndex];
+        return selectedOption?.dataset.provider || "gemini";
+      }
+
+      function normalizeOpenAIDuration(value) {
+        if (!openAIDurationOptions.length) {
+          return String(value || "8");
+        }
+        const numericValue = Number.parseInt(String(value || ""), 10);
+        if (Number.isNaN(numericValue)) {
+          return String(openAIDurationOptions[0]);
+        }
+        return String(
+          openAIDurationOptions.reduce((closest, candidate) => {
+            return Math.abs(candidate - numericValue) < Math.abs(closest - numericValue)
+              ? candidate
+              : closest;
+          }, openAIDurationOptions[0])
+        );
+      }
+
+      function syncVideoDuration(value, provider) {
+        const activeProvider = provider || getSelectedVideoProvider();
+        let nextValue = String(value || "").trim();
+        if (!nextValue) {
+          nextValue = "8";
+        }
+        if (activeProvider === "openai") {
+          nextValue = normalizeOpenAIDuration(nextValue);
+        }
+
+        syncField("video_duration_seconds", nextValue);
+        videoDurationInputs.forEach((input) => {
+          if (input.value !== nextValue) {
+            input.value = nextValue;
+          }
+        });
+
+        const openAIValue = normalizeOpenAIDuration(nextValue);
+        videoDurationSelects.forEach((select) => {
+          if (select.value !== openAIValue) {
+            select.value = openAIValue;
+          }
+        });
+      }
+
+      function syncVideoDurationMode() {
+        if (!videoDurationControls.length) {
+          return;
+        }
+        const activeProvider = getSelectedVideoProvider();
+        videoDurationControls.forEach((control) => {
+          control.querySelectorAll("[data-video-duration-mode]").forEach((field) => {
+            field.hidden = field.dataset.videoDurationMode !== activeProvider;
+          });
+        });
+
+        const firstHiddenDuration = document.querySelector(
+          'input[type="hidden"][name="video_duration_seconds"]'
+        );
+        const currentDuration =
+          firstHiddenDuration?.value ||
+          (videoDurationInputs.length ? videoDurationInputs[0].value : "") ||
+          (videoDurationSelects.length ? videoDurationSelects[0].value : "") ||
+          "8";
+        syncVideoDuration(currentDuration, activeProvider);
       }
 
       if (boostInput) {
@@ -1281,15 +1382,19 @@
 
       if (videoGenerationModelSelect) {
         syncField("video_generation_model", videoGenerationModelSelect.value);
-        videoGenerationModelSelect.addEventListener("change", () =>
-          syncField("video_generation_model", videoGenerationModelSelect.value)
-        );
+        videoGenerationModelSelect.addEventListener("change", () => {
+          syncField("video_generation_model", videoGenerationModelSelect.value);
+          syncVideoDurationMode();
+        });
       }
 
-      if (durationInput) {
-        syncField("video_duration_seconds", durationInput.value);
-        durationInput.addEventListener("input", () => syncField("video_duration_seconds", durationInput.value));
-      }
+      videoDurationInputs.forEach((input) => {
+        input.addEventListener("input", () => syncVideoDuration(input.value, "gemini"));
+      });
+      videoDurationSelects.forEach((select) => {
+        select.addEventListener("change", () => syncVideoDuration(select.value, "openai"));
+      });
+      syncVideoDurationMode();
 
       if (selectedImageCheckboxes.length) {
         const checked = document.querySelector(".product-gallery-checkbox:checked");

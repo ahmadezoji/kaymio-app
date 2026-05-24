@@ -46,6 +46,7 @@ from kaymio.wordpress.wordpress_api_helper import (
     create_woocommerce_product,
     find_wordpress_nearest_category,
     list_woocommerce_products,
+    update_affiliate_links,
 )
 from PIL import Image, ImageOps
 from analytics_view import analytics_bp
@@ -799,6 +800,7 @@ FORM_COMMON_KEYS = {
     "original_image_path",
     "image_generation_model",
     "video_generation_model",
+    "video_duration_seconds",
     "video_hook_style",
 }
 
@@ -1731,6 +1733,7 @@ def extract_form_defaults(raw_form_values: Dict[str, str]) -> Dict[str, str]:
             "selected_original_image",
             "image_generation_model",
             "video_generation_model",
+            "video_duration_seconds",
         )
     }
     defaults["website_boost_prompt"] = (
@@ -1810,6 +1813,7 @@ def rebuild_preview_payload(raw_form_values: Dict[str, str]):
         "instagram_boost_prompt": raw_form_values.get("instagram_boost_prompt", ""),
         "video_hook_style": raw_form_values.get("video_hook_style", ""),
         "youtube_boost_prompt": raw_form_values.get("youtube_boost_prompt", ""),
+        "video_duration_seconds": raw_form_values.get("video_duration_seconds", ""),
         "use_affiliate_link": (
             raw_form_values.get("use_affiliate_link")
             or raw_form_values.get("use_affiliate_link_pref")
@@ -3385,7 +3389,7 @@ def publish_tiktok():
 
 if __name__ == "__main__":
     debug_enabled = True
-    # Avoid duplicate scheduler thread when Flask debug reloader spawns parent process.
-    if not debug_enabled or os.getenv("WERKZEUG_RUN_MAIN") == "true":
-        start_instagram_story_scheduler()
-    app.run(debug=debug_enabled, host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
+    # if not debug_enabled or os.getenv("WERKZEUG_RUN_MAIN") == "true":
+        # start_instagram_story_scheduler()
+    # app.run(debug=debug_enabled, host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
+    update_affiliate_links()

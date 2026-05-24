@@ -74,6 +74,7 @@ def build_video_generation_options() -> Dict[str, object]:
     default_model = get_default_video_generation_model()
     return {
         "default_model": default_model,
+        "openai_allowed_seconds": list(OPENAI_VIDEO_ALLOWED_SECONDS),
         "groups": [
             {"provider": "gemini", "label": "Gemini", "models": gemini_models},
             {"provider": "openai", "label": "OpenAI", "models": openai_models},
