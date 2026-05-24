@@ -7,6 +7,7 @@ import json
 import logging
 import math
 import os
+import random
 import time
 from typing import Dict, List, Optional, Sequence, Tuple, Union
 
@@ -733,6 +734,50 @@ def generate_story_cta_text(product_title: str = "", description: str = "", capt
         "headline": " ".join(headline.split()[:4]) or fallback_title,
         "body": " ".join(body.split()[:8]) or fallback_body,
     }
+
+
+def generate_instagram_comment_acknowledgement(
+    product_title: str = "",
+    *,
+    trigger_text: str = "",
+) -> str:
+    """Generate a short public reply telling the commenter to check DM."""
+
+    fallback_options = [
+        "Thanks for your comment. I just sent the product info in DM.",
+        "Thanks. The product link and details are in your DM now.",
+        "Appreciate your comment. Check your DM for the product details.",
+        "Thanks for commenting. I sent the link and product info by DM.",
+        "Got it. The product details are waiting in your DM.",
+    ]
+    fallback_text = random.choice(fallback_options)
+    system_prompt = (
+        "Write one short public Instagram comment reply. "
+        "Goal: thank the commenter and say the product details or link have been sent by direct message. "
+        "Keep it friendly, natural, and under 18 words. "
+        "Do not use hashtags, emojis, markdown, or quotation marks. "
+        "Return plain text only."
+    )
+    user_prompt = (
+        f"Product title: {product_title or 'Unknown product'}\n"
+        f"Trigger keyword: {trigger_text or 'buy'}\n"
+        "Create one varied acknowledgement comment."
+    )
+    text = _generate_response_text(
+        system_prompt,
+        user_prompt,
+        temperature=0.95,
+        max_output_tokens=80,
+    )
+    if not text:
+        return fallback_text
+
+    cleaned = " ".join(str(text).replace("\n", " ").replace('"', "").split()).strip()
+    if not cleaned:
+        return fallback_text
+    if len(cleaned) > 180:
+        cleaned = cleaned[:177].rstrip(" ,.!?;:") + "..."
+    return cleaned
 
 
 def find_nearest_category(title, categories):

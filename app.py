@@ -24,6 +24,7 @@ from instagram.instagram_api_helper import (
     publish_random_profile_story,
     publish_instagram_reel,
     publish_instagram_story,
+    send_instagram_comment_reply,
     send_instagram_message,
     send_instagram_private_reply,
 )
@@ -34,6 +35,7 @@ from openai_helper import (
     generate_caption_for_tiktok,
     generate_hashtags_for_instagram,
     generate_hashtags_for_tiktok,
+    generate_instagram_comment_acknowledgement,
     generate_tags_for_product_for_pintrest,
     generate_text,
     generate_youtube_metadata,
@@ -104,7 +106,11 @@ STORY_AUTOPUBLISH_COUNT = int(os.getenv("INSTAGRAM_STORY_AUTOPUBLISH_COUNT", "2"
 STORY_AUTOPUBLISH_ENABLED = os.getenv("INSTAGRAM_STORY_AUTOPUBLISH_ENABLED", "1") in TRUTHY_VALUES
 STORY_AUTOPUBLISH_STATE_FILE = STATE_DIR / "instagram_story_scheduler.json"
 INSTAGRAM_MEDIA_REPLY_ROUTE_FILE = STATE_DIR / "instagram_story_routes.json"
+INSTAGRAM_COMMENT_REPLY_STATE_FILE = STATE_DIR / "instagram_comment_reply_state.json"
 INSTAGRAM_WEBHOOK_VERIFY_TOKEN = os.getenv("INSTAGRAM_WEBHOOK_VERIFY_TOKEN", "")
+INSTAGRAM_PUBLIC_COMMENT_REPLY_ENABLED = (
+    os.getenv("INSTAGRAM_PUBLIC_COMMENT_REPLY_ENABLED", "1") in TRUTHY_VALUES
+)
 INSTAGRAM_COMMENT_REPLY_TRIGGER_TOKENS = [
     token.strip()
     for token in os.getenv("INSTAGRAM_COMMENT_REPLY_TRIGGER_VALUES", "buy").split(",")
@@ -167,6 +173,41 @@ def _load_instagram_media_reply_route_state() -> Dict[str, Any]:
 
 def _save_instagram_media_reply_route_state(payload: Dict[str, Any]) -> None:
     INSTAGRAM_MEDIA_REPLY_ROUTE_FILE.write_text(json.dumps(payload, indent=2))
+
+
+def _load_instagram_comment_reply_state() -> Dict[str, Any]:
+    if not INSTAGRAM_COMMENT_REPLY_STATE_FILE.exists():
+        return {}
+    try:
+        payload = json.loads(INSTAGRAM_COMMENT_REPLY_STATE_FILE.read_text())
+        return payload if isinstance(payload, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_instagram_comment_reply_state(payload: Dict[str, Any]) -> None:
+    INSTAGRAM_COMMENT_REPLY_STATE_FILE.write_text(json.dumps(payload, indent=2))
+
+
+def _update_instagram_comment_reply_state(comment_id: str, **fields: Any) -> Dict[str, Any]:
+    normalized_comment_id = str(comment_id or "").strip()
+    if not normalized_comment_id:
+        return {}
+    state = _load_instagram_comment_reply_state()
+    entry = dict(state.get(normalized_comment_id) or {})
+    entry.update(
+        {
+            key: value
+            for key, value in fields.items()
+            if value not in (None, "")
+        }
+    )
+    if "created_at" not in entry:
+        entry["created_at"] = dt.datetime.utcnow().isoformat()
+    entry["updated_at"] = dt.datetime.utcnow().isoformat()
+    state[normalized_comment_id] = entry
+    _save_instagram_comment_reply_state(state)
+    return entry
 
 
 def _register_instagram_media_reply_route(
@@ -306,6 +347,13 @@ def _build_instagram_affiliate_reply(route_entry: Dict[str, Any]) -> str:
     if product_url:
         parts.append(f"You can also find it on our website:\n{product_url}")
     return "\n\n".join(part for part in parts if part)
+
+
+def _build_instagram_comment_public_acknowledgement(route_entry: Dict[str, Any]) -> str:
+    return generate_instagram_comment_acknowledgement(
+        str(route_entry.get("title") or "").strip(),
+        trigger_text=INSTAGRAM_COMMENT_REPLY_DISPLAY_TRIGGER,
+    )
 
 
 def _random_affiliate_link_from_state() -> Optional[str]:
@@ -668,13 +716,91 @@ def _handle_instagram_comment_change(change: Dict[str, Any]) -> None:
             comment_id,
         )
         return
-    send_instagram_private_reply(comment_id=comment_id, text=reply_text)
+    reply_status = _load_instagram_comment_reply_state().get(comment_id) or {}
+    private_reply_sent = bool(
+        reply_status.get("private_reply_message_id") or reply_status.get("private_reply_sent_at")
+    )
+    public_reply_sent = bool(reply_status.get("public_reply_id") or reply_status.get("public_reply_sent_at"))
+    if private_reply_sent and (public_reply_sent or not INSTAGRAM_PUBLIC_COMMENT_REPLY_ENABLED):
+        app.logger.info(
+            "Instagram comment webhook skipped: reply already processed. media_id=%s comment_id=%s",
+            media_id,
+            comment_id,
+        )
+        return
+
+    if not private_reply_sent:
+        try:
+            private_result = send_instagram_private_reply(comment_id=comment_id, text=reply_text)
+        except Exception as exc:
+            _update_instagram_comment_reply_state(
+                comment_id,
+                media_id=media_id,
+                comment_text=comment_text,
+                reply_surface=str(route_entry.get("reply_surface") or ""),
+                last_error=f"private_reply_failed: {exc}",
+            )
+            raise
+        _update_instagram_comment_reply_state(
+            comment_id,
+            media_id=media_id,
+            comment_text=comment_text,
+            reply_surface=str(route_entry.get("reply_surface") or ""),
+            private_reply_message_id=str(private_result.get("message_id") or ""),
+            private_reply_recipient_id=str(private_result.get("recipient_id") or ""),
+            private_reply_sent_at=dt.datetime.utcnow().isoformat(),
+        )
+        app.logger.info(
+            "Instagram private reply sent for comment %s on media %s (surface=%s text=%r).",
+            comment_id,
+            media_id,
+            route_entry.get("reply_surface", ""),
+            comment_text,
+        )
+        private_reply_sent = True
+
+    if not INSTAGRAM_PUBLIC_COMMENT_REPLY_ENABLED or public_reply_sent:
+        return
+
+    public_reply_text = _build_instagram_comment_public_acknowledgement(route_entry)
+    if not public_reply_text:
+        app.logger.warning(
+            "Instagram public comment reply skipped: empty acknowledgement text for media_id=%s comment_id=%s",
+            media_id,
+            comment_id,
+        )
+        return
+
+    try:
+        public_result = send_instagram_comment_reply(comment_id=comment_id, text=public_reply_text)
+    except Exception as exc:
+        _update_instagram_comment_reply_state(
+            comment_id,
+            media_id=media_id,
+            comment_text=comment_text,
+            reply_surface=str(route_entry.get("reply_surface") or ""),
+            last_error=f"public_reply_failed: {exc}",
+        )
+        app.logger.exception(
+            "Instagram public comment reply failed for comment %s on media %s.",
+            comment_id,
+            media_id,
+        )
+        return
+    _update_instagram_comment_reply_state(
+        comment_id,
+        media_id=media_id,
+        comment_text=comment_text,
+        reply_surface=str(route_entry.get("reply_surface") or ""),
+        public_reply_id=str(public_result.get("id") or ""),
+        public_reply_text=public_reply_text,
+        public_reply_sent_at=dt.datetime.utcnow().isoformat(),
+    )
     app.logger.info(
-        "Instagram private reply sent for comment %s on media %s (surface=%s text=%r).",
+        "Instagram public comment reply sent for comment %s on media %s (surface=%s).",
         comment_id,
         media_id,
         route_entry.get("reply_surface", ""),
-        comment_text,
     )
 
 

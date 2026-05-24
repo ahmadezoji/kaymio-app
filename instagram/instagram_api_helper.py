@@ -386,6 +386,22 @@ def send_instagram_private_reply(*, comment_id: str, text: str) -> Dict[str, str
     )
 
 
+def send_instagram_comment_reply(*, comment_id: str, text: str) -> Dict[str, str]:
+    """Post a public reply under an Instagram comment."""
+
+    creds = _get_instagram_messaging_credentials()
+    response = requests.post(
+        f"{creds['graph_api_base']}/{comment_id}/replies",
+        headers={"Authorization": f"Bearer {creds['access_token']}"},
+        json={"message": text[:1000]},
+        timeout=30,
+    )
+    if response.status_code >= 400:
+        logger.error("Instagram comment reply failed: %s - %s", response.status_code, response.text)
+        response.raise_for_status()
+    return response.json()
+
+
 def list_story_media_candidates(limit: int = 25) -> List[Dict[str, str]]:
     """Fetch recent FEED posts and return story media candidates."""
     creds = _get_instagram_credentials()
