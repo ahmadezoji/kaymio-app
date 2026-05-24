@@ -5,11 +5,22 @@ import io
 import logging
 import os
 import time
-from typing import Optional, Union
+from typing import Optional, Sequence, Union
 from google.genai import types as gemtype
 
 logger = logging.getLogger(__name__)
 from dotenv import load_dotenv
+from image_generation_config import (
+    build_reference_preserving_prompt,
+    get_gemini_image_models,
+    resolve_image_generation_choice,
+)
+from video_generation_config import (
+    build_reference_preserving_video_prompt,
+    get_gemini_video_models,
+    resolve_video_generation_choice,
+)
+
 load_dotenv()
 
 try:  # Optional dependency
@@ -53,6 +64,8 @@ def edit_image(
     context: Optional[str] = None,
     aspect_ratio: Optional[str] = None,
     output_path: Optional[str] = None,
+    model: Optional[str] = None,
+    reference_images: Optional[Sequence[Union[bytes, bytearray, str, "Image.Image"]]] = None,
 ) -> bytes:
     """General-purpose Gemini image edit helper.
 
@@ -81,8 +94,12 @@ def edit_image(
         return original_bytes
 
     genai.configure(api_key=api_key)
-    model_name = os.getenv("GEMINI_IMAGE_MODEL", "imagen-3.0")
-    model = genai.GenerativeModel(model_name=model_name)
+    resolved_provider, resolved_model = resolve_image_generation_choice(model or "")
+    if resolved_provider != "gemini" or not resolved_model:
+        gemini_models = get_gemini_image_models()
+        resolved_model = gemini_models[0] if gemini_models else os.getenv("GEMINI_IMAGE_MODEL", "imagen-3.0")
+    model_name = resolved_model
+    model_client = genai.GenerativeModel(model_name=model_name)
 
     base_context = (
         "You are a senior brand designer creating high-performing visuals for affiliate marketing."
@@ -90,9 +107,10 @@ def edit_image(
     if context:
         base_context = f"{base_context}\nContext: {context}"
 
-    final_prompt = prompt or (
+    raw_prompt = prompt or (
         "Enhance the uploaded photo with vibrant lighting, clean typography overlays, and platform-friendly framing."
     )
+    final_prompt = build_reference_preserving_prompt(raw_prompt, context=base_context)
 
     types_module = getattr(genai, "types", None)
     image_config = None
@@ -139,15 +157,25 @@ def edit_image(
         if generation_config is not None:
             generation_kwargs["generation_config"] = generation_config
 
-        combined_prompt = f"{base_context}\n\nInstructions:\n{final_prompt}"
-        response = model.generate_content(
+        parts = [{"text": final_prompt}]
+        image_inputs = [original_bytes]
+        for image in reference_images or []:
+            try:
+                image_inputs.append(_coerce_image_bytes(image))
+            except Exception:
+                logger.debug("Skipping invalid Gemini reference image input.", exc_info=True)
+                continue
+
+        for image_bytes in image_inputs:
+            parts.append({"inline_data": {"mime_type": "image/png", "data": image_bytes}})
+            if len(parts) >= 5:
+                break
+
+        response = model_client.generate_content(
             contents=[
                 {
                     "role": "user",
-                    "parts": [
-                        {"text": combined_prompt},
-                        {"inline_data": {"mime_type": "image/png", "data": original_bytes}},
-                    ],
+                    "parts": parts,
                 }
             ],
             **generation_kwargs,
@@ -183,11 +211,14 @@ def edit_image(
 def generate_video_from_image(
     prompt: str,
     image: Union[bytes, Image.Image, str],
+    reference_images: Optional[Sequence[Union[bytes, Image.Image, str]]] = None,
     duration_seconds: int = 5,
     aspect_ratio: str = "9:16",
     resolution: str = "720p",
     output_path: Optional[str] = None,
     poll_interval: float = 5.0,
+    model: Optional[str] = None,
+    context: Optional[str] = None,
 ) -> bytes:
     """Generate a short-form video from an image + prompt using Gemini Veo."""
 
@@ -196,17 +227,34 @@ def generate_video_from_image(
         raise RuntimeError("GOOGLE_API_KEY or GEMINI_API_KEY is required for video generation")
 
     prepared_image = _prepare_video_image_bytes(image)
+    prepared_reference_images: list[bytes] = []
+    for reference_image in reference_images or []:
+        try:
+            prepared_reference_images.append(_prepare_video_image_bytes(reference_image))
+        except Exception:
+            logger.debug("Skipping invalid Gemini video reference image input.", exc_info=True)
+            continue
+        if len(prepared_reference_images) >= 3:
+            break
+    resolved_provider, resolved_model = resolve_video_generation_choice(model or "")
+    if resolved_provider != "gemini" or not resolved_model:
+        gemini_models = get_gemini_video_models()
+        resolved_model = gemini_models[0] if gemini_models else os.getenv("GEMINI_VIDEO_MODEL", "veo-3.1-generate-preview")
+
+    final_prompt = build_reference_preserving_video_prompt(prompt, context=context or "")
 
     if google_genai is not None and hasattr(google_genai, "Client"):
         return _generate_video_with_modern_sdk(
             api_key=api_key,
-            prompt=prompt,
+            prompt=final_prompt,
             image=prepared_image,
             duration_seconds=duration_seconds,
             aspect_ratio=aspect_ratio,
             resolution=resolution,
             output_path=output_path,
             poll_interval=poll_interval,
+            model=resolved_model,
+            reference_images=prepared_reference_images,
         )
 
     if genai is None:
@@ -222,7 +270,7 @@ def generate_video_from_image(
 
     return _generate_video_with_legacy_sdk(
         api_key=api_key,
-        prompt=prompt,
+        prompt=final_prompt,
         image=prepared_image,
         duration_seconds=duration_seconds,
         aspect_ratio=aspect_ratio,
@@ -231,6 +279,8 @@ def generate_video_from_image(
         poll_interval=poll_interval,
         types_module=types_module,
         client_cls=client_cls,
+        model=resolved_model,
+        reference_images=prepared_reference_images,
     )
 
 
@@ -253,6 +303,16 @@ def _prepare_video_image_bytes(image: Union[bytes, Image.Image, str]) -> bytes:
         return image_bytes
 
 
+def _detect_inline_image_mime_type(image_bytes: bytes) -> str:
+    if image_bytes.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if image_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if image_bytes.startswith(b"RIFF") and image_bytes[8:12] == b"WEBP":
+        return "image/webp"
+    return "image/jpeg"
+
+
 def _generate_video_with_modern_sdk(
     *,
     api_key: str,
@@ -263,6 +323,8 @@ def _generate_video_with_modern_sdk(
     resolution: str,
     output_path: Optional[str],
     poll_interval: float,
+    model: str,
+    reference_images: Sequence[bytes],
 ) -> bytes:
     """Use google.genai Client to run Veo generation."""
 
@@ -279,15 +341,35 @@ def _generate_video_with_modern_sdk(
 
     client = client_cls(api_key=api_key)
     image_bytes = _coerce_image_bytes(image)
+    image_mime_type = _detect_inline_image_mime_type(image_bytes)
     image_cls = getattr(types_module, "Image", None)
     if image_cls is None:
         raise RuntimeError("google.genai SDK missing Image helper.")
-    image_obj = image_cls(image_bytes=image_bytes, mime_type="image/png")
+    image_obj = image_cls(image_bytes=image_bytes, mime_type=image_mime_type)
 
     source_cls = getattr(types_module, "GenerateVideosSource", None)
     if source_cls is None:
         raise RuntimeError("google.genai SDK missing GenerateVideosSource helper.")
-    source = source_cls(prompt=prompt, image=image_obj)
+    video_reference_image_cls = getattr(types_module, "VideoGenerationReferenceImage", None)
+    video_reference_type_enum = getattr(types_module, "VideoGenerationReferenceType", None)
+    reference_image_objects = []
+    if video_reference_image_cls and video_reference_type_enum and reference_images:
+        asset_reference_type = getattr(video_reference_type_enum, "ASSET", "ASSET")
+        for reference_bytes in [image_bytes, *reference_images]:
+            reference_mime_type = _detect_inline_image_mime_type(reference_bytes)
+            reference_image_objects.append(
+                video_reference_image_cls(
+                    image=image_cls(image_bytes=reference_bytes, mime_type=reference_mime_type),
+                    reference_type=asset_reference_type,
+                )
+            )
+            if len(reference_image_objects) >= 3:
+                break
+
+    if reference_image_objects:
+        source = source_cls(prompt=prompt)
+    else:
+        source = source_cls(prompt=prompt, image=image_obj)
 
     config_cls = getattr(types_module, "GenerateVideosConfig", None)
     config = None
@@ -296,9 +378,10 @@ def _generate_video_with_modern_sdk(
             aspect_ratio=aspect_ratio,
             resolution=resolution,
             duration_seconds=duration_seconds,
+            reference_images=reference_image_objects or None,
         )
 
-    model_name = os.getenv("GEMINI_VIDEO_MODEL", "veo-3.1-generate-preview")
+    model_name = model or os.getenv("GEMINI_VIDEO_MODEL", "veo-3.1-generate-preview")
     logger.info("Using Gemini video model: %s", model_name)
     model_client = getattr(client, "models", None)
     if model_client is None or not hasattr(model_client, "generate_videos"):
@@ -327,6 +410,8 @@ def _generate_video_with_legacy_sdk(
     poll_interval: float,
     types_module,
     client_cls,
+    model: str,
+    reference_images: Sequence[bytes],
 ) -> bytes:
     """Fallback to google.generativeai Client for older SDKs."""
 
@@ -341,9 +426,16 @@ def _generate_video_with_legacy_sdk(
         buffer = io.BytesIO()
         image.save(buffer, format="PNG")
         image_bytes = buffer.getvalue()
-        image_obj = image_cls.from_bytes(image_bytes, mime_type="image/png")
+        image_obj = image_cls.from_bytes(
+            image_bytes,
+            mime_type=_detect_inline_image_mime_type(image_bytes),
+        )
     elif isinstance(image, (bytes, bytearray)):
-        image_obj = image_cls.from_bytes(bytes(image), mime_type="image/png")
+        raw_image_bytes = bytes(image)
+        image_obj = image_cls.from_bytes(
+            raw_image_bytes,
+            mime_type=_detect_inline_image_mime_type(raw_image_bytes),
+        )
     elif isinstance(image, str):
         image_obj = image_cls.from_file(location=image)
     else:
@@ -358,7 +450,7 @@ def _generate_video_with_legacy_sdk(
         duration_seconds=duration_seconds,
     )
 
-    model_name = os.getenv("GEMINI_VIDEO_MODEL", "veo-3.1-generate-preview")
+    model_name = model or os.getenv("GEMINI_VIDEO_MODEL", "veo-3.1-generate-preview")
     raise RuntimeError("Legacy video generation path is deprecated. Please upgrade to the latest google-genai SDK.") 
     model_client = getattr(client, "models", None)
     if model_client is None or not hasattr(model_client, "generate_videos"):

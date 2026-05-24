@@ -38,7 +38,7 @@ class StoryCtaWidgetConfig:
     min_height_ratio: float = 0.12
     max_height_ratio: float = 0.22
     title_font_ratio: float = 0.22
-    body_font_ratio: float = 0.12
+    body_font_ratio: float = 0.18
     combined_target_width_px: int = 840
     combined_target_height_px: int = 210
     vertical_center_ratio: float = 0.68
@@ -94,6 +94,8 @@ _STORY_PANEL_THEMES: tuple[StoryPanelTheme, ...] = (
         shadow_fill=(15, 55, 31, 122),
     ),
 )
+
+STORY_CTA_STATIC_BODY = "Reply for more info."
 
 
 def _download_image_bytes(image_url: str, timeout_seconds: int) -> bytes:
@@ -330,6 +332,7 @@ def _build_cta_panel(
         caption=caption,
         description=description,
     )
+    cta_copy["body"] = STORY_CTA_STATIC_BODY
     margin = max(16, int(min(width, height) * 0.025))
     panel_w = width - (2 * margin)
     panel_h = min(max(int(height * cfg.min_height_ratio), 120), int(height * cfg.max_height_ratio))
@@ -449,6 +452,7 @@ def compose_story_image_with_cta_and_affiliate_qr(
         caption=caption,
         description=description,
     )
+    cta_copy["body"] = STORY_CTA_STATIC_BODY
     panel_w = min(
         max(220, cta_cfg.combined_target_width_px),
         width - (2 * safe_side),

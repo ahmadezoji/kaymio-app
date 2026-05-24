@@ -7,7 +7,7 @@ import time
 from io import BytesIO
 from pathlib import Path
 import random
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 from urllib.parse import urlparse
 from uuid import uuid4
 
@@ -16,24 +16,34 @@ from dotenv import load_dotenv
 from flask import Flask, abort, flash, redirect, render_template, request, send_from_directory, url_for
 
 from amazon.amazon_api import build_affiliate_link, extract_asin, fetch_product_from_canopy
-from gemeni_api_helper import edit_image, generate_video_from_image
+from gemeni_api_helper import edit_image as edit_image_with_gemini, generate_video_from_image as generate_video_with_gemini
+from image_generation_config import build_image_generation_options, resolve_image_generation_choice
 from instagram.instagram_api_helper import (
     get_latest_instagram_media_id,
     publish_instagram_post,
     publish_random_profile_story,
     publish_instagram_reel,
     publish_instagram_story,
+    send_instagram_comment_reply,
     send_instagram_message,
     send_instagram_private_reply,
 )
 from openai_helper import (
+    edit_image as edit_image_with_openai,
+    generate_video_from_image as generate_video_with_openai,
     generate_caption_for_instagram,
     generate_caption_for_tiktok,
     generate_hashtags_for_instagram,
     generate_hashtags_for_tiktok,
+    generate_instagram_comment_acknowledgement,
     generate_tags_for_product_for_pintrest,
     generate_text,
     generate_youtube_metadata,
+)
+from video_generation_config import (
+    build_video_generation_options,
+    normalize_openai_video_seconds,
+    resolve_video_generation_choice,
 )
 from pintrest.pinterest_helper import create_pinterest_pin, create_pinterest_video_pin
 from tiktok.tiktok_api_helper import publish_tiktok_post
@@ -42,9 +52,11 @@ from kaymio.wordpress.wordpress_api_helper import (
     create_woocommerce_product,
     find_wordpress_nearest_category,
     list_woocommerce_products,
+    update_affiliate_links,
 )
 from PIL import Image, ImageOps
 from analytics_view import analytics_bp
+from file_manager_view import file_manager_bp
 from kaymio_wp_admin_view import kaymio_wp_admin_bp
 from widgets.story_qr_widget import (
     StoryCtaWidgetConfig,
@@ -57,9 +69,10 @@ load_dotenv()
 
 app = Flask(__name__)
 app.register_blueprint(analytics_bp)
+app.register_blueprint(file_manager_bp)
 app.register_blueprint(kaymio_wp_admin_bp)
 app.config["SECRET_KEY"] = os.getenv("FLASK_SECRET_KEY", "dev-secret-key")
-app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024  # 20MB uploads
+app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp"}
 ALLOWED_VIDEO_EXTENSIONS = {"mp4", "mov", "m4v", "webm"}
 STORAGE_ROOT = Path(app.root_path) / "template_images"
@@ -83,6 +96,8 @@ MARKET_OPTIONS = [
 RESETTABLE_PLATFORMS = {"pinterest", "instagram", "youtube", "tiktok"}
 PREVIEW_BINARY_FIELDS = {"image_data", "instagram_image_data"}
 TRUTHY_VALUES = {"1", "true", "yes", "on"}
+IMAGE_GENERATION_OPTIONS = build_image_generation_options()
+VIDEO_GENERATION_OPTIONS = build_video_generation_options()
 VIDEO_DURATION_DEFAULT = 8
 VIDEO_DURATION_MIN = 4
 VIDEO_DURATION_MAX = 60
@@ -90,8 +105,27 @@ STORY_AUTOPUBLISH_TIME = os.getenv("INSTAGRAM_STORY_AUTOPUBLISH_TIME", "11:45")
 STORY_AUTOPUBLISH_COUNT = int(os.getenv("INSTAGRAM_STORY_AUTOPUBLISH_COUNT", "2"))
 STORY_AUTOPUBLISH_ENABLED = os.getenv("INSTAGRAM_STORY_AUTOPUBLISH_ENABLED", "1") in TRUTHY_VALUES
 STORY_AUTOPUBLISH_STATE_FILE = STATE_DIR / "instagram_story_scheduler.json"
-INSTAGRAM_STORY_ROUTE_FILE = STATE_DIR / "instagram_story_routes.json"
+INSTAGRAM_MEDIA_REPLY_ROUTE_FILE = STATE_DIR / "instagram_story_routes.json"
+INSTAGRAM_COMMENT_REPLY_STATE_FILE = STATE_DIR / "instagram_comment_reply_state.json"
 INSTAGRAM_WEBHOOK_VERIFY_TOKEN = os.getenv("INSTAGRAM_WEBHOOK_VERIFY_TOKEN", "")
+INSTAGRAM_PUBLIC_COMMENT_REPLY_ENABLED = (
+    os.getenv("INSTAGRAM_PUBLIC_COMMENT_REPLY_ENABLED", "1") in TRUTHY_VALUES
+)
+INSTAGRAM_COMMENT_REPLY_TRIGGER_TOKENS = [
+    token.strip()
+    for token in os.getenv("INSTAGRAM_COMMENT_REPLY_TRIGGER_VALUES", "buy").split(",")
+    if token.strip()
+]
+INSTAGRAM_COMMENT_REPLY_TRIGGER_VALUES = {
+    token.casefold()
+    for token in INSTAGRAM_COMMENT_REPLY_TRIGGER_TOKENS
+}
+INSTAGRAM_COMMENT_REPLY_DISPLAY_TRIGGER = (
+    INSTAGRAM_COMMENT_REPLY_TRIGGER_TOKENS[0]
+    if INSTAGRAM_COMMENT_REPLY_TRIGGER_TOKENS
+    else "buy"
+)
+INSTAGRAM_COMMENT_REPLY_ALLOWED_MEDIA_TYPES = {"FEED", "REELS"}
 STORY_QR_WATERMARK = os.getenv("INSTAGRAM_STORY_QR_WATERMARK", "https://kaymio.com")
 STORY_QR_SAFE_RIGHT_RATIO = float(os.getenv("INSTAGRAM_STORY_QR_SAFE_RIGHT_RATIO", "0.08"))
 STORY_QR_SAFE_BOTTOM_RATIO = float(os.getenv("INSTAGRAM_STORY_QR_SAFE_BOTTOM_RATIO", "0.12"))
@@ -127,44 +161,199 @@ def _save_story_scheduler_state(payload: Dict[str, Any]) -> None:
     STORY_AUTOPUBLISH_STATE_FILE.write_text(json.dumps(payload))
 
 
-def _load_story_route_state() -> Dict[str, Any]:
-    if not INSTAGRAM_STORY_ROUTE_FILE.exists():
+def _load_instagram_media_reply_route_state() -> Dict[str, Any]:
+    if not INSTAGRAM_MEDIA_REPLY_ROUTE_FILE.exists():
         return {}
     try:
-        payload = json.loads(INSTAGRAM_STORY_ROUTE_FILE.read_text())
+        payload = json.loads(INSTAGRAM_MEDIA_REPLY_ROUTE_FILE.read_text())
         return payload if isinstance(payload, dict) else {}
     except Exception:
         return {}
 
 
-def _save_story_route_state(payload: Dict[str, Any]) -> None:
-    INSTAGRAM_STORY_ROUTE_FILE.write_text(json.dumps(payload, indent=2))
+def _save_instagram_media_reply_route_state(payload: Dict[str, Any]) -> None:
+    INSTAGRAM_MEDIA_REPLY_ROUTE_FILE.write_text(json.dumps(payload, indent=2))
 
 
-def _register_story_reply_route(media_id: str, candidate: Dict[str, Any]) -> None:
+def _load_instagram_comment_reply_state() -> Dict[str, Any]:
+    if not INSTAGRAM_COMMENT_REPLY_STATE_FILE.exists():
+        return {}
+    try:
+        payload = json.loads(INSTAGRAM_COMMENT_REPLY_STATE_FILE.read_text())
+        return payload if isinstance(payload, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_instagram_comment_reply_state(payload: Dict[str, Any]) -> None:
+    INSTAGRAM_COMMENT_REPLY_STATE_FILE.write_text(json.dumps(payload, indent=2))
+
+
+def _update_instagram_comment_reply_state(comment_id: str, **fields: Any) -> Dict[str, Any]:
+    normalized_comment_id = str(comment_id or "").strip()
+    if not normalized_comment_id:
+        return {}
+    state = _load_instagram_comment_reply_state()
+    entry = dict(state.get(normalized_comment_id) or {})
+    entry.update(
+        {
+            key: value
+            for key, value in fields.items()
+            if value not in (None, "")
+        }
+    )
+    if "created_at" not in entry:
+        entry["created_at"] = dt.datetime.utcnow().isoformat()
+    entry["updated_at"] = dt.datetime.utcnow().isoformat()
+    state[normalized_comment_id] = entry
+    _save_instagram_comment_reply_state(state)
+    return entry
+
+
+def _register_instagram_media_reply_route(
+    media_id: str,
+    candidate: Dict[str, Any],
+    *,
+    reply_surface: str,
+) -> None:
     normalized_media_id = str(media_id or "").strip()
     if not normalized_media_id:
         return
     affiliate_link = str(candidate.get("affiliate_link") or "").strip()
     if not affiliate_link:
         return
-    routes = _load_story_route_state()
+    routes = _load_instagram_media_reply_route_state()
     routes[normalized_media_id] = {
         "product_id": str(candidate.get("product_id") or ""),
         "affiliate_link": affiliate_link,
+        "product_url": str(candidate.get("product_url") or "").strip(),
         "title": str(candidate.get("title") or ""),
         "description": str(candidate.get("description") or ""),
+        "reply_surface": reply_surface,
         "published_at": dt.datetime.utcnow().isoformat(),
     }
-    _save_story_route_state(routes)
+    _save_instagram_media_reply_route_state(routes)
+    app.logger.info(
+        "Registered Instagram media reply route: media_id=%s surface=%s product_id=%s affiliate_link_present=%s total_routes=%s",
+        normalized_media_id,
+        reply_surface,
+        str(candidate.get("product_id") or ""),
+        bool(affiliate_link),
+        len(routes),
+    )
+
+
+def _register_story_reply_route(media_id: str, candidate: Dict[str, Any]) -> None:
+    _register_instagram_media_reply_route(media_id, candidate, reply_surface="story")
+
+
+def _build_instagram_reply_candidate(
+    *,
+    product_id: str,
+    form_values: Dict[str, Any],
+    preview_payload: Optional[Dict[str, Any]],
+) -> Dict[str, str]:
+    preview = preview_payload or {}
+    return {
+        "product_id": product_id,
+        "affiliate_link": str(form_values.get("affiliate_link") or ""),
+        "product_url": get_website_product_url(product_id) or "",
+        "title": str(
+            form_values.get("title_input")
+            or form_values.get("title")
+            or preview.get("title")
+            or ""
+        ),
+        "description": str(
+            form_values.get("description_input")
+            or form_values.get("description")
+            or preview.get("description")
+            or ""
+        ),
+    }
+
+
+def _build_instagram_media_reply_entry_from_state(media_id: str) -> Dict[str, str]:
+    if not media_id:
+        return {}
+    state = load_app_state()
+    products = state.get("products", {}) or {}
+    for product_id, entry in products.items():
+        platforms = entry.get("platforms") or {}
+        website_state = platforms.get("website") or {}
+        instagram_group = platforms.get("instagram") or {}
+        grouped_candidates = (
+            ("instagram_feed", instagram_group.get("instagram_feed") or {}),
+            ("instagram_story", instagram_group.get("instagram_story") or {}),
+            ("instagram_reel", instagram_group.get("instagram_reel") or {}),
+        )
+        flat_candidates = tuple(
+            (key, platforms.get(key) or {})
+            for key in ("instagram_feed", "instagram_story", "instagram_reel")
+        )
+        for surface_key, platform_state in (*grouped_candidates, *flat_candidates):
+            stored_media_id = str(
+                platform_state.get("instagram_media_id") or platform_state.get("media_id") or ""
+            )
+            if not stored_media_id or stored_media_id != str(media_id):
+                continue
+            return {
+                "product_id": str(product_id),
+                "affiliate_link": str(
+                    platform_state.get("affiliate_link")
+                    or website_state.get("affiliate_link")
+                    or ""
+                ).strip(),
+                "product_url": str(website_state.get("product_url") or "").strip(),
+                "title": str(
+                    platform_state.get("title")
+                    or website_state.get("title")
+                    or ""
+                ),
+                "description": str(
+                    platform_state.get("description")
+                    or website_state.get("description")
+                    or ""
+                ),
+                "reply_surface": surface_key.replace("instagram_", ""),
+            }
+    return {}
+
+
+def _reply_entry_for_instagram_media(media_id: str) -> Dict[str, str]:
+    if not media_id:
+        return {}
+    route_state = _load_instagram_media_reply_route_state()
+    route_entry = route_state.get(str(media_id))
+    base_entry = dict(route_entry) if isinstance(route_entry, dict) else {}
+    fallback_entry = _build_instagram_media_reply_entry_from_state(media_id)
+    merged_entry: Dict[str, str] = {}
+    for key in ("product_id", "affiliate_link", "product_url", "title", "description", "reply_surface"):
+        value = str(base_entry.get(key) or fallback_entry.get(key) or "").strip()
+        if value:
+            merged_entry[key] = value
+    return merged_entry
 
 
 def _build_instagram_affiliate_reply(route_entry: Dict[str, Any]) -> str:
     title = str(route_entry.get("title") or "").strip()
     affiliate_link = str(route_entry.get("affiliate_link") or "").strip()
+    product_url = str(route_entry.get("product_url") or "").strip()
+    parts: List[str] = []
     if title:
-        return f"{title}\n{affiliate_link}"
-    return affiliate_link
+        parts.append(title)
+    if affiliate_link:
+        parts.append(affiliate_link)
+    if product_url:
+        parts.append(f"You can also find it on our website:\n{product_url}")
+    return "\n\n".join(part for part in parts if part)
+
+
+def _build_instagram_comment_public_acknowledgement(route_entry: Dict[str, Any]) -> str:
+    return generate_instagram_comment_acknowledgement(
+        str(route_entry.get("title") or "").strip(),
+        trigger_text=INSTAGRAM_COMMENT_REPLY_DISPLAY_TRIGGER,
+    )
 
 
 def _random_affiliate_link_from_state() -> Optional[str]:
@@ -184,67 +373,21 @@ def _random_affiliate_link_from_state() -> Optional[str]:
 def _affiliate_link_for_instagram_media(media_id: str) -> Optional[str]:
     if not media_id:
         return None
-    route_state = _load_story_route_state()
-    route_entry = route_state.get(str(media_id))
-    if isinstance(route_entry, dict):
-        affiliate_link = str(route_entry.get("affiliate_link") or "")
-        if affiliate_link:
-            return affiliate_link
-    state = load_app_state()
-    products = state.get("products", {}) or {}
-    for entry in products.values():
-        platforms = entry.get("platforms") or {}
-        instagram_group = platforms.get("instagram") or {}
-        for key in ("instagram_feed", "instagram_reel"):
-            p_state = instagram_group.get(key) or {}
-            stored_media_id = str(p_state.get("instagram_media_id") or p_state.get("media_id") or "")
-            if stored_media_id and stored_media_id == str(media_id):
-                affiliate = p_state.get("affiliate_link")
-                if affiliate:
-                    return affiliate
-        # Backward-compatible fallback for older flat structure.
-        for key in ("instagram_feed", "instagram_story", "instagram_reel"):
-            p_state = platforms.get(key) or {}
-            stored_media_id = str(p_state.get("instagram_media_id") or p_state.get("media_id") or "")
-            if stored_media_id and stored_media_id == str(media_id):
-                affiliate = p_state.get("affiliate_link")
-                if affiliate:
-                    return affiliate
-    return None
+    route_entry = _reply_entry_for_instagram_media(media_id)
+    affiliate_link = str(route_entry.get("affiliate_link") or "").strip()
+    return affiliate_link or None
 
 
 def _story_content_for_instagram_media(media_id: str) -> Dict[str, str]:
     if not media_id:
         return {}
-    route_state = _load_story_route_state()
-    route_entry = route_state.get(str(media_id))
-    if isinstance(route_entry, dict):
-        return {
-            "title": str(route_entry.get("title") or ""),
-            "description": str(route_entry.get("description") or ""),
-        }
-    state = load_app_state()
-    products = state.get("products", {}) or {}
-    for entry in products.values():
-        platforms = entry.get("platforms") or {}
-        instagram_group = platforms.get("instagram") or {}
-        for key in ("instagram_feed", "instagram_reel", "instagram_story"):
-            p_state = instagram_group.get(key) or {}
-            stored_media_id = str(p_state.get("instagram_media_id") or p_state.get("media_id") or "")
-            if stored_media_id and stored_media_id == str(media_id):
-                return {
-                    "title": str(p_state.get("title") or ""),
-                    "description": str(p_state.get("description") or ""),
-                }
-        for key in ("instagram_feed", "instagram_story", "instagram_reel"):
-            p_state = platforms.get(key) or {}
-            stored_media_id = str(p_state.get("instagram_media_id") or p_state.get("media_id") or "")
-            if stored_media_id and stored_media_id == str(media_id):
-                return {
-                    "title": str(p_state.get("title") or ""),
-                    "description": str(p_state.get("description") or ""),
-                }
-    return {}
+    route_entry = _reply_entry_for_instagram_media(media_id)
+    if not route_entry:
+        return {}
+    return {
+        "title": str(route_entry.get("title") or ""),
+        "description": str(route_entry.get("description") or ""),
+    }
 
 
 def _resolve_story_source_image(entry: Dict[str, Any], feed_state: Dict[str, Any]) -> Dict[str, str]:
@@ -280,6 +423,7 @@ def _scheduled_story_candidates_from_state() -> List[Dict[str, str]]:
     for product_id, entry in products.items():
         platforms = entry.get("platforms") or {}
         instagram = platforms.get("instagram") or {}
+        website_state = platforms.get("website") or {}
         feed_state = instagram.get("instagram_feed") or {}
         if not feed_state:
             continue
@@ -300,6 +444,7 @@ def _scheduled_story_candidates_from_state() -> List[Dict[str, str]]:
                 "description": str(feed_state.get("description") or ""),
                 "caption": str(feed_state.get("caption") or ""),
                 "affiliate_link": affiliate_link,
+                "product_url": str(website_state.get("product_url") or ""),
                 "compose_source": compose_source,
                 "publish_source": publish_source,
             }
@@ -336,6 +481,7 @@ def _scheduled_story_candidates_from_website(limit: int = 100) -> List[Dict[str,
                 ),
                 "caption": "",
                 "affiliate_link": affiliate_link,
+                "product_url": str(product.get("permalink") or ""),
                 "compose_source": image_url,
                 "publish_source": image_url,
             }
@@ -459,6 +605,26 @@ def _extract_story_media_id(event: Dict[str, Any]) -> Optional[str]:
     return _find_nested_value(event, {"media_id", "story_id"})
 
 
+def _is_instagram_comment_reply_trigger(comment_text: str) -> bool:
+    normalized_text = str(comment_text or "").strip().casefold()
+    if not normalized_text:
+        return False
+    return normalized_text in INSTAGRAM_COMMENT_REPLY_TRIGGER_VALUES
+
+
+def _build_instagram_comment_reply_caption_cta() -> str:
+    trigger = str(INSTAGRAM_COMMENT_REPLY_DISPLAY_TRIGGER or "buy").strip().upper()
+    return f'COMMENT "{trigger}" FOR PRODUCT INFO + LINK'
+
+
+def _prepend_instagram_comment_reply_caption_cta(caption: str) -> str:
+    base_caption = str(caption or "").strip()
+    cta = _build_instagram_comment_reply_caption_cta()
+    if base_caption.casefold().startswith(cta.casefold()):
+        return base_caption
+    return f"{cta}\n\n{base_caption}" if base_caption else cta
+
+
 def _handle_instagram_messaging_event(event: Dict[str, Any]) -> None:
     sender = event.get("sender") or {}
     recipient_id = str(sender.get("id") or "")
@@ -476,12 +642,12 @@ def _handle_instagram_messaging_event(event: Dict[str, Any]) -> None:
         app.logger.warning("Instagram messaging event skipped: no story media id present. event=%s", event)
         return
     app.logger.warning("Instagram messaging event extracted media_id=%s", media_id)
-    route_entry = _load_story_route_state().get(media_id)
+    route_entry = _load_instagram_media_reply_route_state().get(media_id)
     if not isinstance(route_entry, dict):
         app.logger.warning(
             "Instagram messaging event skipped: no route for media_id=%s. known_route_ids=%s",
             media_id,
-            sorted(_load_story_route_state().keys()),
+            sorted(_load_instagram_media_reply_route_state().keys()),
         )
         return
     reply_text = _build_instagram_affiliate_reply(route_entry)
@@ -501,21 +667,141 @@ def _handle_instagram_messaging_event(event: Dict[str, Any]) -> None:
 def _handle_instagram_comment_change(change: Dict[str, Any]) -> None:
     value = change.get("value") or {}
     comment_id = str(value.get("id") or "")
+    comment_text = str(value.get("text") or "").strip()
     media_id = str(
         (value.get("media") or {}).get("id")
         or value.get("media_id")
         or ""
     )
+    media_product_type = str(
+        (value.get("media") or {}).get("media_product_type")
+        or value.get("media_product_type")
+        or ""
+    ).upper()
     if not comment_id or not media_id:
+        app.logger.warning(
+            "Instagram comment webhook skipped: missing comment_id/media_id. value=%s",
+            value,
+        )
         return
-    route_entry = _load_story_route_state().get(media_id)
-    if not isinstance(route_entry, dict):
+    if media_product_type and media_product_type not in INSTAGRAM_COMMENT_REPLY_ALLOWED_MEDIA_TYPES:
+        app.logger.warning(
+            "Instagram comment webhook skipped: unsupported media_product_type=%s media_id=%s comment_id=%s",
+            media_product_type,
+            media_id,
+            comment_id,
+        )
+        return
+    if not _is_instagram_comment_reply_trigger(comment_text):
+        app.logger.info(
+            "Instagram comment webhook skipped: comment text did not match trigger. media_id=%s comment_id=%s text=%r",
+            media_id,
+            comment_id,
+            comment_text,
+        )
+        return
+    route_entry = _reply_entry_for_instagram_media(media_id)
+    if not route_entry:
+        app.logger.warning(
+            "Instagram comment webhook skipped: no registered reply route for media_id=%s comment_id=%s",
+            media_id,
+            comment_id,
+        )
         return
     reply_text = _build_instagram_affiliate_reply(route_entry)
     if not reply_text:
+        app.logger.warning(
+            "Instagram comment webhook skipped: empty reply text for media_id=%s comment_id=%s",
+            media_id,
+            comment_id,
+        )
         return
-    send_instagram_private_reply(comment_id=comment_id, text=reply_text)
-    app.logger.info("Instagram private reply sent for comment %s on media %s.", comment_id, media_id)
+    reply_status = _load_instagram_comment_reply_state().get(comment_id) or {}
+    private_reply_sent = bool(
+        reply_status.get("private_reply_message_id") or reply_status.get("private_reply_sent_at")
+    )
+    public_reply_sent = bool(reply_status.get("public_reply_id") or reply_status.get("public_reply_sent_at"))
+    if private_reply_sent and (public_reply_sent or not INSTAGRAM_PUBLIC_COMMENT_REPLY_ENABLED):
+        app.logger.info(
+            "Instagram comment webhook skipped: reply already processed. media_id=%s comment_id=%s",
+            media_id,
+            comment_id,
+        )
+        return
+
+    if not private_reply_sent:
+        try:
+            private_result = send_instagram_private_reply(comment_id=comment_id, text=reply_text)
+        except Exception as exc:
+            _update_instagram_comment_reply_state(
+                comment_id,
+                media_id=media_id,
+                comment_text=comment_text,
+                reply_surface=str(route_entry.get("reply_surface") or ""),
+                last_error=f"private_reply_failed: {exc}",
+            )
+            raise
+        _update_instagram_comment_reply_state(
+            comment_id,
+            media_id=media_id,
+            comment_text=comment_text,
+            reply_surface=str(route_entry.get("reply_surface") or ""),
+            private_reply_message_id=str(private_result.get("message_id") or ""),
+            private_reply_recipient_id=str(private_result.get("recipient_id") or ""),
+            private_reply_sent_at=dt.datetime.utcnow().isoformat(),
+        )
+        app.logger.info(
+            "Instagram private reply sent for comment %s on media %s (surface=%s text=%r).",
+            comment_id,
+            media_id,
+            route_entry.get("reply_surface", ""),
+            comment_text,
+        )
+        private_reply_sent = True
+
+    if not INSTAGRAM_PUBLIC_COMMENT_REPLY_ENABLED or public_reply_sent:
+        return
+
+    public_reply_text = _build_instagram_comment_public_acknowledgement(route_entry)
+    if not public_reply_text:
+        app.logger.warning(
+            "Instagram public comment reply skipped: empty acknowledgement text for media_id=%s comment_id=%s",
+            media_id,
+            comment_id,
+        )
+        return
+
+    try:
+        public_result = send_instagram_comment_reply(comment_id=comment_id, text=public_reply_text)
+    except Exception as exc:
+        _update_instagram_comment_reply_state(
+            comment_id,
+            media_id=media_id,
+            comment_text=comment_text,
+            reply_surface=str(route_entry.get("reply_surface") or ""),
+            last_error=f"public_reply_failed: {exc}",
+        )
+        app.logger.exception(
+            "Instagram public comment reply failed for comment %s on media %s.",
+            comment_id,
+            media_id,
+        )
+        return
+    _update_instagram_comment_reply_state(
+        comment_id,
+        media_id=media_id,
+        comment_text=comment_text,
+        reply_surface=str(route_entry.get("reply_surface") or ""),
+        public_reply_id=str(public_result.get("id") or ""),
+        public_reply_text=public_reply_text,
+        public_reply_sent_at=dt.datetime.utcnow().isoformat(),
+    )
+    app.logger.info(
+        "Instagram public comment reply sent for comment %s on media %s (surface=%s).",
+        comment_id,
+        media_id,
+        route_entry.get("reply_surface", ""),
+    )
 
 
 def _instagram_story_scheduler_loop() -> None:
@@ -523,7 +809,6 @@ def _instagram_story_scheduler_loop() -> None:
     while True:
         try:
             now = dt.datetime.now()
-            print(f"Instagram scheduler loop running at {now.isoformat()}")
             target_hour, target_minute = [int(part) for part in STORY_AUTOPUBLISH_TIME.split(":", 1)]
             state = _load_story_scheduler_state()
             last_run_date = state.get("last_run_date")
@@ -642,7 +927,11 @@ FORM_COMMON_KEYS = {
     "instagram_boost_prompt",
     "use_affiliate_link",
     "selected_original_image",
+    "selected_original_images",
     "original_image_path",
+    "image_generation_model",
+    "video_generation_model",
+    "video_duration_seconds",
     "video_hook_style",
 }
 
@@ -651,6 +940,18 @@ def _hydrate_preview(preview: Optional[Dict[str, Any]]) -> Optional[Dict[str, An
     if not preview:
         return preview
     hydrated = dict(preview)
+    if "tags" in hydrated:
+        hydrated["tags"] = sanitize_tag_list(hydrated.get("tags") or [])
+        hydrated["tags_payload"] = json.dumps(hydrated["tags"])
+    if "instagram_hashtags" in hydrated:
+        hydrated["instagram_hashtags"] = sanitize_tag_list(hydrated.get("instagram_hashtags") or [])
+        hydrated["instagram_hashtags_payload"] = json.dumps(hydrated["instagram_hashtags"])
+    if "tiktok_hashtags" in hydrated:
+        hydrated["tiktok_hashtags"] = sanitize_tag_list(hydrated.get("tiktok_hashtags") or [])
+        hydrated["tiktok_hashtags_payload"] = json.dumps(hydrated["tiktok_hashtags"])
+    if "youtube_keywords" in hydrated:
+        hydrated["youtube_keywords"] = sanitize_tag_list(hydrated.get("youtube_keywords") or [])
+        hydrated["youtube_keywords_payload"] = json.dumps(hydrated["youtube_keywords"])
     image_path = hydrated.get("generated_image_path")
     if image_path and not hydrated.get("image_data"):
         try:
@@ -904,6 +1205,350 @@ def collect_form_values(form_data) -> Dict[str, str]:
     return raw
 
 
+def redirect_home_view():
+    return redirect(url_for("home"))
+
+
+def _merge_saved_form_values(
+    saved_form_values: Dict[str, str],
+    current_form_values: Optional[Dict[str, str]],
+) -> Dict[str, str]:
+    if not saved_form_values:
+        return current_form_values or {}
+    if not current_form_values:
+        return dict(saved_form_values)
+    merged = dict(saved_form_values)
+    merged.update(current_form_values)
+    return merged
+
+
+def normalize_image_generation_model(raw_model: str) -> str:
+    _, resolved_model = resolve_image_generation_choice(raw_model)
+    return resolved_model
+
+
+def normalize_video_generation_model(raw_model: str) -> str:
+    _, resolved_model = resolve_video_generation_choice(raw_model)
+    return resolved_model
+
+
+def parse_selected_original_images_payload(
+    raw_payload: str,
+    *,
+    fallback: str = "",
+) -> List[str]:
+    candidates: List[str] = []
+    normalized_payload = str(raw_payload or "").strip()
+    if normalized_payload:
+        try:
+            decoded = json.loads(normalized_payload)
+        except json.JSONDecodeError:
+            decoded = None
+        if isinstance(decoded, list):
+            for item in decoded:
+                item_value = str(item or "").strip()
+                if item_value:
+                    candidates.append(item_value)
+        elif normalized_payload:
+            candidates.append(normalized_payload)
+
+    fallback_value = str(fallback or "").strip()
+    if fallback_value and fallback_value not in candidates:
+        candidates.insert(0, fallback_value)
+
+    selected_values: List[str] = []
+    for candidate in candidates:
+        if candidate and candidate not in selected_values:
+            selected_values.append(candidate)
+    return selected_values
+
+
+def serialize_selected_original_images_payload(selected_values: Sequence[str]) -> str:
+    normalized = [str(value).strip() for value in selected_values if str(value).strip()]
+    deduped: List[str] = []
+    for value in normalized:
+        if value not in deduped:
+            deduped.append(value)
+    return json.dumps(deduped)
+
+
+def load_generation_reference_images(
+    saved_state: Dict[str, Any],
+    primary_image_path: str,
+    *,
+    limit: int = 2,
+) -> List[bytes]:
+    reference_bytes: List[bytes] = []
+    for image_path in resolve_original_image_paths(saved_state, primary_image_path):
+        if not image_path or image_path == primary_image_path:
+            continue
+        try:
+            reference_bytes.append(load_stored_media(image_path))
+        except Exception as exc:
+            app.logger.warning("Unable to load reference image %s: %s", image_path, exc)
+            continue
+        if len(reference_bytes) >= limit:
+            break
+    return reference_bytes
+
+
+def generate_platform_image_with_selected_model(
+    base_image_bytes: bytes,
+    *,
+    saved_state: Dict[str, Any],
+    primary_image_path: str,
+    image_generation_model: str,
+    prompt: str,
+    context: str,
+    aspect_ratio: str,
+    reference_images: Optional[Sequence[bytes]] = None,
+) -> bytes:
+    provider, resolved_model = resolve_image_generation_choice(image_generation_model)
+    if reference_images is None:
+        resolved_reference_images = load_generation_reference_images(saved_state, primary_image_path)
+    else:
+        resolved_reference_images = list(reference_images)
+    if provider == "gemini":
+        return edit_image_with_gemini(
+            base_image_bytes,
+            context=context,
+            prompt=prompt,
+            aspect_ratio=aspect_ratio,
+            model=resolved_model,
+            reference_images=resolved_reference_images,
+        )
+    return edit_image_with_openai(
+        base_image_bytes,
+        context=context,
+        prompt=prompt,
+        aspect_ratio=aspect_ratio,
+        model=resolved_model,
+        reference_images=resolved_reference_images,
+    )
+
+
+def generate_platform_video_with_selected_model(
+    base_image_bytes: bytes,
+    *,
+    video_generation_model: str,
+    prompt: str,
+    context: str,
+    duration_seconds: int,
+    aspect_ratio: str,
+    resolution: str,
+    reference_images: Optional[Sequence[bytes]] = None,
+) -> bytes:
+    provider, resolved_model = resolve_video_generation_choice(video_generation_model)
+    if provider == "openai":
+        return generate_video_with_openai(
+            prompt=prompt,
+            image=base_image_bytes,
+            reference_images=reference_images,
+            duration_seconds=duration_seconds,
+            aspect_ratio=aspect_ratio,
+            resolution=resolution,
+            model=resolved_model,
+            context=context,
+        )
+    return generate_video_with_gemini(
+        prompt=prompt,
+        image=base_image_bytes,
+        reference_images=reference_images,
+        duration_seconds=duration_seconds,
+        aspect_ratio=aspect_ratio,
+        resolution=resolution,
+        model=resolved_model,
+        context=context,
+    )
+
+
+def _video_platform_state_key(target: str) -> str:
+    return "instagram_reel" if target == "instagram" else target
+
+
+def _video_generation_processing_payload(target: str) -> Dict[str, Any]:
+    if target == "pinterest":
+        return {"generation_status": "processing", "generation_error": ""}
+    return {"generation_status": "processing", "generation_error": "", "status": "processing"}
+
+
+def _video_generation_ready_payload(
+    *,
+    target: str,
+    video_path: str,
+    base_image_path: str,
+    use_affiliate_link_flag: bool,
+) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {
+        "generation_status": "ready",
+        "generation_error": "",
+        "video_path": video_path,
+        "base_image_path": base_image_path,
+        "use_affiliate_link": use_affiliate_link_flag,
+    }
+    if target == "pinterest":
+        payload["video_status"] = "pending"
+    else:
+        payload["status"] = "pending"
+    return payload
+
+
+def _video_generation_error_payload(target: str, message: str) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {
+        "generation_status": "error",
+        "generation_error": message,
+    }
+    if target != "pinterest":
+        payload["status"] = "pending"
+    return payload
+
+
+def _complete_video_generation_state(
+    *,
+    target: str,
+    product_id: str,
+    form_values: Dict[str, str],
+    preview_payload: Dict[str, Any],
+    video_path: str,
+    duration_seconds: int,
+    boost_prompt: str,
+    base_image_path: str,
+    use_affiliate_link_flag: bool,
+) -> None:
+    if target == "youtube":
+        preview_payload["youtube_boost_prompt"] = boost_prompt
+    elif target == "instagram":
+        preview_payload["instagram_boost_prompt"] = boost_prompt
+    preview_payload["generated_video_path"] = video_path
+    preview_payload["video_duration_seconds"] = str(duration_seconds)
+    try:
+        preview_payload["video_url"] = url_for("serve_media", filename=video_path)
+        preview_payload["video_public_url"] = url_for(
+            "serve_media", filename=video_path, _external=True
+        )
+        preview_payload["video_download_url"] = url_for("download_media", filename=video_path)
+    except RuntimeError:
+        preview_payload["video_url"] = ""
+        preview_payload["video_public_url"] = ""
+        preview_payload["video_download_url"] = ""
+
+    update_product_state(
+        product_id,
+        form_values=form_values,
+        preview=preview_payload,
+        platforms={
+            _video_platform_state_key(target): _video_generation_ready_payload(
+                target=target,
+                video_path=video_path,
+                base_image_path=base_image_path,
+                use_affiliate_link_flag=use_affiliate_link_flag,
+            )
+        },
+        assets={"generated_video_path": video_path},
+    )
+
+
+def _run_openai_video_generation_async(
+    *,
+    target: str,
+    product_id: str,
+    form_values: Dict[str, str],
+    preview_payload: Dict[str, Any],
+    base_image_bytes: bytes,
+    reference_images: Sequence[bytes],
+    prompt: str,
+    context: str,
+    duration_seconds: int,
+    base_image_path: str,
+    boost_prompt: str,
+    use_affiliate_link_flag: bool,
+) -> None:
+    try:
+        with app.app_context():
+            video_bytes = generate_platform_video_with_selected_model(
+                base_image_bytes,
+                prompt=prompt,
+                video_generation_model=form_values.get("video_generation_model", ""),
+                context=context,
+                duration_seconds=duration_seconds,
+                aspect_ratio="9:16",
+                resolution="720p",
+                reference_images=reference_images,
+            )
+            video_path = save_generated_video(video_bytes)
+            _complete_video_generation_state(
+                target=target,
+                product_id=product_id,
+                form_values=form_values,
+                preview_payload=preview_payload,
+                video_path=video_path,
+                duration_seconds=duration_seconds,
+                boost_prompt=boost_prompt,
+                base_image_path=base_image_path,
+                use_affiliate_link_flag=use_affiliate_link_flag,
+            )
+    except Exception as exc:
+        app.logger.exception("Async OpenAI video generation failed for %s", target)
+        with app.app_context():
+            update_product_state(
+                product_id,
+                form_values=form_values,
+                preview=preview_payload,
+                platforms={
+                    _video_platform_state_key(target): _video_generation_error_payload(
+                        target,
+                        str(exc),
+                    )
+                },
+            )
+
+
+def _start_openai_video_generation_job(
+    *,
+    target: str,
+    product_id: str,
+    form_values: Dict[str, str],
+    preview_payload: Dict[str, Any],
+    base_image_bytes: bytes,
+    reference_images: Sequence[bytes],
+    prompt: str,
+    context: str,
+    duration_seconds: int,
+    base_image_path: str,
+    boost_prompt: str,
+    use_affiliate_link_flag: bool,
+) -> None:
+    update_product_state(
+        product_id,
+        form_values=form_values,
+        preview=preview_payload,
+        platforms={
+            _video_platform_state_key(target): _video_generation_processing_payload(target)
+        },
+    )
+
+    thread = threading.Thread(
+        target=_run_openai_video_generation_async,
+        kwargs={
+            "target": target,
+            "product_id": product_id,
+            "form_values": dict(form_values),
+            "preview_payload": dict(preview_payload),
+            "base_image_bytes": bytes(base_image_bytes),
+            "reference_images": list(reference_images),
+            "prompt": prompt,
+            "context": context,
+            "duration_seconds": duration_seconds,
+            "base_image_path": base_image_path,
+            "boost_prompt": boost_prompt,
+            "use_affiliate_link_flag": use_affiliate_link_flag,
+        },
+        name=f"openai-video-{target}-{product_id[:24]}",
+        daemon=True,
+    )
+    thread.start()
+
+
 def render_home_view(
     form_values: Optional[Dict[str, str]],
     preview_payload: Optional[Dict[str, Any]] = None,
@@ -917,8 +1562,15 @@ def render_home_view(
     product_ids = list((state.get("products") or {}).keys())
     last_product_id = state.get("last_product_id") or ""
     state_entry: Optional[Dict[str, Any]] = None
-    if product_id and (website_result is None or platform_states is None):
+    if product_id:
         state_entry = get_product_state(product_id)
+    if state_entry:
+        saved_form_values, saved_preview_payload, saved_pinterest_result = build_render_payload(state_entry)
+        form_values = _merge_saved_form_values(saved_form_values, form_values)
+        if preview_payload is None:
+            preview_payload = saved_preview_payload
+        if pinterest_result is None:
+            pinterest_result = saved_pinterest_result
     if website_result is None:
         if state_entry:
             website_result = get_platform_state(state_entry, "website")
@@ -929,21 +1581,35 @@ def render_home_view(
             platform_states = state_entry.get("platforms") or {}
         else:
             platform_states = {}
-    product_image_choices, selected_original_image = build_product_image_choices(
-        form_values or {}, preview_payload, product_id
+    effective_form_values = dict(form_values or {})
+    effective_form_values["image_generation_model"] = normalize_image_generation_model(
+        effective_form_values.get("image_generation_model", "")
+    )
+    effective_form_values["video_generation_model"] = normalize_video_generation_model(
+        effective_form_values.get("video_generation_model", "")
+    )
+    product_image_choices, selected_original_image, selected_original_images = build_product_image_choices(
+        effective_form_values, preview_payload, product_id
+    )
+    effective_form_values["selected_original_image"] = selected_original_image
+    effective_form_values["selected_original_images"] = serialize_selected_original_images_payload(
+        selected_original_images
     )
     return render_template(
         "home.html",
         markets=MARKET_OPTIONS,
-        form_values=form_values or {},
+        form_values=effective_form_values,
         preview=preview_payload,
         result=pinterest_result,
         website_result=website_result,
         platform_states=platform_states or {},
         product_image_choices=product_image_choices,
         selected_original_image=selected_original_image,
+        selected_original_images=selected_original_images,
         product_ids=product_ids,
         last_product_id=last_product_id,
+        image_generation_options=IMAGE_GENERATION_OPTIONS,
+        video_generation_options=VIDEO_GENERATION_OPTIONS,
     )
 
 
@@ -1040,6 +1706,26 @@ def save_original_image(bytes_data: bytes, original_filename: str) -> str:
     return _store_image(bytes_data, ORIGINALS_DIR, suffix)
 
 
+def store_uploaded_product_image(
+    image_file,
+    saved_state: Dict[str, Any],
+) -> tuple[str, Dict[str, Any]]:
+    if image_file is None or not image_file.filename:
+        raise ValueError("Choose an image file to upload first.")
+    if not allowed_file(image_file.filename):
+        raise ValueError("Unsupported image type. Use PNG, JPG, JPEG, GIF, or WEBP.")
+
+    original_bytes = image_file.read()
+    if not original_bytes:
+        raise ValueError("The uploaded image appears to be empty.")
+
+    original_image_path = save_original_image(original_bytes, image_file.filename)
+    return original_image_path, {
+        "original_image_path": original_image_path,
+        "original_image_paths": merge_original_image_paths(saved_state, original_image_path),
+    }
+
+
 def save_generated_image(bytes_data: bytes) -> str:
     return _store_image(bytes_data, GENERATED_DIR, ".png")
 
@@ -1080,10 +1766,30 @@ def parse_tags_payload(raw_tags: str) -> List[str]:
     try:
         loaded = json.loads(raw_tags)
         if isinstance(loaded, list):
-            return [str(item).strip() for item in loaded if str(item).strip()]
+            return sanitize_tag_list([str(item) for item in loaded])
     except json.JSONDecodeError:
         pass
-    return [segment.strip() for segment in raw_tags.split(",") if segment.strip()]
+    normalized = str(raw_tags).replace("\n", ",")
+    return sanitize_tag_list(normalized.split(","))
+
+
+def sanitize_tag_list(raw_items: List[str]) -> List[str]:
+    cleaned: List[str] = []
+    seen = set()
+    for raw_item in raw_items:
+        token = str(raw_item or "").strip()
+        if not token:
+            continue
+        token = token.lstrip("#").strip()
+        token = token.strip(" \t\r\n.,:;!?/\\|()[]{}<>\"'`")
+        if not token or token in {"&", "+", "-", "_"}:
+            continue
+        normalized_key = token.casefold()
+        if normalized_key in seen:
+            continue
+        cleaned.append(token)
+        seen.add(normalized_key)
+    return cleaned
 
 
 def resolve_destination_url(product_id: str, affiliate_link: str, use_affiliate_link: bool) -> str:
@@ -1133,17 +1839,37 @@ def build_website_description(title: str, base_description: str, boost_prompt: s
 
 def resolve_amazon_domain(raw_url: str) -> str:
     if not raw_url:
-        return "com"
+        return "US"
     parsed = urlparse(raw_url)
     host = (parsed.netloc or "").lower()
     if not host:
-        return "com"
+        return "US"
     if "amazon." not in host:
-        return "com"
+        return "US"
     suffix = host.split("amazon.", 1)[-1]
     if not suffix:
-        return "com"
-    return suffix
+        return "US"
+    marketplace_map = {
+        "com": "US",
+        "co.uk": "UK",
+        "com.tr": "TR",
+        "de": "DE",
+        "fr": "FR",
+        "it": "IT",
+        "es": "ES",
+        "ca": "CA",
+        "com.mx": "MX",
+        "com.br": "BR",
+        "co.jp": "JP",
+        "nl": "NL",
+        "pl": "PL",
+        "se": "SE",
+        "ae": "AE",
+        "sa": "SA",
+        "sg": "SG",
+        "com.au": "AU",
+    }
+    return marketplace_map.get(suffix, suffix.split(".")[-1].upper())
 
 
 def guess_filename_from_url(raw_url: str, default_name: str = "amazon") -> str:
@@ -1170,12 +1896,16 @@ def build_product_image_choices(
     form_values: Dict[str, str],
     preview_payload: Optional[Dict[str, Any]],
     product_id: str,
-) -> tuple[List[Dict[str, str]], str]:
+) -> tuple[List[Dict[str, str]], str, List[str]]:
     saved_state = get_product_state(product_id) if product_id else {}
     source_urls = resolve_source_image_urls(saved_state)
     choices: List[Dict[str, str]] = []
     seen = set()
     selected_value = form_values.get("selected_original_image", "")
+    selected_values = parse_selected_original_images_payload(
+        form_values.get("selected_original_images", ""),
+        fallback=selected_value,
+    )
     if source_urls:
         for url in source_urls:
             if url and url not in seen:
@@ -1186,14 +1916,91 @@ def build_product_image_choices(
         candidate_relative = preview_payload.get("original_image_path", "")
     if not candidate_relative:
         candidate_relative = form_values.get("original_image_path", "")
+    if not selected_values and candidate_relative:
+        selected_values = [f"path:{candidate_relative}"]
+    if selected_values:
+        selected_value = selected_values[0]
     for path in resolve_original_image_paths(saved_state, candidate_relative):
         image_url = url_for("serve_media", filename=path)
         if image_url not in seen:
             choices.append({"value": f"path:{path}", "url": image_url})
             seen.add(image_url)
-    if choices and selected_value not in {choice["value"] for choice in choices}:
-        selected_value = choices[0]["value"]
-    return choices, selected_value
+    valid_values = {choice["value"] for choice in choices}
+    selected_values = [value for value in selected_values if value in valid_values]
+    if choices and not selected_values:
+        selected_values = [choices[0]["value"]]
+    selected_value = selected_values[0] if selected_values else ""
+    return choices, selected_value, selected_values
+
+
+def resolve_selected_original_images(
+    raw_form_values: Dict[str, str],
+    form_values: Dict[str, str],
+    product_id: str,
+    preview_payload: Optional[Dict[str, Any]],
+) -> List[tuple[str, Optional[bytes]]]:
+    saved_state = get_product_state(product_id) if product_id else {}
+    selected_values = parse_selected_original_images_payload(
+        raw_form_values.get("selected_original_images", ""),
+        fallback=raw_form_values.get("selected_original_image", ""),
+    )
+    if not selected_values:
+        return []
+
+    resolved_sources: List[tuple[str, Optional[bytes]]] = []
+    normalized_selected_values: List[str] = []
+
+    for selected in selected_values:
+        if selected.startswith("url:"):
+            image_url = selected[4:]
+            if not image_url:
+                continue
+            image_bytes = download_image_bytes(image_url)
+            filename = guess_filename_from_url(image_url)
+            image_relative = save_original_image(image_bytes, filename)
+            normalized_selected_values.append(f"path:{image_relative}")
+            resolved_sources.append((image_relative, image_bytes))
+            continue
+
+        if selected.startswith("path:"):
+            image_relative = selected[5:]
+            if resolve_storage_path(image_relative):
+                normalized_selected_values.append(f"path:{image_relative}")
+                resolved_sources.append((image_relative, None))
+
+    deduped_sources: List[tuple[str, Optional[bytes]]] = []
+    seen_paths = set()
+    deduped_selected_values: List[str] = []
+    for path, image_bytes in resolved_sources:
+        if not path or path in seen_paths:
+            continue
+        seen_paths.add(path)
+        deduped_sources.append((path, image_bytes))
+        deduped_selected_values.append(f"path:{path}")
+
+    if not deduped_sources:
+        return []
+
+    primary_image_path = deduped_sources[0][0]
+    form_values["original_image_path"] = primary_image_path
+    form_values["selected_original_image"] = deduped_selected_values[0]
+    form_values["selected_original_images"] = serialize_selected_original_images_payload(
+        deduped_selected_values
+    )
+    update_product_state(
+        product_id,
+        form_values=form_values,
+        assets={
+            "original_image_path": primary_image_path,
+            "original_image_paths": merge_original_image_paths(
+                saved_state,
+                *[path for path, _ in deduped_sources],
+            ),
+        },
+    )
+    if preview_payload is not None:
+        preview_payload["original_image_path"] = primary_image_path
+    return deduped_sources
 
 
 def resolve_selected_original_image(
@@ -1202,45 +2009,36 @@ def resolve_selected_original_image(
     product_id: str,
     preview_payload: Optional[Dict[str, Any]],
 ) -> Optional[tuple[str, Optional[bytes]]]:
-    saved_state = get_product_state(product_id) if product_id else {}
-    selected = raw_form_values.get("selected_original_image", "")
-    if not selected:
-        return None
-    if selected.startswith("url:"):
-        image_url = selected[4:]
-        if not image_url:
-            return None
-        image_bytes = download_image_bytes(image_url)
-        filename = guess_filename_from_url(image_url)
-        image_relative = save_original_image(image_bytes, filename)
-        form_values["original_image_path"] = image_relative
-        update_product_state(
-            product_id,
-            form_values=form_values,
-            assets={
-                "original_image_path": image_relative,
-                "original_image_paths": merge_original_image_paths(saved_state, image_relative),
-            },
-        )
-        if preview_payload is not None:
-            preview_payload["original_image_path"] = image_relative
-        return image_relative, image_bytes
-    if selected.startswith("path:"):
-        image_relative = selected[5:]
-        if resolve_storage_path(image_relative):
-            form_values["original_image_path"] = image_relative
-            update_product_state(
-                product_id,
-                form_values=form_values,
-                assets={
-                    "original_image_path": image_relative,
-                    "original_image_paths": merge_original_image_paths(saved_state, image_relative),
-                },
-            )
-            if preview_payload is not None:
-                preview_payload["original_image_path"] = image_relative
-            return image_relative, None
-    return None
+    selected_sources = resolve_selected_original_images(
+        raw_form_values,
+        form_values,
+        product_id,
+        preview_payload,
+    )
+    return selected_sources[0] if selected_sources else None
+
+
+def load_resolved_reference_images(
+    resolved_sources: Sequence[tuple[str, Optional[bytes]]],
+    *,
+    primary_image_path: str = "",
+    limit: Optional[int] = 3,
+) -> List[bytes]:
+    reference_bytes: List[bytes] = []
+    for image_path, image_bytes in resolved_sources:
+        if not image_path or image_path == primary_image_path:
+            continue
+        resolved_bytes = image_bytes
+        if resolved_bytes is None:
+            try:
+                resolved_bytes = load_stored_media(image_path)
+            except Exception as exc:
+                app.logger.warning("Unable to load selected reference image %s: %s", image_path, exc)
+                continue
+        reference_bytes.append(resolved_bytes)
+        if limit is not None and len(reference_bytes) >= limit:
+            break
+    return reference_bytes
 
 
 def resolve_original_image_paths(
@@ -1318,11 +2116,13 @@ def ensure_downloaded_original_images(
     form_values: Dict[str, str],
     saved_state: Dict[str, Any],
     preview_payload: Optional[Dict[str, Any]] = None,
+    preferred_primary_path: Optional[str] = None,
 ) -> List[str]:
+    existing_paths = resolve_original_image_paths(saved_state, preferred_primary_path)
     image_urls = resolve_source_image_urls(saved_state)
     if not image_urls:
-        return []
-    image_paths: List[str] = []
+        return existing_paths
+    downloaded_paths: List[str] = []
     for index, image_url in enumerate(image_urls):
         try:
             image_bytes = download_image_bytes(image_url)
@@ -1331,19 +2131,27 @@ def ensure_downloaded_original_images(
             continue
         filename = guess_filename_from_url(image_url, default_name=f"amazon_{index + 1}")
         image_relative = save_original_image(image_bytes, filename)
-        image_paths.append(image_relative)
-    if not image_paths:
+        downloaded_paths.append(image_relative)
+
+    merged_paths: List[str] = []
+    for path in (preferred_primary_path, *existing_paths, *downloaded_paths):
+        if not path or path in merged_paths:
+            continue
+        if resolve_storage_path(path):
+            merged_paths.append(path)
+
+    if not merged_paths:
         return []
-    primary_image = image_paths[0]
+    primary_image = merged_paths[0]
     form_values["original_image_path"] = primary_image
     update_product_state(
         product_id,
         form_values=form_values,
-        assets={"original_image_path": primary_image, "original_image_paths": image_paths},
+        assets={"original_image_path": primary_image, "original_image_paths": merged_paths},
     )
     if preview_payload is not None:
         preview_payload["original_image_path"] = primary_image
-    return image_paths
+    return merged_paths
 
 
 def extract_form_defaults(raw_form_values: Dict[str, str]) -> Dict[str, str]:
@@ -1363,6 +2171,10 @@ def extract_form_defaults(raw_form_values: Dict[str, str]) -> Dict[str, str]:
             "instagram_boost_prompt",
             "use_affiliate_link",
             "selected_original_image",
+            "selected_original_images",
+            "image_generation_model",
+            "video_generation_model",
+            "video_duration_seconds",
         )
     }
     defaults["website_boost_prompt"] = (
@@ -1386,6 +2198,18 @@ def extract_form_defaults(raw_form_values: Dict[str, str]) -> Dict[str, str]:
     defaults["use_affiliate_link"] = next(
         (val for val in prefer_order if val not in (None, "")),
         "0",
+    )
+    defaults["image_generation_model"] = normalize_image_generation_model(
+        raw_form_values.get("image_generation_model", defaults.get("image_generation_model", ""))
+    )
+    defaults["video_generation_model"] = normalize_video_generation_model(
+        raw_form_values.get("video_generation_model", defaults.get("video_generation_model", ""))
+    )
+    defaults["selected_original_images"] = serialize_selected_original_images_payload(
+        parse_selected_original_images_payload(
+            raw_form_values.get("selected_original_images", defaults.get("selected_original_images", "")),
+            fallback=defaults.get("selected_original_image", ""),
+        )
     )
     return defaults
 
@@ -1436,6 +2260,8 @@ def rebuild_preview_payload(raw_form_values: Dict[str, str]):
         "instagram_boost_prompt": raw_form_values.get("instagram_boost_prompt", ""),
         "video_hook_style": raw_form_values.get("video_hook_style", ""),
         "youtube_boost_prompt": raw_form_values.get("youtube_boost_prompt", ""),
+        "video_duration_seconds": raw_form_values.get("video_duration_seconds", ""),
+        "selected_original_images": raw_form_values.get("selected_original_images", ""),
         "use_affiliate_link": (
             raw_form_values.get("use_affiliate_link")
             or raw_form_values.get("use_affiliate_link_pref")
@@ -1592,9 +2418,13 @@ def fetch_amazon_product():
         flash(str(exc), "error")
         return render_home_view(form_values, product_id=product_id)
 
-    # domain = resolve_amazon_domain(sku_or_url)
     try:
-        fetched = fetch_product_from_canopy(asin)
+        marketplace = resolve_amazon_domain(sku_or_url)
+        fetched = fetch_product_from_canopy(
+            asin,
+            marketplace,
+            product_url=sku_or_url,
+        )
     except Exception as exc:
         app.logger.exception("Amazon product fetch failed")
         flash(f"Unable to fetch Amazon product data: {exc}", "error")
@@ -1624,7 +2454,7 @@ def fetch_amazon_product():
         assets=assets,
     )
     flash("Amazon product data loaded. Review and edit the fields below.", "success")
-    return render_home_view(updated_values, product_id=product_id)
+    return redirect_home_view()
 
 
 @app.route("/save-draft", methods=["POST"])
@@ -1641,18 +2471,21 @@ def save_draft():
     image_file = request.files.get("product_image")
     assets = {}
     if image_file and image_file.filename:
-        if not allowed_file(image_file.filename):
-            flash("Unsupported image type. Use PNG, JPG, JPEG, GIF, or WEBP.", "error")
+        try:
+            original_image_path, assets = store_uploaded_product_image(image_file, saved_state)
+        except ValueError as exc:
+            flash(str(exc), "error")
             return render_home_view(form_values, product_id=product_id)
-        original_bytes = image_file.read()
-        if not original_bytes:
-            flash("The uploaded image appears to be empty.", "error")
-            return render_home_view(form_values, product_id=product_id)
-        original_image_path = save_original_image(original_bytes, image_file.filename)
         form_values["original_image_path"] = original_image_path
+        form_values["selected_original_image"] = f"path:{original_image_path}"
+        form_values["selected_original_images"] = serialize_selected_original_images_payload(
+            [f"path:{original_image_path}"]
+        )
         raw_form_values["original_image_path"] = original_image_path
-        assets["original_image_path"] = original_image_path
-        assets["original_image_paths"] = merge_original_image_paths(saved_state, original_image_path)
+        raw_form_values["selected_original_image"] = f"path:{original_image_path}"
+        raw_form_values["selected_original_images"] = serialize_selected_original_images_payload(
+            [f"path:{original_image_path}"]
+        )
 
     preview_payload = rebuild_preview_payload(raw_form_values)
     update_product_state(
@@ -1662,17 +2495,40 @@ def save_draft():
         assets=assets,
     )
     flash("Draft saved. You can return later to continue.", "success")
-    saved_state = get_product_state(product_id)
-    form_values, preview_payload, pinterest_result = build_render_payload(saved_state)
-    website_result = get_platform_state(saved_state, "website") if saved_state else None
-    return render_home_view(
-        form_values,
-        preview_payload,
-        pinterest_result,
-        product_id=product_id,
-        website_result=website_result,
-        platform_states=(saved_state.get("platforms") or {}),
+    return redirect_home_view()
+
+
+@app.route("/upload-product-image", methods=["POST"])
+def upload_product_image():
+    raw_form_values = collect_form_values(request.form)
+    form_values = extract_form_defaults(raw_form_values)
+    product_id = resolve_product_id(form_values)
+    saved_state = get_product_state(product_id) if product_id else {}
+
+    if not product_id:
+        flash("Fetch or enter a product first before adding gallery images.", "error")
+        return render_home_view(form_values, product_id=product_id)
+
+    image_file = request.files.get("product_image")
+    try:
+        original_image_path, assets = store_uploaded_product_image(image_file, saved_state)
+    except ValueError as exc:
+        flash(str(exc), "error")
+        return render_home_view(form_values, product_id=product_id)
+
+    form_values["original_image_path"] = original_image_path
+    form_values["selected_original_image"] = f"path:{original_image_path}"
+    form_values["selected_original_images"] = serialize_selected_original_images_payload(
+        [f"path:{original_image_path}"]
     )
+    update_product_state(
+        product_id,
+        form_values=form_values,
+        assets=assets,
+    )
+
+    flash("Image added to the product gallery.", "success")
+    return redirect_home_view()
 
 
 @app.route("/generate-pinterest", methods=["POST"])
@@ -1680,6 +2536,9 @@ def generate_pinterest():
     raw_form_values = collect_form_values(request.form)
     original_image_path = raw_form_values.pop("original_image_path", "")
     form_values = dict(raw_form_values)
+    form_values["image_generation_model"] = normalize_image_generation_model(
+        raw_form_values.get("image_generation_model", "")
+    )
     saved_state = get_product_state(resolve_product_id(form_values))
     if not original_image_path and saved_state:
         assets = saved_state.get("assets") or {}
@@ -1690,6 +2549,7 @@ def generate_pinterest():
     product_id = resolve_product_id(form_values)
     image_file = request.files.get("product_image")
     errors = []
+    selected_sources: List[tuple[str, Optional[bytes]]] = []
 
     if not form_values.get("market"):
         errors.append("Please choose a marketplace before continuing.")
@@ -1713,10 +2573,9 @@ def generate_pinterest():
             flash(message, "error")
         return render_home_view(form_values, product_id=product_id)
 
-    selected_source = None
-    if raw_form_values.get("selected_original_image"):
+    if raw_form_values.get("selected_original_image") or raw_form_values.get("selected_original_images"):
         try:
-            selected_source = resolve_selected_original_image(
+            selected_sources = resolve_selected_original_images(
                 raw_form_values, form_values, product_id, preview_payload=None
             )
         except Exception as exc:
@@ -1725,13 +2584,18 @@ def generate_pinterest():
             return render_home_view(form_values, product_id=product_id)
 
     if image_file is not None and image_file.filename:
-        original_bytes = image_file.read()
-        if not original_bytes:
-            flash("The uploaded image appears to be empty.", "error")
+        try:
+            original_image_path, _ = store_uploaded_product_image(image_file, saved_state)
+        except ValueError as exc:
+            flash(str(exc), "error")
             return render_home_view(form_values, product_id=product_id)
-        original_image_path = save_original_image(original_bytes, image_file.filename)
-    elif selected_source:
-        original_image_path, original_bytes = selected_source
+        form_values["selected_original_image"] = f"path:{original_image_path}"
+        form_values["selected_original_images"] = serialize_selected_original_images_payload(
+            [f"path:{original_image_path}"]
+        )
+        original_bytes = load_stored_image(original_image_path)
+    elif selected_sources:
+        original_image_path, original_bytes = selected_sources[0]
     else:
         if not original_image_path:
             try:
@@ -1759,6 +2623,10 @@ def generate_pinterest():
         except Exception:
             flash("Unable to load the selected image. Please try again.", "error")
             return render_home_view(form_values, product_id=product_id)
+    selected_reference_images = load_resolved_reference_images(
+        selected_sources,
+        primary_image_path=original_image_path,
+    )
 
     raw_title = form_values.get("title", "")
     raw_description = form_values.get("description", "")
@@ -1803,29 +2671,40 @@ def generate_pinterest():
                 raw_description or "Compelling Pinterest-ready description."
             )
 
-        tags = generate_tags_for_product_for_pintrest(
+        tags = sanitize_tag_list(generate_tags_for_product_for_pintrest(
             refined_title,
             generated_description,
-        )
+        ))
         instagram_caption = generate_caption_for_instagram(
             refined_title,
             generated_description,
             call_to_action=form_values.get("pinterest_extra"),
         )
-        instagram_hashtags = generate_hashtags_for_instagram(refined_title, generated_description)
+        instagram_caption = _prepend_instagram_comment_reply_caption_cta(instagram_caption)
+        instagram_hashtags = sanitize_tag_list(
+            generate_hashtags_for_instagram(refined_title, generated_description)
+        )
         tiktok_caption = generate_caption_for_tiktok(refined_title, generated_description)
-        tiktok_hashtags = generate_hashtags_for_tiktok(refined_title, generated_description)
+        tiktok_hashtags = sanitize_tag_list(
+            generate_hashtags_for_tiktok(refined_title, generated_description)
+        )
         youtube_metadata = generate_youtube_metadata(refined_title, generated_description)
+        youtube_metadata["keywords"] = sanitize_tag_list(youtube_metadata.get("keywords") or [])
 
         context_prompt = build_prompt_context({**form_values, "title": refined_title})
-        generated_image = edit_image(
+        current_saved_state = get_product_state(product_id) if product_id else saved_state
+        generated_image = generate_platform_image_with_selected_model(
             original_bytes,
+            saved_state=current_saved_state,
+            primary_image_path=original_image_path,
+            image_generation_model=form_values.get("image_generation_model", ""),
             context=context_prompt,
             prompt=(
                 "Design a polished product visual with a clear hero focus, scroll-stopping composition, "
                 "and cohesive lighting suitable for social platforms. Do not add any on-screen text—the output must be a pure image."
             ),
             aspect_ratio="2:3",
+            reference_images=(selected_reference_images if selected_sources else None),
         )
         generated_image = ensure_dimensions(generated_image, (1000, 1500))
         generated_image_path = save_generated_image(generated_image)
@@ -1902,7 +2781,8 @@ def generate_pinterest():
             "generated_image_path": generated_image_path,
         },
     )
-    return render_home_view(form_values, preview_payload, product_id=product_id)
+    return redirect_home_view()
+
 
 def ensure_dimensions(image_bytes: bytes, size: tuple[int, int]) -> bytes:
     """Resize image bytes to the requested size without distorting the aspect ratio."""
@@ -1918,7 +2798,26 @@ def ensure_dimensions(image_bytes: bytes, size: tuple[int, int]) -> bytes:
         return output.getvalue()
     except Exception:
         return image_bytes
-    
+
+
+def _validate_pinterest_publish_response(
+    payload: Optional[Dict[str, Any]],
+    *,
+    asset_label: str,
+) -> Optional[str]:
+    if not isinstance(payload, dict):
+        return f"Pinterest did not return a valid {asset_label} publish response."
+    status = str(payload.get("status") or "").strip().lower()
+    if status == "skipped":
+        return (
+            f"Pinterest {asset_label} publish was skipped because the Pinterest credentials "
+            "or board configuration are missing."
+        )
+    if not payload.get("id") and not payload.get("url"):
+        return f"Pinterest did not return a {asset_label} ID or URL."
+    return None
+
+
 @app.route("/confirm-pinterest", methods=["POST"])
 def confirm_pinterest():
     raw_form_values = collect_form_values(request.form)
@@ -1955,6 +2854,11 @@ def confirm_pinterest():
         flash(f"Unable to publish Pinterest pin: {exc}", "error")
         return render_home_view(form_values, preview_payload, product_id=product_id)
 
+    publish_error = _validate_pinterest_publish_response(pin_response, asset_label="pin")
+    if publish_error:
+        flash(publish_error, "error")
+        return render_home_view(form_values, preview_payload, product_id=product_id)
+
     flash("Pinterest pin published successfully!", "success")
     result = {
         "title": raw_form_values.get("title", ""),
@@ -1983,7 +2887,7 @@ def confirm_pinterest():
             "generated_image_path": generated_image_path,
         },
     )
-    return render_home_view(form_values, pinterest_result=result, product_id=product_id)
+    return redirect_home_view()
 
 
 @app.route("/publish-pinterest-video", methods=["POST"])
@@ -2025,6 +2929,10 @@ def publish_pinterest_video():
             tags=tags,
             cover_image_url=cover_image_url,
         )
+        publish_error = _validate_pinterest_publish_response(pin_response, asset_label="video pin")
+        if publish_error:
+            flash(publish_error, "error")
+            return render_home_view(form_values, preview_payload, product_id=product_id)
         flash("Pinterest video published successfully!", "success")
         update_product_state(
             product_id,
@@ -2042,14 +2950,18 @@ def publish_pinterest_video():
     except Exception as exc:
         app.logger.exception("Pinterest video publish failed")
         flash(f"Unable to publish video to Pinterest: {exc}", "error")
+        return render_home_view(form_values, preview_payload, product_id=product_id)
 
-    return render_home_view(form_values, preview_payload, product_id=product_id)
+    return redirect_home_view()
 
 
 @app.route("/generate-instagram-image", methods=["POST"])
 def generate_instagram_image():
     raw_form_values = collect_form_values(request.form)
     form_values = extract_form_defaults(raw_form_values)
+    form_values["image_generation_model"] = normalize_image_generation_model(
+        raw_form_values.get("image_generation_model", form_values.get("image_generation_model", ""))
+    )
     use_affiliate_link_flag = str(form_values.get("use_affiliate_link", "0")).lower() in TRUTHY_VALUES
     product_id = resolve_product_id(form_values)
     preview_payload = rebuild_preview_payload(raw_form_values)
@@ -2059,17 +2971,18 @@ def generate_instagram_image():
     )
 
     base_bytes = None
-    if raw_form_values.get("selected_original_image"):
+    selected_sources: List[tuple[str, Optional[bytes]]] = []
+    if raw_form_values.get("selected_original_image") or raw_form_values.get("selected_original_images"):
         try:
-            selected_source = resolve_selected_original_image(
+            selected_sources = resolve_selected_original_images(
                 raw_form_values, form_values, product_id, preview_payload
             )
         except Exception as exc:
             app.logger.exception("Selected image download failed")
             flash(f"Unable to download the selected image: {exc}", "error")
             return render_home_view(form_values, preview_payload, product_id=product_id)
-        if selected_source:
-            base_image_path, base_bytes = selected_source
+        if selected_sources:
+            base_image_path, base_bytes = selected_sources[0]
     if not base_image_path:
         try:
             downloaded = ensure_downloaded_original_image(
@@ -2091,6 +3004,10 @@ def generate_instagram_image():
         except Exception:
             flash("Unable to load the base image. Please regenerate your creative first.", "error")
             return render_home_view(form_values, preview_payload, product_id=product_id)
+    selected_reference_images = load_resolved_reference_images(
+        selected_sources,
+        primary_image_path=base_image_path,
+    )
 
     variant = raw_form_values.get("instagram_variant", "feed").lower()
     aspect_ratio = "4:5" if variant == "feed" else "9:16"
@@ -2113,11 +3030,16 @@ def generate_instagram_image():
         )
 
     try:
-        instagram_image = edit_image(
+        current_saved_state = get_product_state(product_id) if product_id else saved_state
+        instagram_image = generate_platform_image_with_selected_model(
             base_bytes,
+            saved_state=current_saved_state,
+            primary_image_path=base_image_path,
+            image_generation_model=form_values.get("image_generation_model", ""),
             context=context_prompt,
             prompt=inst_prompt,
             aspect_ratio=aspect_ratio,
+            reference_images=(selected_reference_images if selected_sources else None),
         )
         target_dimensions = (1080, 1350) if variant_label == "feed" else (1080, 1920)
         instagram_image = ensure_dimensions(instagram_image, target_dimensions)
@@ -2150,7 +3072,7 @@ def generate_instagram_image():
         },
         assets={"instagram_image_path": instagram_image_path},
     )
-    return render_home_view(form_values, preview_payload, product_id=product_id)
+    return redirect_home_view()
 
 
 @app.route("/publish-instagram", methods=["POST"])
@@ -2169,16 +3091,17 @@ def publish_instagram():
         return render_home_view(form_values, preview_payload, product_id=product_id)
 
     caption = raw_form_values.get("instagram_caption", "")
+    caption_with_comment_cta = _prepend_instagram_comment_reply_caption_cta(caption)
     hashtags = parse_tags_payload(raw_form_values.get("instagram_hashtags_payload", "[]"))
     normalized_tags = [tag.lstrip("#").replace(" ", "") for tag in hashtags if tag]
     if normalized_tags:
         tags_block = " ".join(f"#{tag}" for tag in normalized_tags)
-        caption_to_publish = caption.strip()
+        caption_to_publish = caption_with_comment_cta.strip()
         caption_to_publish = (
             f"{caption_to_publish}\n\n{tags_block}" if caption_to_publish else tags_block
         )
     else:
-        caption_to_publish = caption.strip()
+        caption_to_publish = caption_with_comment_cta.strip()
 
     target = raw_form_values.get("target", "feed")
     try:
@@ -2204,20 +3127,31 @@ def publish_instagram():
             },
         )
         if target == "story" and media_id:
-            _register_story_reply_route(
+            _register_instagram_media_reply_route(
                 str(media_id),
-                {
-                    "product_id": product_id,
-                    "affiliate_link": form_values.get("affiliate_link"),
-                    "title": form_values.get("title_input") or preview_payload.get("title") or "",
-                    "description": form_values.get("description_input") or preview_payload.get("description") or "",
-                },
+                _build_instagram_reply_candidate(
+                    product_id=product_id,
+                    form_values=form_values,
+                    preview_payload=preview_payload,
+                ),
+                reply_surface="story",
+            )
+        elif target == "feed" and media_id:
+            _register_instagram_media_reply_route(
+                str(media_id),
+                _build_instagram_reply_candidate(
+                    product_id=product_id,
+                    form_values=form_values,
+                    preview_payload=preview_payload,
+                ),
+                reply_surface="feed",
             )
     except Exception as exc:
         app.logger.exception("Instagram publish failed")
         flash(f"Unable to publish to Instagram: {exc}", "error")
+        return render_home_view(form_values, preview_payload, product_id=product_id)
 
-    return render_home_view(form_values, preview_payload, product_id=product_id)
+    return redirect_home_view()
 
 
 @app.route("/webhooks/instagram", methods=["GET"])
@@ -2253,7 +3187,18 @@ def receive_instagram_webhook():
                 _handle_instagram_messaging_event(event)
             except Exception:
                 app.logger.exception("Instagram messaging webhook handler failed.")
+        comment_changes: List[Dict[str, Any]] = []
+        if entry.get("field") in {"comments", "live_comments"} and isinstance(entry.get("value"), dict):
+            comment_changes.append(
+                {
+                    "field": entry.get("field"),
+                    "value": entry.get("value"),
+                }
+            )
         for change in entry.get("changes", []):
+            if isinstance(change, dict):
+                comment_changes.append(change)
+        for change in comment_changes:
             app.logger.warning(
                 "Instagram webhook change received: field=%s value_keys=%s",
                 change.get("field", "") if isinstance(change, dict) else "",
@@ -2281,7 +3226,9 @@ def publish_instagram_reel_route():
         flash("Generate the Instagram Reel video first, then publish.", "error")
         return render_home_view(form_values, preview_payload, product_id=product_id)
 
-    caption = raw_form_values.get("instagram_caption", "")
+    caption = _prepend_instagram_comment_reply_caption_cta(
+        raw_form_values.get("instagram_caption", "")
+    )
     hashtags = parse_tags_payload(raw_form_values.get("instagram_hashtags_payload", "[]"))
     normalized_tags = [tag.lstrip("#").replace(" ", "") for tag in hashtags if tag]
     if normalized_tags:
@@ -2311,11 +3258,22 @@ def publish_instagram_reel_route():
                 }
             },
         )
+        if media_id:
+            _register_instagram_media_reply_route(
+                str(media_id),
+                _build_instagram_reply_candidate(
+                    product_id=product_id,
+                    form_values=form_values,
+                    preview_payload=preview_payload,
+                ),
+                reply_surface="reel",
+            )
     except Exception as exc:
         app.logger.exception("Instagram Reel publish failed")
         flash(f"Unable to publish the Instagram Reel: {exc}", "error")
+        return render_home_view(form_values, preview_payload, product_id=product_id)
 
-    return render_home_view(form_values, preview_payload, product_id=product_id)
+    return redirect_home_view()
 
 
 @app.route("/publish-website", methods=["POST"])
@@ -2367,10 +3325,28 @@ def publish_website():
 
     image_relative = _resolve_image_path()
     image_paths = resolve_original_image_paths(saved_state, image_relative)
-    if not image_paths:
+    source_image_urls = resolve_source_image_urls(saved_state)
+    if source_image_urls:
         try:
             image_paths = ensure_downloaded_original_images(
-                product_id, form_values, saved_state, preview_payload
+                product_id,
+                form_values,
+                saved_state,
+                preview_payload,
+                preferred_primary_path=image_relative,
+            )
+        except Exception as exc:
+            app.logger.exception("Source image download failed")
+            flash(f"Unable to download product images: {exc}", "error")
+        image_paths = [path for path in image_paths if resolve_storage_path(path)]
+    elif not image_paths:
+        try:
+            image_paths = ensure_downloaded_original_images(
+                product_id,
+                form_values,
+                saved_state,
+                preview_payload,
+                preferred_primary_path=image_relative,
             )
         except Exception as exc:
             app.logger.exception("Source image download failed")
@@ -2457,14 +3433,7 @@ def publish_website():
         },
         results={"website": website_result},
     )
-    pinterest_result = get_platform_result(product_id, "pinterest")
-    return render_home_view(
-        form_values,
-        preview_payload,
-        pinterest_result=pinterest_result,
-        product_id=product_id,
-        website_result=website_result,
-    )
+    return redirect_home_view()
 
 
 @app.route("/generate-video/<platform>", methods=["POST"])
@@ -2476,10 +3445,18 @@ def generate_platform_video(platform: str):
 
     raw_form_values = collect_form_values(request.form)
     form_values = extract_form_defaults(raw_form_values)
+    form_values["video_generation_model"] = normalize_video_generation_model(
+        raw_form_values.get("video_generation_model", form_values.get("video_generation_model", ""))
+    )
     use_affiliate_link_flag = str(form_values.get("use_affiliate_link", "0")).lower() in TRUTHY_VALUES
     product_id = resolve_product_id(form_values)
     preview_payload = rebuild_preview_payload(raw_form_values)
     saved_state = get_product_state(product_id) if product_id else {}
+    if product_id:
+        active_video_state = get_platform_state(saved_state, _video_platform_state_key(target))
+        if active_video_state.get("generation_status") == "processing":
+            flash("A video generation job is already running for this platform. Refresh in a moment.", "info")
+            return render_home_view(form_values, preview_payload, product_id=product_id)
     base_image_path = (
         raw_form_values.get("original_image_path")
         or raw_form_values.get("instagram_image_path")
@@ -2487,17 +3464,18 @@ def generate_platform_video(platform: str):
     )
 
     base_bytes = None
-    if raw_form_values.get("selected_original_image"):
+    selected_sources: List[tuple[str, Optional[bytes]]] = []
+    if raw_form_values.get("selected_original_image") or raw_form_values.get("selected_original_images"):
         try:
-            selected_source = resolve_selected_original_image(
+            selected_sources = resolve_selected_original_images(
                 raw_form_values, form_values, product_id, preview_payload
             )
         except Exception as exc:
             app.logger.exception("Selected image download failed")
             flash(f"Unable to download the selected image: {exc}", "error")
             return render_home_view(form_values, preview_payload, product_id=product_id)
-        if selected_source:
-            base_image_path, base_bytes = selected_source
+        if selected_sources:
+            base_image_path, base_bytes = selected_sources[0]
     if not base_image_path:
         try:
             downloaded = ensure_downloaded_original_image(
@@ -2519,6 +3497,10 @@ def generate_platform_video(platform: str):
         except Exception:
             flash("Unable to load the base visual. Please regenerate it.", "error")
             return render_home_view(form_values, preview_payload, product_id=product_id)
+    selected_reference_images = load_resolved_reference_images(
+        selected_sources,
+        primary_image_path=base_image_path,
+    )
 
     title = raw_form_values.get("title") or form_values.get("title") or "this product"
     product_context = title
@@ -2605,6 +3587,7 @@ def generate_platform_video(platform: str):
         cut_style=cut_style,
         moves=move_list,
     )
+    video_context_prompt = build_prompt_context({**form_values, "title": raw_form_values.get("title", "")})
     boost_prompt = ""
     if target == "youtube":
         boost_prompt = (
@@ -2642,54 +3625,83 @@ def generate_platform_video(platform: str):
     except (TypeError, ValueError):
         duration_seconds = VIDEO_DURATION_DEFAULT
     duration_seconds = max(VIDEO_DURATION_MIN, min(VIDEO_DURATION_MAX, duration_seconds))
+    video_provider, resolved_video_model = resolve_video_generation_choice(
+        form_values.get("video_generation_model", "")
+    )
+    if video_provider == "openai":
+        normalized_openai_seconds = normalize_openai_video_seconds(duration_seconds)
+        if normalized_openai_seconds != duration_seconds:
+            duration_seconds = normalized_openai_seconds
+            flash(
+                f"OpenAI video generation supports 4, 8, or 12 seconds. Kaymio used {duration_seconds} seconds.",
+                "info",
+            )
+    if (
+        video_provider == "gemini"
+        and selected_reference_images
+        and resolved_video_model == "veo-3.1-generate-preview"
+        and duration_seconds != 8
+    ):
+        duration_seconds = 8
+        flash(
+            "Gemini Veo multi-image reference mode currently generates 8-second clips, so Kaymio used 8 seconds.",
+            "info",
+        )
 
     fitted_base_bytes = ensure_dimensions(base_bytes, (720, 1280))
-    try:
-        video_bytes = generate_video_from_image(
+    preview_payload = preview_payload or {}
+    if video_provider == "openai" and product_id:
+        _start_openai_video_generation_job(
+            target=target,
+            product_id=product_id,
+            form_values=form_values,
+            preview_payload=preview_payload,
+            base_image_bytes=fitted_base_bytes,
+            reference_images=selected_reference_images,
             prompt=prompt,
-            image=fitted_base_bytes,
+            context=video_context_prompt,
+            duration_seconds=duration_seconds,
+            base_image_path=base_image_path,
+            boost_prompt=boost_prompt,
+            use_affiliate_link_flag=use_affiliate_link_flag,
+        )
+        flash(
+            f"{('Instagram Reel' if target == 'instagram' else target.title())} video generation started. Refresh in a moment to see the result.",
+            "info",
+        )
+        return redirect_home_view()
+
+    try:
+        video_bytes = generate_platform_video_with_selected_model(
+            fitted_base_bytes,
+            prompt=prompt,
+            video_generation_model=form_values.get("video_generation_model", ""),
+            context=video_context_prompt,
             duration_seconds=duration_seconds,
             aspect_ratio="9:16",
             resolution="720p",
+            reference_images=selected_reference_images,
         )
     except Exception as exc:
         flash(f"Unable to generate the {target} video: {exc}", "error")
         return render_home_view(form_values, preview_payload, product_id=product_id)
 
     video_path = save_generated_video(video_bytes)
-    preview_payload = preview_payload or {}
-    if target == "youtube":
-        preview_payload["youtube_boost_prompt"] = boost_prompt
-    elif target == "instagram":
-        preview_payload["instagram_boost_prompt"] = boost_prompt
-    preview_payload["generated_video_path"] = video_path
-    preview_payload["video_duration_seconds"] = str(duration_seconds)
-    preview_payload["video_url"] = url_for("serve_media", filename=video_path)
-    preview_payload["video_public_url"] = url_for(
-        "serve_media", filename=video_path, _external=True
-    )
-
     target_label = "Instagram" if target == "instagram" else target.title()
     platform_key = "instagram_reel" if target == "instagram" else target
-    platform_payload = {
-        "status": "pending",
-        "video_path": video_path,
-        "base_image_path": base_image_path,
-        "use_affiliate_link": use_affiliate_link_flag,
-    }
-    if target == "pinterest":
-        # Keep image pin publication status intact; track video state separately.
-        platform_payload.pop("status", None)
-        platform_payload["video_status"] = "pending"
     flash(f"{target_label} video generated.", "success")
-    update_product_state(
-        product_id,
+    _complete_video_generation_state(
+        target=target,
+        product_id=product_id,
         form_values=form_values,
-        preview=preview_payload,
-        platforms={platform_key: platform_payload},
-        assets={"generated_video_path": video_path},
+        preview_payload=preview_payload,
+        video_path=video_path,
+        duration_seconds=duration_seconds,
+        boost_prompt=boost_prompt,
+        base_image_path=base_image_path,
+        use_affiliate_link_flag=use_affiliate_link_flag,
     )
-    return render_home_view(form_values, preview_payload, product_id=product_id)
+    return redirect_home_view()
 
 
 @app.route("/upload-video/<platform>", methods=["POST"])
@@ -2745,7 +3757,7 @@ def upload_platform_video(platform: str):
         platforms={platform_key: platform_payload},
         assets={"generated_video_path": video_path},
     )
-    return render_home_view(form_values, preview_payload, product_id=product_id)
+    return redirect_home_view()
 
 
 @app.route("/publish-youtube", methods=["POST"])
@@ -2821,8 +3833,9 @@ def publish_youtube():
     except Exception as exc:
         app.logger.exception("YouTube publish failed")
         flash(f"Unable to publish to YouTube: {exc}", "error")
+        return render_home_view(form_values, preview_payload, product_id=product_id)
 
-    return render_home_view(form_values, preview_payload, product_id=product_id)
+    return redirect_home_view()
 
 
 @app.route("/publish-tiktok", methods=["POST"])
@@ -2877,13 +3890,14 @@ def publish_tiktok():
     except Exception as exc:
         app.logger.exception("TikTok publish failed")
         flash(f"Unable to publish to TikTok: {exc}", "error")
+        return render_home_view(form_values, preview_payload, product_id=product_id)
 
-    return render_home_view(form_values, preview_payload, product_id=product_id)
+    return redirect_home_view()
 
 
 if __name__ == "__main__":
     debug_enabled = True
-    # Avoid duplicate scheduler thread when Flask debug reloader spawns parent process.
     if not debug_enabled or os.getenv("WERKZEUG_RUN_MAIN") == "true":
         start_instagram_story_scheduler()
     app.run(debug=debug_enabled, host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
+    # update_affiliate_links()

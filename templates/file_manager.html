@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Kaymio File Manager</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">Media Library</p>
+          <h1>Browse generated images and videos.</h1>
+          <p class="lede">
+            Review everything stored in <code>template_images</code>, open assets fullscreen,
+            download them locally, and delete files you no longer need.
+          </p>
+        </div>
+        <div class="hero-pill">
+          <span>{{ summary.total_count }} assets</span>
+          <span>{{ summary.image_count }} images</span>
+          <span>{{ summary.video_count }} videos</span>
+          <span>{{ summary.total_size_label }}</span>
+        </div>
+        <div class="card-header-actions">
+          <a class="ghost-btn" href="{{ url_for('home') }}">Home</a>
+          <a class="ghost-btn" href="{{ url_for('analytics.analytics_view') }}">Analytics</a>
+          <a class="ghost-btn" href="{{ url_for('kaymio_wp_admin.kaymio_wp_admin_view') }}">WP Admin</a>
+        </div>
+      </header>
+
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          <div class="flash-stack">
+            {% for category, message in messages %}
+              <div class="flash {{ category }}">{{ message }}</div>
+            {% endfor %}
+          </div>
+        {% endif %}
+      {% endwith %}
+
+      <main class="layout">
+        <section class="card">
+          <div class="card-header">
+            <div class="card-header-text">
+              <h2>Overview</h2>
+              <p>Filter the library and inspect individual files without leaving the page.</p>
+            </div>
+            <div class="file-manager-controls">
+              <div class="filter-pills">
+                <a class="filter-pill {% if active_kind == 'all' %}is-active{% endif %}" href="{{ url_for('file_manager.file_manager_view', kind='all', sort=active_sort) }}">
+                  All
+                </a>
+                <a class="filter-pill {% if active_kind == 'image' %}is-active{% endif %}" href="{{ url_for('file_manager.file_manager_view', kind='image', sort=active_sort) }}">
+                  Images
+                </a>
+                <a class="filter-pill {% if active_kind == 'video' %}is-active{% endif %}" href="{{ url_for('file_manager.file_manager_view', kind='video', sort=active_sort) }}">
+                  Videos
+                </a>
+              </div>
+              <form method="get" action="{{ url_for('file_manager.file_manager_view') }}" class="sort-controls">
+                <input type="hidden" name="kind" value="{{ active_kind }}" />
+                <label>
+                  <span>Sort by date</span>
+                  <select name="sort" onchange="this.form.submit()">
+                    <option value="newest" {% if active_sort == 'newest' %}selected{% endif %}>Newest first</option>
+                    <option value="oldest" {% if active_sort == 'oldest' %}selected{% endif %}>Oldest first</option>
+                  </select>
+                </label>
+              </form>
+            </div>
+          </div>
+          <div class="stats-grid">
+            <article class="stat-card">
+              <span class="stat-label">Total assets</span>
+              <strong class="stat-value">{{ summary.total_count }}</strong>
+              <span class="stat-subtle">Filtered: {{ filtered_summary.total_count }}</span>
+            </article>
+            <article class="stat-card">
+              <span class="stat-label">Images</span>
+              <strong class="stat-value">{{ summary.image_count }}</strong>
+            </article>
+            <article class="stat-card">
+              <span class="stat-label">Videos</span>
+              <strong class="stat-value">{{ summary.video_count }}</strong>
+            </article>
+            <article class="stat-card">
+              <span class="stat-label">Storage used</span>
+              <strong class="stat-value">{{ summary.total_size_label }}</strong>
+            </article>
+          </div>
+        </section>
+
+        {% if not media_items %}
+          <section class="card">
+            <p class="muted">No media files matched the current filter.</p>
+          </section>
+        {% endif %}
+
+        {% if image_items %}
+          <section class="card">
+            <div class="card-header">
+              <div class="card-header-text">
+                <h2>Images</h2>
+                <p>{{ image_items|length }} stored image{% if image_items|length != 1 %}s{% endif %}</p>
+              </div>
+            </div>
+            <div class="media-grid">
+              {% for item in image_items %}
+                <article class="media-card">
+                  <button
+                    type="button"
+                    class="media-card__preview"
+                    data-media-viewer-trigger
+                    data-media-kind="{{ item.kind }}"
+                    data-media-src="{{ item.preview_url }}"
+                    data-media-download="{{ item.download_url }}"
+                    data-media-title="{{ item.name }}"
+                    data-media-meta="{{ item.directory }} · {{ item.size_label }} · {{ item.modified_at }}"
+                  >
+                    <img src="{{ item.preview_url }}" alt="{{ item.name }}" loading="lazy" />
+                  </button>
+                  <div class="media-card__body">
+                    <div class="media-card__text">
+                      <p class="media-card__name" title="{{ item.relative_path }}">{{ item.name }}</p>
+                      <p class="media-card__meta">{{ item.directory }} · {{ item.size_label }}</p>
+                      <p class="media-card__meta">{{ item.modified_at }}</p>
+                    </div>
+                    <div class="media-card__actions">
+                      <a class="ghost-btn" href="{{ item.download_url }}">Download</a>
+                      <form method="post" action="{{ url_for('file_manager.file_manager_delete') }}" onsubmit="return confirm('Delete this file permanently?');">
+                        <input type="hidden" name="relative_path" value="{{ item.relative_path }}" />
+                        <input type="hidden" name="kind" value="{{ active_kind }}" />
+                        <input type="hidden" name="sort" value="{{ active_sort }}" />
+                        <button type="submit" class="danger-btn">Delete</button>
+                      </form>
+                    </div>
+                  </div>
+                </article>
+              {% endfor %}
+            </div>
+          </section>
+        {% endif %}
+
+        {% if video_items %}
+          <section class="card">
+            <div class="card-header">
+              <div class="card-header-text">
+                <h2>Videos</h2>
+                <p>{{ video_items|length }} stored video{% if video_items|length != 1 %}s{% endif %}</p>
+              </div>
+            </div>
+            <div class="media-grid">
+              {% for item in video_items %}
+                <article class="media-card">
+                  <button
+                    type="button"
+                    class="media-card__preview"
+                    data-media-viewer-trigger
+                    data-media-kind="{{ item.kind }}"
+                    data-media-src="{{ item.preview_url }}"
+                    data-media-download="{{ item.download_url }}"
+                    data-media-title="{{ item.name }}"
+                    data-media-meta="{{ item.directory }} · {{ item.size_label }} · {{ item.modified_at }}"
+                  >
+                    <video muted playsinline preload="metadata">
+                      <source src="{{ item.preview_url }}" />
+                    </video>
+                  </button>
+                  <div class="media-card__body">
+                    <div class="media-card__text">
+                      <p class="media-card__name" title="{{ item.relative_path }}">{{ item.name }}</p>
+                      <p class="media-card__meta">{{ item.directory }} · {{ item.size_label }}</p>
+                      <p class="media-card__meta">{{ item.modified_at }}</p>
+                    </div>
+                    <div class="media-card__actions">
+                      <a class="ghost-btn" href="{{ item.download_url }}">Download</a>
+                      <form method="post" action="{{ url_for('file_manager.file_manager_delete') }}" onsubmit="return confirm('Delete this file permanently?');">
+                        <input type="hidden" name="relative_path" value="{{ item.relative_path }}" />
+                        <input type="hidden" name="kind" value="{{ active_kind }}" />
+                        <input type="hidden" name="sort" value="{{ active_sort }}" />
+                        <button type="submit" class="danger-btn">Delete</button>
+                      </form>
+                    </div>
+                  </div>
+                </article>
+              {% endfor %}
+            </div>
+          </section>
+        {% endif %}
+      </main>
+    </div>
+
+    {% include "_media_viewer.html" %}
+
+    <script src="{{ url_for('static', filename='js/media_viewer.js') }}"></script>
+    <script>
+      window.initMediaViewer?.(document);
+    </script>
+  </body>
+</html>

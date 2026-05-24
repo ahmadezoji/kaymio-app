@@ -16,7 +16,8 @@ import requests
 from kaymio.wordpress.wordpress_api_helper import upload_media_to_wordpress_ext
 
 logger = logging.getLogger(__name__)
-GRAPH_API_BASE = "https://graph.facebook.com/v21.0"
+FACEBOOK_GRAPH_API_BASE = "https://graph.facebook.com/v21.0"
+INSTAGRAM_GRAPH_API_BASE = "https://graph.instagram.com/v21.0"
 MEDIA_PREFIX = "/media/"
 TEMPLATE_IMAGES_ROOT = Path(__file__).resolve().parents[1] / "template_images"
 TOKEN_FILE = Path(__file__).with_name("instagram_token.json")
@@ -27,6 +28,32 @@ INSTAGRAM_ANALYTICS_MAX_MEDIA = int(os.getenv("INSTAGRAM_ANALYTICS_MAX_MEDIA", "
 INSTAGRAM_ANALYTICS_MAX_PER_TYPE = int(os.getenv("INSTAGRAM_ANALYTICS_MAX_PER_TYPE", "5"))
 INSTAGRAM_ANALYTICS_WORKERS = int(os.getenv("INSTAGRAM_ANALYTICS_WORKERS", "6"))
 _INSTAGRAM_ANALYTICS_CACHE: Dict[str, object] = {"expires_at": 0.0, "payload": None}
+
+
+def _uses_instagram_login_flow(payload: Dict[str, str]) -> bool:
+    auth_flow = str(payload.get("AUTH_FLOW") or "").strip().lower()
+    if auth_flow == "instagram_login":
+        return True
+    if auth_flow == "facebook_login":
+        return False
+    return _token_payload_looks_like_login_only(payload)
+
+
+def _token_payload_looks_like_login_only(payload: Dict[str, str]) -> bool:
+    if not payload:
+        return False
+    required_publish_keys = (
+        "INSTAGRAM_PAGE_ACCESS_TOKEN",
+        "FACEBOOK_PAGE_ID",
+        "FB_PAGE_ID",
+        "FB_LONG_LIVED_USER_ACCESS_TOKEN",
+    )
+    return not any(payload.get(key) for key in required_publish_keys)
+
+
+def _resolve_graph_api_base(token_payload: Optional[Dict[str, str]] = None) -> str:
+    payload = token_payload if token_payload is not None else _load_token_file()
+    return INSTAGRAM_GRAPH_API_BASE if _uses_instagram_login_flow(payload) else FACEBOOK_GRAPH_API_BASE
 
 
 def _load_token_file() -> Dict[str, str]:
@@ -43,11 +70,9 @@ def _load_token_file() -> Dict[str, str]:
 
 
 def _get_instagram_credentials() -> Dict[str, str]:
-    access_token = os.getenv("INSTAGRAM_ACCESS_TOKEN")
-    user_id = os.getenv("INSTAGRAM_USER_ID")
     token_payload = _load_token_file()
-    access_token = token_payload.get("INSTAGRAM_ACCESS_TOKEN", access_token)
-    user_id = token_payload.get("INSTAGRAM_USER_ID", user_id)
+    access_token = os.getenv("INSTAGRAM_ACCESS_TOKEN") or token_payload.get("INSTAGRAM_ACCESS_TOKEN")
+    user_id = os.getenv("INSTAGRAM_USER_ID") or token_payload.get("INSTAGRAM_USER_ID")
     if not access_token or not user_id:
         raise RuntimeError(
             "INSTAGRAM_ACCESS_TOKEN and INSTAGRAM_USER_ID must be configured "
@@ -58,61 +83,82 @@ def _get_instagram_credentials() -> Dict[str, str]:
 
 def _get_instagram_messaging_credentials() -> Dict[str, str]:
     token_payload = _load_token_file()
+    env_instagram_access_token = os.getenv("INSTAGRAM_ACCESS_TOKEN")
     env_page_access_token = os.getenv("INSTAGRAM_PAGE_ACCESS_TOKEN")
-    env_page_id = os.getenv("FACEBOOK_PAGE_ID")
+    env_instagram_user_id = os.getenv("INSTAGRAM_USER_ID")
+    use_instagram_login = _uses_instagram_login_flow(token_payload)
 
     token_file_page_access_token = token_payload.get("INSTAGRAM_PAGE_ACCESS_TOKEN")
     token_file_fallback_access_token = token_payload.get("FB_LONG_LIVED_USER_ACCESS_TOKEN")
-    token_file_page_id = token_payload.get("FACEBOOK_PAGE_ID")
-    token_file_fallback_page_id = token_payload.get("FB_PAGE_ID")
+    token_file_instagram_access_token = token_payload.get("INSTAGRAM_ACCESS_TOKEN")
+    token_file_instagram_user_id = token_payload.get("INSTAGRAM_USER_ID")
 
-    page_access_token = (
-        token_file_page_access_token
-        or token_file_fallback_access_token
-        or env_page_access_token
+    access_token = (
+        (env_instagram_access_token or token_file_instagram_access_token)
+        if use_instagram_login
+        else (env_page_access_token or token_file_page_access_token or token_file_fallback_access_token)
     )
-    page_id = (
-        token_file_page_id
-        or token_file_fallback_page_id
-        or env_page_id
-    )
+    instagram_user_id = env_instagram_user_id or token_file_instagram_user_id
 
     logger.warning(
-        "Instagram messaging credentials resolved: "
-        "token_source=%s page_id_source=%s token_file_present=%s token_file_has_page_token=%s "
-        "token_file_has_fb_user_token=%s env_has_page_token=%s",
+        "Instagram messaging credentials resolved: flow=%s "
+        "token_source=%s instagram_user_id_source=%s token_file_present=%s",
+        "instagram_login" if use_instagram_login else "facebook_login",
         (
-            "instagram_token.json:INSTAGRAM_PAGE_ACCESS_TOKEN"
-            if token_file_page_access_token
+            "env:INSTAGRAM_ACCESS_TOKEN"
+            if use_instagram_login and env_instagram_access_token
             else (
-                "instagram_token.json:FB_LONG_LIVED_USER_ACCESS_TOKEN"
-                if token_file_fallback_access_token
-                else ("env:INSTAGRAM_PAGE_ACCESS_TOKEN" if env_page_access_token else "missing")
+                "instagram_token.json:INSTAGRAM_ACCESS_TOKEN"
+                if use_instagram_login and token_file_instagram_access_token
+                else (
+                    "env:INSTAGRAM_PAGE_ACCESS_TOKEN"
+                    if not use_instagram_login and env_page_access_token
+                    else (
+                        "instagram_token.json:INSTAGRAM_PAGE_ACCESS_TOKEN"
+                        if not use_instagram_login and token_file_page_access_token
+                        else (
+                            "instagram_token.json:FB_LONG_LIVED_USER_ACCESS_TOKEN"
+                            if not use_instagram_login and token_file_fallback_access_token
+                            else "missing"
+                        )
+                    )
+                )
             )
         ),
         (
-            "instagram_token.json:FACEBOOK_PAGE_ID"
-            if token_file_page_id
-            else (
-                "instagram_token.json:FB_PAGE_ID"
-                if token_file_fallback_page_id
-                else ("env:FACEBOOK_PAGE_ID" if env_page_id else "missing")
-            )
+            "env:INSTAGRAM_USER_ID"
+            if env_instagram_user_id
+            else ("instagram_token.json:INSTAGRAM_USER_ID" if token_file_instagram_user_id else "missing")
         ),
         bool(token_payload),
-        bool(token_file_page_access_token),
-        bool(token_file_fallback_access_token),
-        bool(env_page_access_token),
     )
 
-    if not page_access_token or not page_id:
+    if not access_token or not instagram_user_id:
         raise RuntimeError(
             "Instagram messaging credentials must be configured via "
-            "INSTAGRAM_PAGE_ACCESS_TOKEN/FACEBOOK_PAGE_ID, or "
-            "FB_LONG_LIVED_USER_ACCESS_TOKEN/FB_PAGE_ID in "
-            "instagram/instagram_token.json."
+            "INSTAGRAM_ACCESS_TOKEN and INSTAGRAM_USER_ID for Instagram Login, "
+            "or INSTAGRAM_PAGE_ACCESS_TOKEN/FB_LONG_LIVED_USER_ACCESS_TOKEN plus "
+            "INSTAGRAM_USER_ID for Facebook Login."
         )
-    return {"page_access_token": page_access_token, "page_id": page_id}
+    return {
+        "access_token": access_token,
+        "instagram_user_id": instagram_user_id,
+        "graph_api_base": _resolve_graph_api_base(token_payload),
+    }
+
+
+def _post_instagram_message(payload: Dict[str, object]) -> Dict[str, str]:
+    creds = _get_instagram_messaging_credentials()
+    response = requests.post(
+        f"{creds['graph_api_base']}/{creds['instagram_user_id']}/messages",
+        params={"access_token": creds["access_token"]},
+        json=payload,
+        timeout=30,
+    )
+    if response.status_code >= 400:
+        logger.error("Instagram message send failed: %s - %s", response.status_code, response.text)
+        response.raise_for_status()
+    return response.json()
 
 
 def _resolve_local_media_path(media_url: str) -> Optional[str]:
@@ -163,6 +209,7 @@ def _create_media_container(
     share_link: Optional[str] = None,
 ) -> Dict[str, str]:
     creds = _get_instagram_credentials()
+    graph_api_base = _resolve_graph_api_base()
     public_image_url = _ensure_public_image_url(image_url)
     payload = {
         "access_token": creds["access_token"],
@@ -175,7 +222,7 @@ def _create_media_container(
     if media_type.upper() == "STORIES":
         payload["media_type"] = "STORIES"
 
-    creation_url = f"{GRAPH_API_BASE}/{creds['user_id']}/media"
+    creation_url = f"{graph_api_base}/{creds['user_id']}/media"
     response = requests.post(creation_url, data=payload, timeout=30)
     if response.status_code >= 400:
         logger.error("Instagram media creation failed: %s - %s", response.status_code, response.text)
@@ -188,7 +235,7 @@ def _create_media_container(
     if not _wait_for_media_ready(creation_id, creds["access_token"]):
         raise RuntimeError("Instagram media is not ready to publish yet.")
 
-    publish_url = f"{GRAPH_API_BASE}/{creds['user_id']}/media_publish"
+    publish_url = f"{graph_api_base}/{creds['user_id']}/media_publish"
     publish_payload = {"creation_id": creation_id, "access_token": creds["access_token"]}
     publish_response = requests.post(publish_url, data=publish_payload, timeout=30)
     if publish_response.status_code >= 400:
@@ -206,6 +253,7 @@ def _create_video_container(
     share_to_feed: bool = True,
 ) -> Dict[str, str]:
     creds = _get_instagram_credentials()
+    graph_api_base = _resolve_graph_api_base()
     public_video_url = _ensure_public_video_url(video_url)
     payload = {
         "access_token": creds["access_token"],
@@ -217,7 +265,7 @@ def _create_video_container(
     if media_type.upper() == "REELS":
         payload["share_to_feed"] = "true" if share_to_feed else "false"
 
-    creation_url = f"{GRAPH_API_BASE}/{creds['user_id']}/media"
+    creation_url = f"{graph_api_base}/{creds['user_id']}/media"
     response = requests.post(creation_url, data=payload, timeout=30)
     if response.status_code >= 400:
         logger.error("Instagram media creation failed: %s - %s", response.status_code, response.text)
@@ -230,7 +278,7 @@ def _create_video_container(
     if not _wait_for_media_ready(creation_id, creds["access_token"]):
         raise RuntimeError("Instagram media is not ready to publish yet.")
 
-    publish_url = f"{GRAPH_API_BASE}/{creds['user_id']}/media_publish"
+    publish_url = f"{graph_api_base}/{creds['user_id']}/media_publish"
     publish_payload = {"creation_id": creation_id, "access_token": creds["access_token"]}
     publish_response = requests.post(publish_url, data=publish_payload, timeout=30)
     if publish_response.status_code >= 400:
@@ -241,7 +289,7 @@ def _create_video_container(
 
 
 def _wait_for_media_ready(creation_id: str, access_token: str) -> bool:
-    status_url = f"{GRAPH_API_BASE}/{creation_id}"
+    status_url = f"{_resolve_graph_api_base()}/{creation_id}"
     deadline = time.time() + PUBLISH_STATUS_TIMEOUT_SECONDS
     last_status = None
     while time.time() < deadline:
@@ -320,37 +368,36 @@ def publish_instagram_reel(
 
 def send_instagram_message(*, recipient_id: str, text: str) -> Dict[str, str]:
     """Send a text reply to an Instagram Messaging conversation."""
-    creds = _get_instagram_messaging_credentials()
-    response = requests.post(
-        f"{GRAPH_API_BASE}/{creds['page_id']}/messages",
-        params={"access_token": creds["page_access_token"]},
-        json={
+    return _post_instagram_message(
+        {
             "recipient": {"id": recipient_id},
-            "messaging_type": "RESPONSE",
             "message": {"text": text[:1000]},
-        },
-        timeout=30,
+        }
     )
-    if response.status_code >= 400:
-        logger.error("Instagram DM send failed: %s - %s", response.status_code, response.text)
-        response.raise_for_status()
-    return response.json()
 
 
 def send_instagram_private_reply(*, comment_id: str, text: str) -> Dict[str, str]:
     """Send the one-time private reply supported for IG comments/live comments."""
-    creds = _get_instagram_messaging_credentials()
-    response = requests.post(
-        f"{GRAPH_API_BASE}/{creds['page_id']}/messages",
-        params={"access_token": creds["page_access_token"]},
-        json={
+    return _post_instagram_message(
+        {
             "recipient": {"comment_id": comment_id},
             "message": {"text": text[:1000]},
-        },
+        }
+    )
+
+
+def send_instagram_comment_reply(*, comment_id: str, text: str) -> Dict[str, str]:
+    """Post a public reply under an Instagram comment."""
+
+    creds = _get_instagram_messaging_credentials()
+    response = requests.post(
+        f"{creds['graph_api_base']}/{comment_id}/replies",
+        headers={"Authorization": f"Bearer {creds['access_token']}"},
+        json={"message": text[:1000]},
         timeout=30,
     )
     if response.status_code >= 400:
-        logger.error("Instagram private reply failed: %s - %s", response.status_code, response.text)
+        logger.error("Instagram comment reply failed: %s - %s", response.status_code, response.text)
         response.raise_for_status()
     return response.json()
 
@@ -365,7 +412,11 @@ def list_story_media_candidates(limit: int = 25) -> List[Dict[str, str]]:
         "limit": str(max(1, min(limit, 50))),
         "access_token": creds["access_token"],
     }
-    response = requests.get(f"{GRAPH_API_BASE}/{creds['user_id']}/media", params=params, timeout=30)
+    response = requests.get(
+        f"{_resolve_graph_api_base()}/{creds['user_id']}/media",
+        params=params,
+        timeout=30,
+    )
     if response.status_code >= 400:
         logger.error("Instagram media list failed: %s - %s", response.status_code, response.text)
         response.raise_for_status()
@@ -420,7 +471,7 @@ def publish_random_profile_story(
 
 def _get_latest_media_id(access_token: str, user_id: str) -> Optional[str]:
     response = requests.get(
-        f"{GRAPH_API_BASE}/{user_id}/media",
+        f"{_resolve_graph_api_base()}/{user_id}/media",
         params={"fields": "id,media_type,timestamp", "limit": 1, "access_token": access_token},
         timeout=30,
     )
@@ -445,8 +496,9 @@ def _extract_metric_value(metric_item: Dict[str, object]) -> Optional[float]:
 
 def _fetch_media_insights(access_token: str, media_id: str, metrics: List[str]) -> Dict[str, Optional[float]]:
     results: Dict[str, Optional[float]] = {metric: None for metric in metrics}
+    graph_api_base = _resolve_graph_api_base()
     bulk_response = requests.get(
-        f"{GRAPH_API_BASE}/{media_id}/insights",
+        f"{graph_api_base}/{media_id}/insights",
         params={"metric": ",".join(metrics), "access_token": access_token},
         timeout=30,
     )
@@ -467,7 +519,7 @@ def _fetch_media_insights(access_token: str, media_id: str, metrics: List[str]) 
 
     for metric in metrics:
         response = requests.get(
-            f"{GRAPH_API_BASE}/{media_id}/insights",
+            f"{graph_api_base}/{media_id}/insights",
             params={"metric": metric, "access_token": access_token},
             timeout=30,
         )
@@ -541,7 +593,7 @@ def fetch_instagram_analytics() -> Dict[str, object]:
     metrics = ["views", "reach", "saved", "shares", "likes", "comments"]
     try:
         media_response = requests.get(
-            f"{GRAPH_API_BASE}/{user_id}/media",
+            f"{_resolve_graph_api_base()}/{user_id}/media",
             params={
                 "fields": "id,caption,timestamp,media_type,media_product_type,permalink",
                 "limit": str(max(5, INSTAGRAM_ANALYTICS_MAX_MEDIA)),

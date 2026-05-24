@@ -13,7 +13,7 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}" />
   </head>
   <body>
-    {% macro preview_hidden_inputs(preview, values) -%}
+    {% macro preview_hidden_inputs(preview, values, include_video_duration=true) -%}
       <input type="hidden" name="market" value="{{ values.get('market', '') | e }}" />
       <input type="hidden" name="sku_or_url" value="{{ values.get('sku_or_url', '') | e }}" />
       <input type="hidden" name="title" value="{{ preview.title | e }}" />
@@ -50,10 +50,76 @@
       <input type="hidden" name="instagram_image_path" value="{{ preview.instagram_image_path | e }}" />
       <input
         type="hidden"
-        name="video_duration_seconds"
-        value="{{ (values.get('video_duration_seconds') or preview.video_duration_seconds or '8') | e }}"
+        name="image_generation_model"
+        value="{{ (values.get('image_generation_model') or image_generation_options.default_model or '') | e }}"
       />
+      <input
+        type="hidden"
+        name="video_generation_model"
+        value="{{ (values.get('video_generation_model') or video_generation_options.default_model or '') | e }}"
+      />
+      {% if include_video_duration %}
+        <input
+          type="hidden"
+          name="video_duration_seconds"
+          value="{{ (values.get('video_duration_seconds') or preview.video_duration_seconds or '8') | e }}"
+        />
+      {% endif %}
       <input type="hidden" name="selected_original_image" value="{{ values.get('selected_original_image', '') | e }}" />
+      <input
+        type="hidden"
+        name="selected_original_images"
+        value="{{ values.get('selected_original_images', '[]') | e }}"
+      />
+    {%- endmacro %}
+    {% macro editable_term_textarea(name, label, items, placeholder, disabled=false, help_text='') -%}
+      <label>
+        <span>{{ label }}</span>
+        <textarea
+          name="{{ name }}"
+          rows="2"
+          placeholder="{{ placeholder }}"
+          {% if disabled %}disabled{% endif %}
+        >{{ (items or []) | join(', ') }}</textarea>
+      </label>
+      {% if help_text %}
+        <p class="muted">{{ help_text }}</p>
+      {% endif %}
+    {%- endmacro %}
+    {% macro video_duration_fields(values, preview, label='Video duration (seconds)', disabled=false) -%}
+      {% set current_duration = values.get('video_duration_seconds') or preview.video_duration_seconds or '8' %}
+      <div class="video-duration-control" data-video-duration-control>
+        <label data-video-duration-mode="gemini">
+          <span>{{ label }}</span>
+          <input
+            type="number"
+            name="video_duration_seconds"
+            min="4"
+            max="60"
+            step="1"
+            value="{{ current_duration | e }}"
+            data-video-duration-input="gemini"
+            {% if disabled %}disabled{% endif %}
+          />
+        </label>
+        <label data-video-duration-mode="openai" hidden>
+          <span>{{ label }}</span>
+          <div class="input-shell">
+            <select
+              name="video_duration_seconds"
+              data-video-duration-input="openai"
+              {% if disabled %}disabled{% endif %}
+            >
+              {% for seconds in video_generation_options.openai_allowed_seconds %}
+                <option value="{{ seconds }}" {% if seconds|string == current_duration|string %}selected{% endif %}>
+                  {{ seconds }} seconds
+                </option>
+              {% endfor %}
+            </select>
+          </div>
+          <p class="muted">OpenAI video supports only {{ video_generation_options.openai_allowed_seconds | join(', ') }} seconds.</p>
+        </label>
+      </div>
     {%- endmacro %}
     {% macro platform_reset_button(platform, label, sku) -%}
       <div class="card-header-actions">
@@ -79,11 +145,12 @@
         </div>
         <div class="hero-pill">
           <span>Multi-market ready</span>
-          <span>Gemini visuals</span>
+          <span>Multi-model visuals</span>
           <span>Pinterest automation</span>
         </div>
         <div class="card-header-actions">
           <a class="ghost-btn" href="{{ url_for('analytics.analytics_view') }}">View analytics</a>
+          <a class="ghost-btn" href="{{ url_for('file_manager.file_manager_view') }}">File manager</a>
           <a class="ghost-btn" href="{{ url_for('kaymio_wp_admin.kaymio_wp_admin_view') }}">WP Admin</a>
         </div>
       </header>
@@ -101,6 +168,7 @@
       <main class="layout">
         <div class="card-header-actions" style="margin-bottom: 16px;">
           <a class="ghost-btn" href="{{ url_for('analytics.analytics_view') }}">Analytics dashboard</a>
+          <a class="ghost-btn" href="{{ url_for('file_manager.file_manager_view') }}">File manager</a>
           <a class="ghost-btn" href="{{ url_for('kaymio_wp_admin.kaymio_wp_admin_view') }}">WooCommerce admin</a>
         </div>
         {% set values = form_values or {} %}
@@ -122,11 +190,24 @@
         {% set platforms_locked = not website_published %}
         {% set has_saved_image = preview_data.original_image_path or values.get('original_image_path') %}
         {% set instagram_state = platform_states.get('instagram', {}) %}
+        {% set instagram_reel_state = instagram_state.get('instagram_reel', {}) %}
         {% set instagram_feed_published = instagram_state.get('instagram_feed', {}).get('status') == 'published' %}
         {% set instagram_story_published = instagram_state.get('instagram_story', {}).get('status') == 'published' %}
-        {% set instagram_reel_published = instagram_state.get('instagram_reel', {}).get('status') == 'published' %}
-        {% set youtube_published = platform_states.get('youtube', {}).get('status') == 'published' %}
-        {% set tiktok_published = platform_states.get('tiktok', {}).get('status') == 'published' %}
+        {% set instagram_reel_published = instagram_reel_state.get('status') == 'published' %}
+        {% set instagram_reel_generating = instagram_reel_state.get('generation_status') == 'processing' %}
+        {% set instagram_reel_generation_error = instagram_reel_state.get('generation_error', '') %}
+        {% set youtube_state = platform_states.get('youtube', {}) %}
+        {% set youtube_published = youtube_state.get('status') == 'published' %}
+        {% set youtube_generating = youtube_state.get('generation_status') == 'processing' %}
+        {% set youtube_generation_error = youtube_state.get('generation_error', '') %}
+        {% set tiktok_state = platform_states.get('tiktok', {}) %}
+        {% set tiktok_published = tiktok_state.get('status') == 'published' %}
+        {% set tiktok_generating = tiktok_state.get('generation_status') == 'processing' %}
+        {% set tiktok_generation_error = tiktok_state.get('generation_error', '') %}
+        {% set pinterest_video_generating = pinterest_state.get('generation_status') == 'processing' %}
+        {% set pinterest_video_generation_error = pinterest_state.get('generation_error', '') %}
+        {% set active_image_generation_model = values.get('image_generation_model') or image_generation_options.default_model %}
+        {% set active_video_generation_model = values.get('video_generation_model') or video_generation_options.default_model %}
         {% if product_ids %}
           <form method="post" action="{{ url_for('select_product') }}" class="card">
             <div class="card-header">
@@ -214,11 +295,13 @@
             </button>
           </section>
           <input type="hidden" name="use_affiliate_link" value="{{ values.get('use_affiliate_link', '0') }}" />
+          <input type="hidden" name="selected_original_image" value="{{ values.get('selected_original_image', '') | e }}" />
+          <input type="hidden" name="selected_original_images" value="{{ values.get('selected_original_images', '[]') | e }}" />
 
           <section class="card">
             <div class="card-header">
               <h2>Manual product assets</h2>
-              <p>Upload a clean product shot when the marketplace does not expose an API.</p>
+              <p>Upload product images, add more to the gallery, and choose one or more to use across image and video generation.</p>
             </div>
             <label class="dropzone">
               <input
@@ -235,20 +318,77 @@
                 <p>Product images</p>
                 <div class="product-gallery-grid">
                   {% for image_choice in product_image_choices %}
-                    <label class="product-gallery-item">
-                      <input
-                        type="radio"
-                        name="selected_original_image"
-                        value="{{ image_choice.value }}"
-                        {% if image_choice.value == selected_original_image or loop.first %}checked{% endif %}
-                      />
-                      <img src="{{ image_choice.url }}" alt="Product image {{ loop.index }}" loading="lazy" />
-                    </label>
+                    <div class="product-gallery-item">
+                      <a
+                        class="product-gallery-link"
+                        href="{{ image_choice.url }}"
+                        target="_blank"
+                        rel="noopener"
+                        title="Open image in new tab"
+                      >
+                        <img
+                          src="{{ image_choice.url }}"
+                          alt="Product image {{ loop.index }}"
+                          loading="lazy"
+                          class="product-gallery-preview"
+                        />
+                      </a>
+                      <label class="product-gallery-selector">
+                        <input
+                          type="checkbox"
+                          class="product-gallery-checkbox"
+                          value="{{ image_choice.value }}"
+                          {% if image_choice.value in selected_original_images %}checked{% endif %}
+                        />
+                        <span>Use this image</span>
+                      </label>
+                    </div>
                   {% endfor %}
                 </div>
-                <p class="muted">Pick the original image to use for Pinterest, Instagram, and video generation.</p>
+                <p class="muted">All checked images are used as product references. The first checked image becomes the main source.</p>
               </div>
             {% endif %}
+            <p class="muted">Upload another image at any time to add it into the gallery, then select it like any fetched Amazon image.</p>
+            <div class="field-grid">
+              <label>
+                <span>Image generation model</span>
+                <div class="input-shell">
+                  <select name="image_generation_model" id="image-generation-model-select">
+                    {% for group in image_generation_options.groups %}
+                      {% if group.models %}
+                        <optgroup label="{{ group.label }}">
+                          {% for model_name in group.models %}
+                            <option value="{{ model_name }}" {% if model_name == active_image_generation_model %}selected{% endif %}>
+                              {{ model_name }}
+                            </option>
+                          {% endfor %}
+                        </optgroup>
+                      {% endif %}
+                    {% endfor %}
+                  </select>
+                </div>
+              </label>
+              <label>
+                <span>Video generation model</span>
+                <div class="input-shell">
+                  <select name="video_generation_model" id="video-generation-model-select">
+                    {% for group in video_generation_options.groups %}
+                      {% if group.models %}
+                        <optgroup label="{{ group.label }}">
+                          {% for model_name in group.models %}
+                            <option value="{{ model_name }}" data-provider="{{ group.provider }}" {% if model_name == active_video_generation_model %}selected{% endif %}>
+                              {{ model_name }}
+                            </option>
+                          {% endfor %}
+                        </optgroup>
+                      {% endif %}
+                    {% endfor %}
+                  </select>
+                </div>
+              </label>
+            </div>
+            <p class="muted">Default uses OpenAI GPT Image 2 edits and keeps the selected product image as the exact visual reference.</p>
+            <p class="muted">Video generation defaults to Gemini and uses the selected product image as the exact first-frame reference.</p>
             <label>
               <span>Product title</span>
               <input
@@ -303,6 +443,15 @@
                 formnovalidate
               >
                 Save
+              </button>
+              <button
+                type="submit"
+                class="ghost-btn"
+                formaction="{{ url_for('upload_product_image') }}"
+                formmethod="post"
+                formnovalidate
+              >
+                Add image to gallery
               </button>
             </div>
           </section>
@@ -422,7 +571,19 @@
           {% if has_preview %}
             <div class="preview-grid">
               <div class="preview-image">
-                <img src="data:image/png;base64,{{ preview_data.image_data }}" alt="Generated Pinterest pin preview" />
+                {% if preview_data.generated_image_url %}
+                  <img
+                    src="{{ preview_data.generated_image_url }}"
+                    alt="Generated Pinterest pin preview"
+                  />
+                {% elif preview_data.image_data %}
+                  <img
+                    src="data:image/png;base64,{{ preview_data.image_data }}"
+                    alt="Generated Pinterest pin preview"
+                  />
+                {% else %}
+                  <p class="muted">Preview image is unavailable. Regenerate the Pinterest visual.</p>
+                {% endif %}
               </div>
               <div class="preview-meta">
                 <dl>
@@ -476,11 +637,20 @@
                       <input type="hidden" name="price" value="{{ values.get('price', '') }}" />
                       <input type="hidden" name="website_boost_prompt_pref" value="{{ values.get('website_boost_prompt', '') }}" />
                       <input type="hidden" name="youtube_boost_prompt" value="{{ values.get('youtube_boost_prompt', '') }}" />
+                      <input type="hidden" name="image_generation_model" value="{{ active_image_generation_model }}" />
                       <input type="hidden" name="use_affiliate_link_pref" value="{{ values.get('use_affiliate_link', '1') }}" />
                       <button type="submit" class="ghost-btn">Regenerate visual</button>
                     </form>
                     <form method="post" action="{{ url_for('confirm_pinterest') }}" id="pinterest-publish-form">
                       {{ preview_hidden_inputs(preview_data, values) }}
+                      {{ editable_term_textarea(
+                        'tags',
+                        'Edit Pinterest tags',
+                        preview_data.tags,
+                        'Comma-separated tags, e.g. kitchen gadgets, smoothie recipes, gift ideas',
+                        false,
+                        'Adjust the generated tags before publishing. Comma-separated works best.'
+                      ) }}
                       <input type="hidden" name="use_affiliate_link" value="0" />
                       <label class="checkbox">
                         <input
@@ -507,10 +677,15 @@
                 {% else %}
                   <p class="muted">Generate a Pinterest-ready video from the current visual.</p>
                 {% endif %}
+                {% if pinterest_video_generating %}
+                  <p class="muted">Video generation is running in the background. Refresh in a moment.</p>
+                {% elif pinterest_video_generation_error %}
+                  <p class="muted">Last video generation failed: {{ pinterest_video_generation_error }}</p>
+                {% endif %}
                 {% if has_preview %}
                   <form method="post" action="{{ url_for('generate_platform_video', platform='pinterest') }}">
                     {{ preview_hidden_inputs(preview_data, values) }}
-                    <button type="submit" class="ghost-btn" {% if platforms_locked %}disabled{% endif %}>
+                    <button type="submit" class="ghost-btn" {% if platforms_locked or pinterest_video_generating %}disabled{% endif %}>
                       Generate Pinterest video
                     </button>
                   </form>
@@ -518,6 +693,14 @@
                 {% if preview_data.video_url %}
                   <form method="post" action="{{ url_for('publish_pinterest_video') }}">
                     {{ preview_hidden_inputs(preview_data, values) }}
+                    {{ editable_term_textarea(
+                      'tags',
+                      'Edit Pinterest video tags',
+                      preview_data.tags,
+                      'Comma-separated tags for the video pin',
+                      platforms_locked,
+                      'These tags are used for the Pinterest video pin too.'
+                    ) }}
                     <input type="hidden" name="use_affiliate_link" value="0" />
                     <label class="checkbox">
                       <input
@@ -689,6 +872,14 @@
                 <h3>Publish feed or story</h3>
                 <form method="post" action="{{ url_for('publish_instagram') }}">
                   {{ preview_hidden_inputs(preview_data, values) }}
+                  {{ editable_term_textarea(
+                    'instagram_hashtags_payload',
+                    'Edit Instagram hashtags',
+                    preview_data.instagram_hashtags,
+                    'Comma-separated hashtags, with or without #',
+                    platforms_locked,
+                    'You can paste hashtags with or without #. They will be normalized on publish.'
+                  ) }}
                   <input type="hidden" name="use_affiliate_link" value="0" />
                   <label class="checkbox">
                     <input
@@ -745,6 +936,11 @@
                 {% else %}
                   <p class="muted">Generate a Reel-ready video to unlock publishing.</p>
                 {% endif %}
+                {% if instagram_reel_generating %}
+                  <p class="muted">Video generation is running in the background. Refresh in a moment.</p>
+                {% elif instagram_reel_generation_error %}
+                  <p class="muted">Last video generation failed: {{ instagram_reel_generation_error }}</p>
+                {% endif %}
                 {% if has_preview or has_saved_image %}
                   <form method="post" action="{{ url_for('generate_platform_video', platform='instagram') }}">
                   <p class="muted">Tip: add wardrobe, lighting, or mood references to guide the Reel.</p>
@@ -764,8 +960,9 @@
                       <option value="aesthetic" {% if hook_pref == 'aesthetic' %}selected{% endif %}>Aesthetic</option>
                     </select>
                   </label>
-                  {{ preview_hidden_inputs(preview_data, values) }}
-                  <button type="submit" class="ghost-btn" {% if instagram_reel_published or platforms_locked %}disabled{% endif %}>
+                  {{ video_duration_fields(values, preview_data, 'Reel duration (seconds)', instagram_reel_published or platforms_locked) }}
+                  {{ preview_hidden_inputs(preview_data, values, include_video_duration=false) }}
+                  <button type="submit" class="ghost-btn" {% if instagram_reel_published or platforms_locked or instagram_reel_generating %}disabled{% endif %}>
                     Generate Instagram Reel
                   </button>
                 </form>
@@ -794,6 +991,14 @@
                 {% if preview_data.video_url %}
                   <form method="post" action="{{ url_for('publish_instagram_reel_route') }}">
                     {{ preview_hidden_inputs(preview_data, values) }}
+                    {{ editable_term_textarea(
+                      'instagram_hashtags_payload',
+                      'Edit Reel hashtags',
+                      preview_data.instagram_hashtags,
+                      'Comma-separated Reel hashtags',
+                      platforms_locked,
+                      'These hashtags will be appended to the Reel caption.'
+                    ) }}
                     <input type="hidden" name="use_affiliate_link" value="0" />
                     <label class="checkbox">
                       <input
@@ -841,6 +1046,11 @@
               {% else %}
                 <p class="muted">Use the generate button to create a Short before publishing.</p>
               {% endif %}
+              {% if youtube_generating %}
+                <p class="muted">Video generation is running in the background. Refresh in a moment.</p>
+              {% elif youtube_generation_error %}
+                <p class="muted">Last video generation failed: {{ youtube_generation_error }}</p>
+              {% endif %}
               <dl>
                 <dt>Title</dt>
                 <dd>{{ preview_data.youtube_title if has_preview else 'Awaiting creative...' }}</dd>
@@ -867,7 +1077,7 @@
               {% endif %}
               {% if has_preview %}
                 <form method="post" action="{{ url_for('generate_platform_video', platform='youtube') }}">
-                                    <label>
+                  <label>
                     <span>Hook style</span>
                     <select name="video_hook_style" {% if youtube_published or platforms_locked %}disabled{% endif %}>
                       {% set hook_pref = values.get('video_hook_style', '') %}
@@ -883,18 +1093,7 @@
                       <option value="aesthetic" {% if hook_pref == 'aesthetic' %}selected{% endif %}>Aesthetic</option>
                     </select>
                   </label>
-<label>
-                    <span>Short duration (seconds)</span>
-                    <input
-                      type="number"
-                      name="video_duration_seconds"
-                      min="4"
-                      max="60"
-                      step="1"
-                      value="{{ preview_data.video_duration_seconds or 8 }}"
-                      {% if youtube_published or platforms_locked %}disabled{% endif %}
-                    />
-                  </label>
+                  {{ video_duration_fields(values, preview_data, 'Short duration (seconds)', youtube_published or platforms_locked) }}
                   {% set youtube_boost_pref = values.get('youtube_boost_prompt', '') %}
                   {% if not youtube_boost_pref %}
                     {% set youtube_boost_pref = preview_data.youtube_boost_prompt | default('', true) %}
@@ -911,8 +1110,8 @@
                   <p class="muted">
                     Tip: remind Gemini the footage is brand-safe (e.g., “feature a generic model wearing this stylish jacket, no logos visible”).
                   </p>
-                  {{ preview_hidden_inputs(preview_data, values) }}
-                  <button type="submit" class="ghost-btn" {% if youtube_published or platforms_locked %}disabled{% endif %}>
+                  {{ preview_hidden_inputs(preview_data, values, include_video_duration=false) }}
+                  <button type="submit" class="ghost-btn" {% if youtube_published or platforms_locked or youtube_generating %}disabled{% endif %}>
                     Generate YouTube Short
                   </button>
                 </form>
@@ -941,6 +1140,14 @@
               {% if preview_data.video_url %}
                 <form method="post" action="{{ url_for('publish_youtube') }}">
                   {{ preview_hidden_inputs(preview_data, values) }}
+                  {{ editable_term_textarea(
+                    'youtube_keywords_payload',
+                    'Edit YouTube keywords',
+                    preview_data.youtube_keywords,
+                    'Comma-separated keywords',
+                    platforms_locked,
+                    'Use short search-friendly keywords separated by commas.'
+                  ) }}
                   <input type="hidden" name="use_affiliate_link" value="0" />
                   <label class="checkbox">
                     <input
@@ -1028,16 +1235,29 @@
                       <option value="aesthetic" {% if hook_pref == 'aesthetic' %}selected{% endif %}>Aesthetic</option>
                     </select>
                   </label>
-                  <button type="submit" class="ghost-btn" {% if tiktok_published or platforms_locked %}disabled{% endif %}>
+                  <button type="submit" class="ghost-btn" {% if tiktok_published or platforms_locked or tiktok_generating %}disabled{% endif %}>
                     Generate TikTok video
                   </button>
                 </form>
               {% else %}
                 <p class="muted">Generate a Shorts-style video before sending it to TikTok.</p>
               {% endif %}
+              {% if tiktok_generating %}
+                <p class="muted">Video generation is running in the background. Refresh in a moment.</p>
+              {% elif tiktok_generation_error %}
+                <p class="muted">Last video generation failed: {{ tiktok_generation_error }}</p>
+              {% endif %}
               {% if preview_data.video_url %}
                 <form method="post" action="{{ url_for('publish_tiktok') }}">
                   {{ preview_hidden_inputs(preview_data, values) }}
+                  {{ editable_term_textarea(
+                    'tiktok_hashtags_payload',
+                    'Edit TikTok hashtags',
+                    preview_data.tiktok_hashtags,
+                    'Comma-separated TikTok hashtags',
+                    platforms_locked,
+                    'These hashtags will be appended to the TikTok caption.'
+                  ) }}
                   <input type="hidden" name="use_affiliate_link" value="0" />
                   <label class="checkbox">
                     <input
@@ -1083,22 +1303,103 @@
   </body>
   <script>
     (function () {
+      const openAIDurationOptions = {{ video_generation_options.openai_allowed_seconds | tojson }};
       const boostInput = document.querySelector('textarea[name="youtube_boost_prompt"]');
       const instagramBoostInput = document.querySelector('textarea[name="instagram_boost_prompt"]');
-      const durationInput = document.querySelector(
-        'input[type="number"][name="video_duration_seconds"]'
+      const imageGenerationModelSelect = document.querySelector(
+        'select[name="image_generation_model"]'
       );
-      const selectedImageRadios = document.querySelectorAll(
-        'input[type="radio"][name="selected_original_image"]'
+      const videoGenerationModelSelect = document.querySelector(
+        'select[name="video_generation_model"]'
       );
+      const videoDurationControls = document.querySelectorAll("[data-video-duration-control]");
+      const videoDurationInputs = document.querySelectorAll('[data-video-duration-input="gemini"]');
+      const videoDurationSelects = document.querySelectorAll('[data-video-duration-input="openai"]');
+      const selectedImageCheckboxes = document.querySelectorAll(".product-gallery-checkbox");
       const selectedImageHidden = document.querySelectorAll(
         'input[type="hidden"][name="selected_original_image"]'
+      );
+      const selectedImagesHidden = document.querySelectorAll(
+        'input[type="hidden"][name="selected_original_images"]'
       );
 
       function syncField(name, value) {
         document.querySelectorAll(`input[type="hidden"][name="${name}"]`).forEach((input) => {
           input.value = value || "";
         });
+      }
+
+      function getSelectedVideoProvider() {
+        if (!videoGenerationModelSelect) {
+          return "gemini";
+        }
+        const selectedOption =
+          videoGenerationModelSelect.options[videoGenerationModelSelect.selectedIndex];
+        return selectedOption?.dataset.provider || "gemini";
+      }
+
+      function normalizeOpenAIDuration(value) {
+        if (!openAIDurationOptions.length) {
+          return String(value || "8");
+        }
+        const numericValue = Number.parseInt(String(value || ""), 10);
+        if (Number.isNaN(numericValue)) {
+          return String(openAIDurationOptions[0]);
+        }
+        return String(
+          openAIDurationOptions.reduce((closest, candidate) => {
+            return Math.abs(candidate - numericValue) < Math.abs(closest - numericValue)
+              ? candidate
+              : closest;
+          }, openAIDurationOptions[0])
+        );
+      }
+
+      function syncVideoDuration(value, provider) {
+        const activeProvider = provider || getSelectedVideoProvider();
+        let nextValue = String(value || "").trim();
+        if (!nextValue) {
+          nextValue = "8";
+        }
+        if (activeProvider === "openai") {
+          nextValue = normalizeOpenAIDuration(nextValue);
+        }
+
+        syncField("video_duration_seconds", nextValue);
+        videoDurationInputs.forEach((input) => {
+          if (input.value !== nextValue) {
+            input.value = nextValue;
+          }
+        });
+
+        const openAIValue = normalizeOpenAIDuration(nextValue);
+        videoDurationSelects.forEach((select) => {
+          if (select.value !== openAIValue) {
+            select.value = openAIValue;
+          }
+        });
+      }
+
+      function syncVideoDurationMode() {
+        if (!videoDurationControls.length) {
+          return;
+        }
+        const activeProvider = getSelectedVideoProvider();
+        videoDurationControls.forEach((control) => {
+          control.querySelectorAll("[data-video-duration-mode]").forEach((field) => {
+            field.hidden = field.dataset.videoDurationMode !== activeProvider;
+          });
+        });
+
+        const firstHiddenDuration = document.querySelector(
+          'input[type="hidden"][name="video_duration_seconds"]'
+        );
+        const currentDuration =
+          firstHiddenDuration?.value ||
+          (videoDurationInputs.length ? videoDurationInputs[0].value : "") ||
+          (videoDurationSelects.length ? videoDurationSelects[0].value : "") ||
+          "8";
+        syncVideoDuration(currentDuration, activeProvider);
       }
 
       if (boostInput) {
@@ -1113,27 +1414,61 @@
         );
       }
 
-      if (durationInput) {
-        syncField("video_duration_seconds", durationInput.value);
-        durationInput.addEventListener("input", () => syncField("video_duration_seconds", durationInput.value));
+      if (imageGenerationModelSelect) {
+        syncField("image_generation_model", imageGenerationModelSelect.value);
+        imageGenerationModelSelect.addEventListener("change", () =>
+          syncField("image_generation_model", imageGenerationModelSelect.value)
+        );
       }
 
-      if (selectedImageRadios.length) {
-        const checked = document.querySelector(
-          'input[type="radio"][name="selected_original_image"]:checked'
-        );
-        if (checked) {
+      if (videoGenerationModelSelect) {
+        syncField("video_generation_model", videoGenerationModelSelect.value);
+        videoGenerationModelSelect.addEventListener("change", () => {
+          syncField("video_generation_model", videoGenerationModelSelect.value);
+          syncVideoDurationMode();
+        });
+      }
+
+      videoDurationInputs.forEach((input) => {
+        input.addEventListener("input", () => syncVideoDuration(input.value, "gemini"));
+      });
+      videoDurationSelects.forEach((select) => {
+        select.addEventListener("change", () => syncVideoDuration(select.value, "openai"));
+      });
+      syncVideoDurationMode();
+
+      if (selectedImageCheckboxes.length) {
+        function syncSelectedImages() {
+          const selectedValues = Array.from(selectedImageCheckboxes)
+            .filter((checkbox) => checkbox.checked)
+            .map((checkbox) => checkbox.value)
+            .filter(Boolean);
+
+          const primaryValue = selectedValues[0] || "";
           selectedImageHidden.forEach((input) => {
-            input.value = checked.value || "";
+            input.value = primaryValue;
+          });
+          selectedImagesHidden.forEach((input) => {
+            input.value = JSON.stringify(selectedValues);
           });
         }
-        selectedImageRadios.forEach((radio) => {
-          radio.addEventListener("change", () => {
-            if (radio.checked) {
-              selectedImageHidden.forEach((input) => {
-                input.value = radio.value || "";
-              });
+
+        const checked = document.querySelector(".product-gallery-checkbox:checked");
+        if (checked) {
+          syncSelectedImages();
+        } else if (selectedImageCheckboxes[0]) {
+          selectedImageCheckboxes[0].checked = true;
+          syncSelectedImages();
+        }
+        selectedImageCheckboxes.forEach((checkbox) => {
+          checkbox.addEventListener("change", () => {
+            const checkedCount = Array.from(selectedImageCheckboxes).filter((item) => item.checked).length;
+            if (!checkbox.checked && checkedCount === 0) {
+              checkbox.checked = true;
+              syncSelectedImages();
+              return;
             }
+            syncSelectedImages();
           });
         });
       }
