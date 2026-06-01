@@ -11,7 +11,7 @@ done
 echo "MySQL is reachable."
 
 # Create tables + seed the default admin / app_meta.
-python -c "from dotenv import load_dotenv; load_dotenv(); from kaymio.database import init_db; init_db()"
+python -c "from dotenv import load_dotenv; load_dotenv('.env'); from kaymio.database import init_db; init_db()"
 
 # First-run migration: if the DB has no products yet and the JSON snapshot
 # exists, import it. Idempotent and safe to leave in the entrypoint.
@@ -20,7 +20,7 @@ import json
 from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv('.env')
 
 from kaymio.database.db import session_scope
 from kaymio.database.models import Product
