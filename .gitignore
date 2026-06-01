@@ -6,3 +6,6 @@ pintrest/access_token.txt
 access_token.txt
 .env
 data/app_state.json
+kaymio/integrations/pintrest/pintrest_access_token.txt
+server_logs.txt
+pintrest_access_token.txt

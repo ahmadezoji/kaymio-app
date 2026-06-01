@@ -10,7 +10,7 @@ import shutil
 import uuid
 import re
 
-from openai_helper import find_nearest_category
+from kaymio.utils.openai_helper import find_nearest_category
 
 
 

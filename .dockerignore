@@ -1,0 +1,14 @@
+.git
+.gitignore
+.venv
+__pycache__
+**/__pycache__
+*.pyc
+*cpython-*.pyc
+.vscode
+template_images/originals/*
+template_images/generated/*
+template_images/videos/*
+server_logs.txt
+*.log
+.DS_Store

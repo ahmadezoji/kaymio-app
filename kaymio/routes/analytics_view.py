@@ -6,7 +6,7 @@ from typing import Dict, List
 
 from flask import Blueprint, jsonify, render_template
 
-from analytics_providers import fetch_instagram_analytics, fetch_pinterest_analytics, fetch_youtube_analytics
+from kaymio.utils.analytics_providers import fetch_instagram_analytics, fetch_pinterest_analytics, fetch_youtube_analytics
 
 
 @dataclass

@@ -15,10 +15,10 @@ import requests
 from dotenv import load_dotenv
 from flask import Flask, abort, flash, redirect, render_template, request, send_from_directory, url_for
 
-from amazon.amazon_api import build_affiliate_link, extract_asin, fetch_product_from_canopy
-from gemeni_api_helper import edit_image as edit_image_with_gemini, generate_video_from_image as generate_video_with_gemini
-from image_generation_config import build_image_generation_options, resolve_image_generation_choice
-from instagram.instagram_api_helper import (
+from kaymio.integrations.amazon.amazon_api import build_affiliate_link, extract_asin, fetch_product_from_canopy
+from kaymio.utils.gemeni_api_helper import edit_image as edit_image_with_gemini, generate_video_from_image as generate_video_with_gemini
+from kaymio.utils.image_generation_config import build_image_generation_options, resolve_image_generation_choice
+from kaymio.integrations.instagram.instagram_api_helper import (
     get_latest_instagram_media_id,
     publish_instagram_post,
     publish_random_profile_story,
@@ -28,7 +28,7 @@ from instagram.instagram_api_helper import (
     send_instagram_message,
     send_instagram_private_reply,
 )
-from openai_helper import (
+from kaymio.utils.openai_helper import (
     edit_image as edit_image_with_openai,
     generate_video_from_image as generate_video_with_openai,
     generate_caption_for_instagram,
@@ -40,25 +40,32 @@ from openai_helper import (
     generate_text,
     generate_youtube_metadata,
 )
-from video_generation_config import (
+from kaymio.utils.video_generation_config import (
     build_video_generation_options,
     normalize_openai_video_seconds,
     resolve_video_generation_choice,
 )
-from pintrest.pinterest_helper import create_pinterest_pin, create_pinterest_video_pin
-from tiktok.tiktok_api_helper import publish_tiktok_post
-from youtube.youtube_api_helper import publish_short_video
+from kaymio.integrations.pintrest.pinterest_helper import create_pinterest_pin, create_pinterest_video_pin
+from kaymio.integrations.tiktok.tiktok_api_helper import publish_tiktok_post
+from kaymio.integrations.youtube.youtube_api_helper import publish_short_video
 from kaymio.wordpress.wordpress_api_helper import (
     create_woocommerce_product,
     find_wordpress_nearest_category,
     list_woocommerce_products,
     update_affiliate_links,
 )
+from kaymio.database import (
+    get_product_entry as db_get_product_entry,
+    init_db,
+    load_app_state as db_load_app_state,
+    save_app_state as db_save_app_state,
+    save_product_entry as db_save_product_entry,
+)
 from PIL import Image, ImageOps
-from analytics_view import analytics_bp
-from file_manager_view import file_manager_bp
-from kaymio_wp_admin_view import kaymio_wp_admin_bp
-from widgets.story_qr_widget import (
+from kaymio.routes.analytics_view import analytics_bp
+from kaymio.routes.file_manager_view import file_manager_bp
+from kaymio.routes.kaymio_wp_admin_view import kaymio_wp_admin_bp
+from kaymio.widgets.story_qr_widget import (
     StoryCtaWidgetConfig,
     StoryQrWidgetConfig,
     compose_story_image_with_cta,
@@ -83,7 +90,6 @@ for directory in (ORIGINALS_DIR, GENERATED_DIR, VIDEOS_DIR):
     directory.mkdir(parents=True, exist_ok=True)
 STATE_DIR = Path(app.root_path) / "data"
 STATE_DIR.mkdir(parents=True, exist_ok=True)
-STATE_FILE = STATE_DIR / "app_state.json"
 MARKET_OPTIONS = [
     "Shein",
     "Amazon",
@@ -987,13 +993,7 @@ def _hydrate_preview(preview: Optional[Dict[str, Any]]) -> Optional[Dict[str, An
 
 
 def load_app_state() -> Dict[str, Any]:
-    if not STATE_FILE.exists():
-        return _empty_app_state()
-    try:
-        with open(STATE_FILE, "r", encoding="utf-8") as handle:
-            data = json.load(handle)
-    except (json.JSONDecodeError, OSError):
-        return _empty_app_state()
+    data = db_load_app_state()
     if not isinstance(data, dict):
         return _empty_app_state()
     data.setdefault("products", {})
@@ -1002,7 +1002,7 @@ def load_app_state() -> Dict[str, Any]:
 
 
 def save_app_state(state: Dict[str, Any]) -> None:
-    STATE_FILE.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    db_save_app_state(state)
 
 
 def normalize_product_id(raw_id: str) -> str:
@@ -1010,8 +1010,7 @@ def normalize_product_id(raw_id: str) -> str:
 
 
 def get_product_state(product_id: str) -> Dict[str, Any]:
-    state = load_app_state()
-    return state.get("products", {}).get(product_id, {})
+    return db_get_product_entry(product_id)
 
 
 def get_last_product_state() -> Dict[str, Any]:
@@ -1137,9 +1136,9 @@ def update_product_state(
 ) -> None:
     if not product_id:
         return
-    state = load_app_state()
-    products = state.setdefault("products", {})
-    entry = products.get(product_id, {"platforms": {}, "assets": {}})
+    entry = db_get_product_entry(product_id) or {"platforms": {}, "assets": {}}
+    entry.setdefault("platforms", {})
+    entry.setdefault("assets", {})
     if assets:
         stored_assets = entry.get("assets", {})
         stored_assets.update(_json_safe(assets))
@@ -1179,9 +1178,7 @@ def update_product_state(
         website_payload = {k: safe_preview.get(k) for k in WEBSITE_PREVIEW_KEYS if k in safe_preview}
         website_payload.update({k: safe_form.get(k) for k in FORM_COMMON_KEYS if k in safe_form})
         _merge_platform_payloads(entry, {"website": website_payload})
-    products[product_id] = entry
-    state["last_product_id"] = product_id
-    save_app_state(state)
+    db_save_product_entry(product_id, entry)
 
 
 def resolve_product_id(values: Dict[str, str]) -> str:
@@ -3896,7 +3893,8 @@ def publish_tiktok():
 
 
 if __name__ == "__main__":
-    debug_enabled = True
+    debug_enabled = os.getenv("FLASK_DEBUG", "0") in TRUTHY_VALUES
+    init_db()
     if not debug_enabled or os.getenv("WERKZEUG_RUN_MAIN") == "true":
         start_instagram_story_scheduler()
     app.run(debug=debug_enabled, host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
