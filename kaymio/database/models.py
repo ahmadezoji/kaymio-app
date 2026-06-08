@@ -163,3 +163,41 @@ class AppMeta(Base):
 
     key: Mapped[str] = mapped_column(String(191), primary_key=True)
     value: Mapped[str | None] = mapped_column(Text)
+
+
+class InstagramSchedulerState(Base):
+    """Instagram story scheduler state (last_run_date, etc.)."""
+
+    __tablename__ = "instagram_scheduler_state"
+
+    key: Mapped[str] = mapped_column(String(191), primary_key=True)
+    value: Mapped[str | None] = mapped_column(Text)
+    updated_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+
+class InstagramMediaReplyRoute(Base):
+    """Maps Instagram media IDs to product/affiliate info for story/reel replies."""
+
+    __tablename__ = "instagram_media_reply_routes"
+
+    media_id: Mapped[str] = mapped_column(String(191), primary_key=True)
+    product_id: Mapped[str | None] = mapped_column(String(191))
+    affiliate_link: Mapped[str | None] = mapped_column(Text)
+    product_url: Mapped[str | None] = mapped_column(Text)
+    title: Mapped[str | None] = mapped_column(Text)
+    description: Mapped[str | None] = mapped_column(Text)
+    reply_surface: Mapped[str | None] = mapped_column(String(64))
+    published_at: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow)
+    updated_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+
+class InstagramCommentReplyState(Base):
+    """Tracks Instagram comment reply status and metadata."""
+
+    __tablename__ = "instagram_comment_reply_states"
+
+    comment_id: Mapped[str] = mapped_column(String(191), primary_key=True)
+    reply_data: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow)
+    updated_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)

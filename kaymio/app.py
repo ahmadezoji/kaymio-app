@@ -61,6 +61,19 @@ from kaymio.database import (
     save_app_state as db_save_app_state,
     save_product_entry as db_save_product_entry,
 )
+from kaymio.database.instagram_state import (
+    load_instagram_scheduler_state,
+    save_instagram_scheduler_state,
+    migrate_scheduler_state_from_json,
+    load_instagram_media_reply_routes,
+    save_instagram_media_reply_routes,
+    upsert_instagram_media_reply_route,
+    migrate_media_routes_from_json,
+    load_instagram_comment_reply_states,
+    save_instagram_comment_reply_states,
+    upsert_instagram_comment_reply_state,
+    migrate_comment_reply_states_from_json,
+)
 from PIL import Image, ImageOps
 from kaymio.routes.analytics_view import analytics_bp
 from kaymio.routes.file_manager_view import file_manager_bp
@@ -154,45 +167,27 @@ def _empty_app_state() -> Dict[str, Any]:
 
 
 def _load_story_scheduler_state() -> Dict[str, Any]:
-    if not STORY_AUTOPUBLISH_STATE_FILE.exists():
-        return {}
-    try:
-        payload = json.loads(STORY_AUTOPUBLISH_STATE_FILE.read_text())
-        return payload if isinstance(payload, dict) else {}
-    except Exception:
-        return {}
+    return load_instagram_scheduler_state()
 
 
 def _save_story_scheduler_state(payload: Dict[str, Any]) -> None:
-    STORY_AUTOPUBLISH_STATE_FILE.write_text(json.dumps(payload))
+    save_instagram_scheduler_state(payload)
 
 
 def _load_instagram_media_reply_route_state() -> Dict[str, Any]:
-    if not INSTAGRAM_MEDIA_REPLY_ROUTE_FILE.exists():
-        return {}
-    try:
-        payload = json.loads(INSTAGRAM_MEDIA_REPLY_ROUTE_FILE.read_text())
-        return payload if isinstance(payload, dict) else {}
-    except Exception:
-        return {}
+    return load_instagram_media_reply_routes()
 
 
 def _save_instagram_media_reply_route_state(payload: Dict[str, Any]) -> None:
-    INSTAGRAM_MEDIA_REPLY_ROUTE_FILE.write_text(json.dumps(payload, indent=2))
+    save_instagram_media_reply_routes(payload)
 
 
 def _load_instagram_comment_reply_state() -> Dict[str, Any]:
-    if not INSTAGRAM_COMMENT_REPLY_STATE_FILE.exists():
-        return {}
-    try:
-        payload = json.loads(INSTAGRAM_COMMENT_REPLY_STATE_FILE.read_text())
-        return payload if isinstance(payload, dict) else {}
-    except Exception:
-        return {}
+    return load_instagram_comment_reply_states()
 
 
 def _save_instagram_comment_reply_state(payload: Dict[str, Any]) -> None:
-    INSTAGRAM_COMMENT_REPLY_STATE_FILE.write_text(json.dumps(payload, indent=2))
+    save_instagram_comment_reply_states(payload)
 
 
 def _update_instagram_comment_reply_state(comment_id: str, **fields: Any) -> Dict[str, Any]:
@@ -211,9 +206,7 @@ def _update_instagram_comment_reply_state(comment_id: str, **fields: Any) -> Dic
     if "created_at" not in entry:
         entry["created_at"] = dt.datetime.utcnow().isoformat()
     entry["updated_at"] = dt.datetime.utcnow().isoformat()
-    state[normalized_comment_id] = entry
-    _save_instagram_comment_reply_state(state)
-    return entry
+    return upsert_instagram_comment_reply_state(normalized_comment_id, entry)
 
 
 def _register_instagram_media_reply_route(
@@ -228,8 +221,7 @@ def _register_instagram_media_reply_route(
     affiliate_link = str(candidate.get("affiliate_link") or "").strip()
     if not affiliate_link:
         return
-    routes = _load_instagram_media_reply_route_state()
-    routes[normalized_media_id] = {
+    route_data = {
         "product_id": str(candidate.get("product_id") or ""),
         "affiliate_link": affiliate_link,
         "product_url": str(candidate.get("product_url") or "").strip(),
@@ -238,7 +230,8 @@ def _register_instagram_media_reply_route(
         "reply_surface": reply_surface,
         "published_at": dt.datetime.utcnow().isoformat(),
     }
-    _save_instagram_media_reply_route_state(routes)
+    upsert_instagram_media_reply_route(normalized_media_id, route_data)
+    routes = _load_instagram_media_reply_route_state()
     app.logger.info(
         "Registered Instagram media reply route: media_id=%s surface=%s product_id=%s affiliate_link_present=%s total_routes=%s",
         normalized_media_id,

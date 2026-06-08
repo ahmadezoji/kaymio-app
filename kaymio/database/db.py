@@ -72,6 +72,7 @@ def init_db() -> None:
 
     Base.metadata.create_all(bind=get_engine())
     _seed_default_admin()
+    _migrate_instagram_states_from_json()
     logger.info("Database initialised (tables ensured, admin seeded).")
 
 
@@ -99,3 +100,25 @@ def _seed_default_admin() -> None:
             )
         )
         logger.info("Seeded default admin user '%s'.", username)
+
+
+def _migrate_instagram_states_from_json() -> None:
+    """Auto-migrate Instagram state files from JSON to database on first run."""
+    from pathlib import Path
+
+    from .instagram_state import (
+        migrate_scheduler_state_from_json,
+        migrate_media_routes_from_json,
+        migrate_comment_reply_states_from_json,
+    )
+
+    state_dir = Path(os.getenv("STATE_DIR", "data"))
+    if not state_dir.exists():
+        return
+
+    try:
+        migrate_scheduler_state_from_json(state_dir / "instagram_story_scheduler.json")
+        migrate_media_routes_from_json(state_dir / "instagram_story_routes.json")
+        migrate_comment_reply_states_from_json(state_dir / "instagram_comment_reply_state.json")
+    except Exception as e:
+        logger.warning("Instagram state migration encountered an error: %s", e)
