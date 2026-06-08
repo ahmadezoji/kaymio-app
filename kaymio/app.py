@@ -804,6 +804,8 @@ def _handle_instagram_comment_change(change: Dict[str, Any]) -> None:
 
 
 def _instagram_story_scheduler_loop() -> None:
+    import sys
+    print(f"🔔 Instagram story scheduler started for {STORY_AUTOPUBLISH_TIME}", file=sys.stderr, flush=True)
     app.logger.info("Instagram story scheduler started for %s", STORY_AUTOPUBLISH_TIME)
     while True:
         try:
@@ -827,15 +829,21 @@ def _instagram_story_scheduler_loop() -> None:
 
 
 def start_instagram_story_scheduler() -> None:
-    if not STORY_AUTOPUBLISH_ENABLED:
+    import sys
+    enabled = STORY_AUTOPUBLISH_ENABLED
+    print(f"DEBUG: STORY_AUTOPUBLISH_ENABLED={enabled}", file=sys.stderr, flush=True)
+    if not enabled:
+        print("DEBUG: Instagram story scheduler disabled.", file=sys.stderr, flush=True)
         app.logger.info("Instagram story scheduler disabled.")
         return
+    print("DEBUG: Starting Instagram scheduler thread...", file=sys.stderr, flush=True)
     thread = threading.Thread(
         target=_instagram_story_scheduler_loop,
         name="instagram-story-scheduler",
         daemon=True,
     )
     thread.start()
+    print("DEBUG: Instagram scheduler thread started (daemon).", file=sys.stderr, flush=True)
 
 
 def _json_safe(data: Any) -> Any:
