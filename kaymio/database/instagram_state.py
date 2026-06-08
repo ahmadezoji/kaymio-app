@@ -28,11 +28,11 @@ def load_instagram_scheduler_state() -> Dict[str, Any]:
             key="instagram_story_scheduler"
         ).first()
 
-    if row and row.value:
-        try:
-            return json.loads(row.value)
-        except json.JSONDecodeError:
-            return {}
+        if row and row.value:
+            try:
+                return json.loads(row.value)
+            except json.JSONDecodeError:
+                return {}
     return {}
 
 
@@ -85,17 +85,17 @@ def load_instagram_media_reply_routes() -> Dict[str, Any]:
     with session_scope() as session:
         rows = session.query(InstagramMediaReplyRoute).all()
 
-    result = {}
-    for row in rows:
-        result[row.media_id] = {
-            "product_id": row.product_id or "",
-            "affiliate_link": row.affiliate_link or "",
-            "product_url": row.product_url or "",
-            "title": row.title or "",
-            "description": row.description or "",
-            "reply_surface": row.reply_surface or "",
-            "published_at": row.published_at or "",
-        }
+        result = {}
+        for row in rows:
+            result[row.media_id] = {
+                "product_id": row.product_id or "",
+                "affiliate_link": row.affiliate_link or "",
+                "product_url": row.product_url or "",
+                "title": row.title or "",
+                "description": row.description or "",
+                "reply_surface": row.reply_surface or "",
+                "published_at": row.published_at or "",
+            }
     return result
 
 
@@ -180,13 +180,13 @@ def load_instagram_comment_reply_states() -> Dict[str, Any]:
     with session_scope() as session:
         rows = session.query(InstagramCommentReplyState).all()
 
-    result = {}
-    for row in rows:
-        try:
-            reply_data = json.loads(row.reply_data or "{}")
-        except json.JSONDecodeError:
-            reply_data = {}
-        result[row.comment_id] = reply_data
+        result = {}
+        for row in rows:
+            try:
+                reply_data = json.loads(row.reply_data or "{}")
+            except json.JSONDecodeError:
+                reply_data = {}
+            result[row.comment_id] = reply_data
     return result
 
 
