@@ -1682,12 +1682,19 @@ def allowed_video_file(filename: str) -> bool:
 
 
 def _store_image(bytes_data: bytes, directory: Path, suffix: str) -> str:
+    print(f"DEBUG _store_image: bytes_data type={type(bytes_data)}, len={len(bytes_data) if bytes_data else 0}", file=sys.stderr, flush=True)
     directory.mkdir(parents=True, exist_ok=True)
+    print(f"DEBUG _store_image: directory created/ensured at {directory}", file=sys.stderr, flush=True)
     filename = f"{uuid4().hex}{suffix}"
     destination = directory / filename
+    print(f"DEBUG _store_image: writing to {destination}", file=sys.stderr, flush=True)
     with open(destination, "wb") as file_handle:
-        file_handle.write(bytes_data)
-    return destination.relative_to(STORAGE_ROOT).as_posix()
+        bytes_written = file_handle.write(bytes_data)
+        print(f"DEBUG _store_image: wrote {bytes_written} bytes", file=sys.stderr, flush=True)
+    print(f"DEBUG _store_image: file exists after write? {destination.exists()}", file=sys.stderr, flush=True)
+    relative_path = destination.relative_to(STORAGE_ROOT).as_posix()
+    print(f"DEBUG _store_image: returning {relative_path}", file=sys.stderr, flush=True)
+    return relative_path
 
 
 def resolve_storage_path(relative_path: str) -> Optional[str]:
