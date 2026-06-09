@@ -2,6 +2,7 @@ import base64
 import datetime as dt
 import json
 import os
+import sys
 import threading
 import time
 from io import BytesIO
@@ -2691,6 +2692,7 @@ def generate_pinterest():
 
         context_prompt = build_prompt_context({**form_values, "title": refined_title})
         current_saved_state = get_product_state(product_id) if product_id else saved_state
+        print(f"DEBUG: About to generate image for Pinterest product_id={product_id}", file=sys.stderr, flush=True)
         generated_image = generate_platform_image_with_selected_model(
             original_bytes,
             saved_state=current_saved_state,
@@ -2704,8 +2706,11 @@ def generate_pinterest():
             aspect_ratio="2:3",
             reference_images=(selected_reference_images if selected_sources else None),
         )
+        print(f"DEBUG: Image generated, type={type(generated_image)}, len={len(generated_image) if generated_image else 0}", file=sys.stderr, flush=True)
         generated_image = ensure_dimensions(generated_image, (1000, 1500))
+        print(f"DEBUG: Dimensions ensured, type={type(generated_image)}, len={len(generated_image) if generated_image else 0}", file=sys.stderr, flush=True)
         generated_image_path = save_generated_image(generated_image)
+        print(f"DEBUG: Image saved to {generated_image_path}", file=sys.stderr, flush=True)
         generated_image_url = url_for("serve_media", filename=generated_image_path)
         image_public_url = url_for("serve_media", filename=generated_image_path, _external=True)
 
@@ -2755,6 +2760,9 @@ def generate_pinterest():
         }
 
     except Exception as exc:  # pragma: no cover - guard for runtime issues
+        print(f"DEBUG: Pinterest generation exception: {exc}", file=sys.stderr, flush=True)
+        import traceback
+        traceback.print_exc(file=sys.stderr)
         app.logger.exception("Pinterest generation failed")
         flash(f"Unable to generate Pinterest pin: {exc}", "error")
         return render_home_view(form_values, product_id=product_id)
