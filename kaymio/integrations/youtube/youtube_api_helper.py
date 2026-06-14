@@ -71,7 +71,15 @@ def _get_youtube_token_from_db() -> Optional[str]:
         from kaymio.database.oauth import load_oauth_credential
         cred = load_oauth_credential("youtube")
         if cred and cred.get("access_token"):
-            return cred["access_token"]
+            token = cred["access_token"]
+            # Handle case where token is stored as JSON string (legacy format)
+            if isinstance(token, str) and token.startswith("{"):
+                try:
+                    token_obj = json.loads(token)
+                    return token_obj.get("access_token", token)
+                except json.JSONDecodeError:
+                    return token
+            return token
     except Exception as e:
         logger.debug("Failed to load YouTube token from DB: %s", e)
     return None
@@ -94,12 +102,26 @@ def _get_youtube_token() -> str:
 
 
 def _get_refresh_token_from_db() -> Optional[str]:
-    """Get YouTube refresh token from database."""
+    """Get YouTube refresh token from database or extract from access_token JSON."""
     try:
         from kaymio.database.oauth import load_oauth_credential
         cred = load_oauth_credential("youtube")
+
+        # Try refresh_token column first
         if cred and cred.get("refresh_token"):
             return cred["refresh_token"]
+
+        # Fall back to extracting from access_token if it's a JSON string (legacy format)
+        if cred and cred.get("access_token"):
+            token = cred["access_token"]
+            if isinstance(token, str) and token.startswith("{"):
+                try:
+                    token_obj = json.loads(token)
+                    refresh = token_obj.get("refresh_token")
+                    if refresh:
+                        return refresh
+                except json.JSONDecodeError:
+                    pass
     except Exception as e:
         logger.debug("Failed to load YouTube refresh token from DB: %s", e)
     return None
