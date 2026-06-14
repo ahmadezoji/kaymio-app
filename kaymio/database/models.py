@@ -30,7 +30,7 @@ def _utcnow() -> dt.datetime:
 class Product(Base):
     __tablename__ = "products"
 
-    id: Mapped[str] = mapped_column(String(191), primary_key=True)
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
     market: Mapped[str | None] = mapped_column(String(64))
     sku_or_url: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow)
