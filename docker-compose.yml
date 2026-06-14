@@ -39,6 +39,8 @@ services:
       # Persist generated media and the JSON snapshot used for first-run migration.
       - ./template_images:/app/template_images
       - ./data:/app/data
+      # Mount .env file so environment changes are reflected immediately
+      - ./.env:/app/.env:ro
 
 volumes:
   mysql_data:
