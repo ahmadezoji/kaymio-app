@@ -125,7 +125,12 @@ def _platform_card_to_dict(card: PlatformAnalytics, key: str) -> Dict[str, objec
 
 def _build_pinterest_cards() -> tuple[List[Dict[str, object]], List[str]]:
     errors: List[str] = []
-    pinterest = fetch_pinterest_analytics()
+    try:
+        pinterest = fetch_pinterest_analytics()
+    except Exception as e:
+        errors.append(f"Pinterest: {str(e)}")
+        return [], errors
+
     if pinterest.get("error"):
         errors.append(f"Pinterest: {pinterest['error']}")
         return [], errors
@@ -161,7 +166,12 @@ def _build_pinterest_cards() -> tuple[List[Dict[str, object]], List[str]]:
 def _build_instagram_cards() -> tuple[List[Dict[str, object]], List[str]]:
     errors: List[str] = []
     platforms_raw: List[Dict[str, object]] = []
-    instagram = fetch_instagram_analytics()
+    try:
+        instagram = fetch_instagram_analytics()
+    except Exception as e:
+        errors.append(f"Instagram: {str(e)}")
+        return [], errors
+
     if instagram.get("error"):
         errors.append(f"Instagram: {instagram['error']}")
         return [], errors
@@ -244,7 +254,12 @@ def _build_instagram_cards() -> tuple[List[Dict[str, object]], List[str]]:
 
 def _build_youtube_cards() -> tuple[List[Dict[str, object]], List[str]]:
     errors: List[str] = []
-    youtube = fetch_youtube_analytics()
+    try:
+        youtube = fetch_youtube_analytics()
+    except Exception as e:
+        errors.append(f"YouTube: {str(e)}")
+        return [], errors
+
     if youtube.get("error"):
         errors.append(f"YouTube: {youtube['error']}")
         return [], errors
