@@ -59,8 +59,33 @@ jobs:
           ssh "${DEPLOY_USER}@${DEPLOY_HOST}" "bash -s" <<EOF
           set -e
           cd "${DEPLOY_PATH}"
+
+          # Backup local token/credential files before checkout (they're generated locally, not from repo)
+          mkdir -p /tmp/kaymio-backup
+          for file in .env kaymio/integrations/instagram/instagram_token.json kaymio/integrations/youtube/youtube_access_token.txt kaymio/integrations/tiktok/tiktok_access_token.txt kaymio/integrations/pintrest/pintrest_access_token.txt; do
+            if [ -f "\$file" ]; then
+              cp "\$file" "/tmp/kaymio-backup/\$(basename \$file)"
+            fi
+          done
+
+          # Update code
           git fetch --all --tags --prune
           git checkout "${DEPLOY_REF}"
+
+          # Restore local token/credential files
+          for file in /tmp/kaymio-backup/*; do
+            if [ -f "\$file" ]; then
+              case "\$(basename \$file)" in
+                instagram_token.json) cp "\$file" "kaymio/integrations/instagram/instagram_token.json" ;;
+                youtube_access_token.txt) cp "\$file" "kaymio/integrations/youtube/youtube_access_token.txt" ;;
+                tiktok_access_token.txt) cp "\$file" "kaymio/integrations/tiktok/tiktok_access_token.txt" ;;
+                pintrest_access_token.txt) cp "\$file" "kaymio/integrations/pintrest/pintrest_access_token.txt" ;;
+                .env) cp "\$file" ".env" ;;
+              esac
+            fi
+          done
+
+          # Deploy
           docker compose up -d --build --remove-orphans
           docker image prune -f
           EOF
