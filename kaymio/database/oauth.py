@@ -185,8 +185,46 @@ def migrate_pinterest_token_from_file(token_file: Path) -> None:
 
 
 def migrate_all_oauth_from_files(state_dir: Path) -> None:
-    """Auto-migrate all OAuth tokens from legacy files to database."""
-    migrate_instagram_token_from_json(state_dir / "instagram_token.json")
-    migrate_youtube_token_from_file(state_dir / "youtube_access_token.txt")
-    migrate_tiktok_token_from_file(state_dir / "tiktok_access_token.txt")
-    migrate_pinterest_token_from_file(state_dir / "pintrest_access_token.txt")
+    """Auto-migrate all OAuth tokens from legacy files to database.
+
+    Checks both data/ directory and kaymio/integrations/* directories.
+    """
+    # Instagram: check both data/ and kaymio/integrations/instagram/
+    instagram_paths = [
+        state_dir / "instagram_token.json",
+        Path("kaymio/integrations/instagram/instagram_token.json"),
+    ]
+    for path in instagram_paths:
+        if path.exists():
+            migrate_instagram_token_from_json(path)
+            break
+
+    # YouTube: check both data/ and kaymio/integrations/youtube/
+    youtube_paths = [
+        state_dir / "youtube_access_token.txt",
+        Path("kaymio/integrations/youtube/youtube_access_token.txt"),
+    ]
+    for path in youtube_paths:
+        if path.exists():
+            migrate_youtube_token_from_file(path)
+            break
+
+    # TikTok: check both data/ and kaymio/integrations/tiktok/
+    tiktok_paths = [
+        state_dir / "tiktok_access_token.txt",
+        Path("kaymio/integrations/tiktok/tiktok_access_token.txt"),
+    ]
+    for path in tiktok_paths:
+        if path.exists():
+            migrate_tiktok_token_from_file(path)
+            break
+
+    # Pinterest: check both data/ and kaymio/integrations/pintrest/
+    pinterest_paths = [
+        state_dir / "pintrest_access_token.txt",
+        Path("kaymio/integrations/pintrest/pintrest_access_token.txt"),
+    ]
+    for path in pinterest_paths:
+        if path.exists():
+            migrate_pinterest_token_from_file(path)
+            break
