@@ -30,7 +30,7 @@ def _utcnow() -> dt.datetime:
 class Product(Base):
     __tablename__ = "products"
 
-    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    id: Mapped[str] = mapped_column(String(512), primary_key=True)
     market: Mapped[str | None] = mapped_column(String(64))
     sku_or_url: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow)
@@ -56,7 +56,7 @@ class ProductPlatform(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     product_id: Mapped[str] = mapped_column(
-        String(191), ForeignKey("products.id", ondelete="CASCADE"), index=True
+        String(512), ForeignKey("products.id", ondelete="CASCADE"), index=True
     )
     # pinterest | instagram_feed | instagram_story | instagram_reel | youtube | tiktok | website
     platform: Mapped[str] = mapped_column(String(32))
@@ -135,7 +135,7 @@ class ProductAsset(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     product_id: Mapped[str] = mapped_column(
-        String(191), ForeignKey("products.id", ondelete="CASCADE"), index=True
+        String(512), ForeignKey("products.id", ondelete="CASCADE"), index=True
     )
     asset_key: Mapped[str] = mapped_column(String(64))
     value: Mapped[str] = mapped_column(Text)
