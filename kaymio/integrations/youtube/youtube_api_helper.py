@@ -34,15 +34,56 @@ def _read_token_file(path: Path) -> Optional[Dict[str, str]]:
         return None
 
 
+def _persist_access_token_to_db(token: str, refresh_token: str) -> None:
+    """Save YouTube token to database (new approach)."""
+    try:
+        from kaymio.database.oauth import save_oauth_credential
+        save_oauth_credential(
+            platform="youtube",
+            access_token=token,
+            refresh_token=refresh_token,
+            token_type="bearer",
+        )
+    except Exception as e:
+        logger.debug("Failed to persist YouTube token to DB: %s", e)
+
+
 def _persist_access_token(token: str, refresh_token: str) -> None:
+    """Save YouTube token to database and legacy files (for backward compat)."""
+    _persist_access_token_to_db(token, refresh_token)
+    # Also save to files for backward compatibility
     module_path = Path(__file__).resolve().parent / "youtube_access_token.txt"
     root_path = Path.cwd() / "youtube_access_token.txt"
     payload = json.dumps({"access_token": token, "refresh_token": refresh_token})
-    module_path.write_text(payload)
-    root_path.write_text(payload)
+    try:
+        module_path.write_text(payload)
+    except Exception:
+        pass
+    try:
+        root_path.write_text(payload)
+    except Exception:
+        pass
+
+
+def _get_youtube_token_from_db() -> Optional[str]:
+    """Get YouTube access token from database."""
+    try:
+        from kaymio.database.oauth import load_oauth_credential
+        cred = load_oauth_credential("youtube")
+        if cred and cred.get("access_token"):
+            return cred["access_token"]
+    except Exception as e:
+        logger.debug("Failed to load YouTube token from DB: %s", e)
+    return None
 
 
 def _get_youtube_token() -> str:
+    # Try database first
+    db_token = _get_youtube_token_from_db()
+    if db_token:
+        return db_token
+
+    # Fall back to files for backward compatibility
     module_token = _read_token_file(Path(__file__).resolve().parent / "youtube_access_token.txt")
     if module_token and module_token.get("access_token"):
         return module_token["access_token"]
@@ -52,7 +93,25 @@ def _get_youtube_token() -> str:
     return refresh_youtube_access_token()
 
 
+def _get_refresh_token_from_db() -> Optional[str]:
+    """Get YouTube refresh token from database."""
+    try:
+        from kaymio.database.oauth import load_oauth_credential
+        cred = load_oauth_credential("youtube")
+        if cred and cred.get("refresh_token"):
+            return cred["refresh_token"]
+    except Exception as e:
+        logger.debug("Failed to load YouTube refresh token from DB: %s", e)
+    return None
+
+
 def _get_refresh_token() -> Optional[str]:
+    # Try database first
+    db_token = _get_refresh_token_from_db()
+    if db_token:
+        return db_token
+
+    # Fall back to files for backward compatibility
     module_token = _read_token_file(Path(__file__).resolve().parent / "youtube_access_token.txt")
     if module_token and module_token.get("refresh_token"):
         return module_token["refresh_token"]

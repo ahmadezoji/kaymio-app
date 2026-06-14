@@ -56,7 +56,30 @@ def _resolve_graph_api_base(token_payload: Optional[Dict[str, str]] = None) -> s
     return INSTAGRAM_GRAPH_API_BASE if _uses_instagram_login_flow(payload) else FACEBOOK_GRAPH_API_BASE
 
 
+def _load_token_from_db() -> Dict[str, str]:
+    """Load Instagram credentials from database (preferred)."""
+    try:
+        from kaymio.database.oauth import load_oauth_credential
+        cred = load_oauth_credential("instagram")
+        if cred:
+            return {
+                "INSTAGRAM_ACCESS_TOKEN": cred.get("access_token", ""),
+                "INSTAGRAM_USER_ID": cred.get("user_id", ""),
+                "AUTH_FLOW": "instagram_login",
+            }
+    except Exception as e:
+        logger.debug("Failed to load Instagram credentials from DB: %s", e)
+    return {}
+
+
 def _load_token_file() -> Dict[str, str]:
+    """Load Instagram credentials from database or legacy JSON file."""
+    # Try database first (new approach)
+    db_creds = _load_token_from_db()
+    if db_creds:
+        return db_creds
+
+    # Fall back to JSON file for backward compatibility
     if not TOKEN_FILE.exists():
         return {}
     try:

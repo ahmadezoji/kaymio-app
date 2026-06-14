@@ -201,3 +201,21 @@ class InstagramCommentReplyState(Base):
     reply_data: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow)
     updated_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+
+class OAuthCredential(Base):
+    """OAuth tokens for external platforms (Instagram, YouTube, TikTok, Pinterest, etc.)."""
+
+    __tablename__ = "oauth_credentials"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    platform: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    access_token: Mapped[str | None] = mapped_column(Text)
+    refresh_token: Mapped[str | None] = mapped_column(Text)
+    token_type: Mapped[str] = mapped_column(String(32), default="bearer")
+    user_id: Mapped[str | None] = mapped_column(String(191))
+    expires_at: Mapped[dt.datetime | None] = mapped_column(DateTime)
+    scope: Mapped[str | None] = mapped_column(Text)
+    raw_data: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow)
+    updated_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)

@@ -73,7 +73,8 @@ def init_db() -> None:
     Base.metadata.create_all(bind=get_engine())
     _seed_default_admin()
     _migrate_instagram_states_from_json()
-    logger.info("Database initialised (tables ensured, admin seeded).")
+    _migrate_oauth_credentials_from_files()
+    logger.info("Database initialised (tables ensured, admin seeded, migrations completed).")
 
 
 def _seed_default_admin() -> None:
@@ -122,3 +123,20 @@ def _migrate_instagram_states_from_json() -> None:
         migrate_comment_reply_states_from_json(state_dir / "instagram_comment_reply_state.json")
     except Exception as e:
         logger.warning("Instagram state migration encountered an error: %s", e)
+
+
+def _migrate_oauth_credentials_from_files() -> None:
+    """Auto-migrate OAuth tokens from JSON/TXT files to database on first run."""
+    from pathlib import Path
+
+    from .oauth import migrate_all_oauth_from_files
+
+    state_dir = Path(os.getenv("STATE_DIR", "data"))
+    if not state_dir.exists():
+        state_dir = Path(".")
+
+    try:
+        migrate_all_oauth_from_files(state_dir)
+        logger.info("OAuth credentials migration completed")
+    except Exception as e:
+        logger.warning("OAuth credentials migration encountered an error: %s", e)

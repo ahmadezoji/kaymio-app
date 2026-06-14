@@ -60,19 +60,23 @@ jobs:
           set -e
           cd "${DEPLOY_PATH}"
 
-          # Backup local token/credential files before checkout (they're generated locally, not from repo)
+          # Backup local token/credential files (they're generated locally, not from repo)
           mkdir -p /tmp/kaymio-backup
           for file in .env kaymio/integrations/instagram/instagram_token.json kaymio/integrations/youtube/youtube_access_token.txt kaymio/integrations/tiktok/tiktok_access_token.txt kaymio/integrations/pintrest/pintrest_access_token.txt; do
             if [ -f "\$file" ]; then
-              cp "\$file" "/tmp/kaymio-backup/\$(basename \$file)"
+              cp "\$file" "/tmp/kaymio-backup/\$(basename \$file)" 2>/dev/null || true
             fi
           done
+
+          # Remove conflicting files so git checkout can proceed
+          git rm --cached kaymio/integrations/instagram/instagram_token.json kaymio/integrations/youtube/youtube_access_token.txt kaymio/integrations/tiktok/tiktok_access_token.txt kaymio/integrations/pintrest/pintrest_access_token.txt .env 2>/dev/null || true
+          rm -f kaymio/integrations/instagram/instagram_token.json kaymio/integrations/youtube/youtube_access_token.txt kaymio/integrations/tiktok/tiktok_access_token.txt kaymio/integrations/pintrest/pintrest_access_token.txt .env
 
           # Update code
           git fetch --all --tags --prune
           git checkout "${DEPLOY_REF}"
 
-          # Restore local token/credential files
+          # Restore local token/credential files from backup
           for file in /tmp/kaymio-backup/*; do
             if [ -f "\$file" ]; then
               case "\$(basename \$file)" in

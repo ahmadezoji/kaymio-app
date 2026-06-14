@@ -11,7 +11,28 @@ logger = logging.getLogger(__name__)
 API_BASE = "https://open.tiktokapis.com/v2/post/publish"
 
 
+def _get_tiktok_credentials_from_db() -> Dict[str, str] | None:
+    """Load TikTok credentials from database."""
+    try:
+        from kaymio.database.oauth import load_oauth_credential
+        cred = load_oauth_credential("tiktok")
+        if cred and cred.get("access_token") and cred.get("user_id"):
+            return {
+                "access_token": cred["access_token"],
+                "open_id": cred["user_id"],
+            }
+    except Exception as e:
+        logger.debug("Failed to load TikTok credentials from DB: %s", e)
+    return None
+
+
 def _get_tiktok_credentials() -> Dict[str, str]:
+    # Try database first
+    db_creds = _get_tiktok_credentials_from_db()
+    if db_creds:
+        return db_creds
+
+    # Fall back to environment variables
     token = os.getenv("TIKTOK_ACCESS_TOKEN")
     open_id = os.getenv("TIKTOK_USER_ID")
     if not token or not open_id:

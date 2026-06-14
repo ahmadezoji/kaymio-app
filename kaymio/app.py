@@ -2373,6 +2373,53 @@ def download_media(filename: str):
     return send_from_directory(STORAGE_ROOT, relative_path.as_posix(), as_attachment=True)
 
 
+@app.route("/api/tokens/status", methods=["GET"])
+def get_token_status():
+    """Get status of all OAuth tokens."""
+    from kaymio.database.token_manager import get_all_token_status
+    try:
+        status = get_all_token_status()
+        return jsonify({
+            "success": True,
+            "tokens": status,
+        })
+    except Exception as e:
+        app.logger.exception("Error getting token status")
+        return jsonify({
+            "success": False,
+            "error": str(e),
+        }), 500
+
+
+@app.route("/api/tokens/refresh", methods=["POST"])
+def refresh_token_endpoint():
+    """Manually refresh a specific platform's token."""
+    from kaymio.database.token_manager import refresh_token
+
+    platform = request.form.get("platform", "").lower().strip()
+    if not platform:
+        return jsonify({"success": False, "error": "Missing platform parameter"}), 400
+
+    try:
+        success = refresh_token(platform)
+        if success:
+            return jsonify({
+                "success": True,
+                "message": f"{platform.capitalize()} token refreshed successfully",
+            })
+        else:
+            return jsonify({
+                "success": False,
+                "error": f"Failed to refresh {platform} token. Check logs for details.",
+            }), 400
+    except Exception as e:
+        app.logger.exception("Error refreshing token for %s", platform)
+        return jsonify({
+            "success": False,
+            "error": str(e),
+        }), 500
+
+
 @app.route("/", methods=["GET"])
 def home() -> str:
     state = load_app_state()
