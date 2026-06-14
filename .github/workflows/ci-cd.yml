@@ -79,6 +79,11 @@ jobs:
           # Update code
           echo "Pulling latest code..."
           git fetch --all --tags --prune
+
+          # Discard any local edits to tracked files (e.g. docker-compose.yml
+          # tweaked directly on the server) so checkout doesn't abort.
+          git checkout -- . 2>/dev/null || true
+
           git checkout "${DEPLOY_REF}"
 
           # Restore local token/credential files from backup
