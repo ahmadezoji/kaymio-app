@@ -14,7 +14,7 @@ from uuid import uuid4
 
 import requests
 from dotenv import load_dotenv
-from flask import Flask, abort, flash, redirect, render_template, request, send_from_directory, url_for
+from flask import Flask, abort, flash, jsonify, redirect, render_template, request, send_from_directory, url_for
 
 from kaymio.integrations.amazon.amazon_api import build_affiliate_link, extract_asin, fetch_product_from_canopy
 from kaymio.utils.gemeni_api_helper import edit_image as edit_image_with_gemini, generate_video_from_image as generate_video_with_gemini
