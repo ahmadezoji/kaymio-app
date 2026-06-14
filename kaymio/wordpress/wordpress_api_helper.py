@@ -926,9 +926,64 @@ def remove_aliexpress_products_and_media(
     }
 
 
+def shorten_long_product_names(word_limit: int = 8, keep_words: int = 5, dry_run: bool = True):
+    """Find WooCommerce products whose name is longer than `word_limit` words
+    and shorten the name to its first `keep_words` words.
+
+    The original full name is preserved by prepending it (followed by a
+    newline) to the product description before the name is shortened.
+
+    When dry_run is True (default), only prints the proposed changes without
+    updating WooCommerce.
+    """
+    if not all([wc_url, consumer_key, consumer_secret]):
+        print("WooCommerce API credentials are missing.")
+        return {"updated": 0, "skipped": 0, "errors": ["WooCommerce API credentials are missing."]}
+
+    result = _fetch_all_woocommerce_products()
+    if result.get("error"):
+        print(f"Failed to fetch products: {result['error']}")
+        return {"updated": 0, "skipped": 0, "errors": [result["error"]]}
+
+    updated = 0
+    skipped = 0
+    errors = []
+
+    for product in result.get("items", []):
+        name = str(product.get("name") or "").strip()
+        product_id = product.get("id")
+        words = name.split()
+        if not name or len(words) <= word_limit:
+            continue
+
+        short_name = " ".join(words[:keep_words])
+        description = str(product.get("description") or "")
+        new_description = f"{name}\n{description}"
+
+        if dry_run:
+            print(f"[dry-run] Product {product_id}: '{name}' -> '{short_name}'")
+            skipped += 1
+            continue
+
+        response = requests.put(
+            f"{wc_url}/wp-json/wc/v3/products/{product_id}",
+            json={"name": short_name, "description": new_description},
+            auth=(consumer_key, consumer_secret),
+            headers={"Content-Type": "application/json"},
+            timeout=30,
+        )
+        if response.status_code == 200:
+            print(f"Updated product {product_id}: '{name}' -> '{short_name}'")
+            updated += 1
+        else:
+            errors.append(f"Product {product_id} update failed: {response.text}")
+
+    print(f"Shorten product names complete. Updated: {updated}, Skipped(dry-run): {skipped}, Errors: {len(errors)}")
+    return {"updated": updated, "skipped": skipped, "errors": errors}
+
+
 def main() -> int:
-    matched_count = find_aliexpress_products_by_category_names()
-    print(f"Final matched count: {matched_count}")
+    # shorten_long_product_names()
     return 0
 
 
