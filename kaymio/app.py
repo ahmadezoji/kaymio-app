@@ -497,9 +497,12 @@ def _scheduled_story_candidates() -> List[Dict[str, str]]:
 
 def _publish_scheduled_instagram_stories() -> None:
     posted = 0
-    candidates = _scheduled_story_candidates()
+    print("DEBUG: Getting WooCommerce candidates for scheduled stories", file=sys.stderr, flush=True)
+    candidates = _scheduled_story_candidates_from_website()
+    print(f"DEBUG: Found {len(candidates)} WooCommerce candidates", file=sys.stderr, flush=True)
     if not candidates:
-        app.logger.warning("No app_state.json or WooCommerce candidates found for scheduled stories.")
+        print("DEBUG: No WooCommerce candidates found for scheduled stories.", file=sys.stderr, flush=True)
+        app.logger.warning("No WooCommerce candidates found for scheduled stories.")
         return
     random.shuffle(candidates)
     used_products: set[str] = set()
@@ -532,7 +535,8 @@ def _publish_scheduled_instagram_stories() -> None:
                         qr_config=STORY_QR_WIDGET_CONFIG,
                         cta_config=STORY_CTA_WIDGET_CONFIG,
                     )
-                    image_url = f"/media/{save_generated_image(story_image)}"
+                    relative_path = save_generated_image(story_image)
+                    image_url = url_for("serve_media", filename=relative_path, _external=True)
                 except Exception:
                     app.logger.exception("Unable to compose scheduled story image with CTA + affiliate QR.")
             elif compose_source:
@@ -544,23 +548,46 @@ def _publish_scheduled_instagram_stories() -> None:
                         description=description or story_copy,
                         config=STORY_CTA_WIDGET_CONFIG,
                     )
-                    image_url = f"/media/{save_generated_image(story_image)}"
+                    relative_path = save_generated_image(story_image)
+                    image_url = url_for("serve_media", filename=relative_path, _external=True)
                 except Exception:
                     app.logger.exception("Unable to compose scheduled story image with CTA.")
             
+            print(f"DEBUG: Publishing story with image_url={image_url}, affiliate_link={affiliate_link}", file=sys.stderr, flush=True)
             response = publish_instagram_story(
                 image_url=image_url,
                 caption=None,
                 share_link=affiliate_link,
             )
+            print(f"DEBUG: Instagram story publish response: {response}", file=sys.stderr, flush=True)
             media_id = response.get("id") or get_latest_instagram_media_id()
+            print(f"DEBUG: Story media_id: {media_id}", file=sys.stderr, flush=True)
             if media_id:
                 _register_story_reply_route(str(media_id), candidate)
+                print(f"DEBUG: Registered story reply route for media_id={media_id}", file=sys.stderr, flush=True)
+
+            # Clean up temporary story image from server (stories are temporary, no need to persist)
+            try:
+                # Extract relative path from full URL (e.g., "generated/filename.png" from "http://server:8081/media/generated/filename.png")
+                if "/media/" in image_url:
+                    relative_path = image_url.split("/media/", 1)[1]
+                    full_path = STORAGE_ROOT / relative_path
+                    if full_path.exists():
+                        full_path.unlink()
+                        print(f"DEBUG: Deleted temporary story image: {relative_path}", file=sys.stderr, flush=True)
+                        app.logger.info("Deleted temporary story image: %s", relative_path)
+            except Exception as e:
+                print(f"DEBUG: Failed to delete story image: {e}", file=sys.stderr, flush=True)
+                app.logger.warning("Failed to delete story image: %s", e)
+
             print(f"Scheduled story publish response: {response}")
             app.logger.info("Scheduled Instagram story published: %s", response)
             posted += 1
             time.sleep(8)
         except Exception as exc:
+            print(f"DEBUG: Story publish exception: {exc}", file=sys.stderr, flush=True)
+            import traceback
+            traceback.print_exc(file=sys.stderr)
             app.logger.exception("Scheduled Instagram story publish failed: %s", exc)
             break
 
@@ -820,11 +847,18 @@ def _instagram_story_scheduler_loop() -> None:
                 and now.minute >= target_minute
                 and last_run_date != today
             )
+            # Log every minute for debugging
+            if now.minute % 10 == 0:  # Log every 10 minutes to avoid spam
+                print(f"DEBUG scheduler: now={now.time()}, target={target_hour}:{target_minute:02d}, last_run={last_run_date}, today={today}, should_run={should_run}", file=sys.stderr, flush=True)
             if should_run:
+                print(f"DEBUG: TRIGGERING story publish at {now.time()}", file=sys.stderr, flush=True)
                 _publish_scheduled_instagram_stories()
                 _save_story_scheduler_state({"last_run_date": today})
             time.sleep(20)
         except Exception:
+            print(f"DEBUG: Scheduler loop exception", file=sys.stderr, flush=True)
+            import traceback
+            traceback.print_exc(file=sys.stderr)
             app.logger.exception("Instagram scheduler loop error")
             time.sleep(30)
 
