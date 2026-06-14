@@ -10,12 +10,12 @@ from google.genai import types as gemtype
 
 logger = logging.getLogger(__name__)
 from dotenv import load_dotenv
-from image_generation_config import (
+from kaymio.utils.image_generation_config import (
     build_reference_preserving_prompt,
     get_gemini_image_models,
     resolve_image_generation_choice,
 )
-from video_generation_config import (
+from kaymio.utils.video_generation_config import (
     build_reference_preserving_video_prompt,
     get_gemini_video_models,
     resolve_video_generation_choice,

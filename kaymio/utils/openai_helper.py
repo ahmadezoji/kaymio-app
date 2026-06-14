@@ -14,12 +14,12 @@ from typing import Dict, List, Optional, Sequence, Tuple, Union
 import requests
 from openai import OpenAI
 
-from image_generation_config import (
+from kaymio.utils.image_generation_config import (
     build_reference_preserving_prompt,
     get_openai_image_models,
     resolve_image_generation_choice,
 )
-from video_generation_config import (
+from kaymio.utils.video_generation_config import (
     build_reference_preserving_video_prompt,
     get_openai_video_models,
     normalize_openai_video_seconds,

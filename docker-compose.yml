@@ -1,0 +1,44 @@
+services:
+  db:
+    image: mysql:8
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: "${MYSQL_ROOT_PASSWORD:-rootpass}"
+      MYSQL_DATABASE: "${DB_NAME:-kaymio}"
+      MYSQL_USER: "${DB_USER:-kaymio}"
+      MYSQL_PASSWORD: "${DB_PASSWORD:-kaymio}"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    ports:
+      # Host 3307 -> container 3306 to avoid clashing with a native MySQL on 3306.
+      # Exposed for local migration runs / inspection; remove in hardened prod.
+      - "3307:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${MYSQL_ROOT_PASSWORD:-rootpass}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # Inside the compose network the DB host is the service name.
+      DB_HOST: db
+      DB_PORT: "3306"
+      PORT: "8081"
+      FLASK_DEBUG: "0"
+    ports:
+      - "8081:8081"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      # Persist generated media and the JSON snapshot used for first-run migration.
+      - ./template_images:/app/template_images
+      - ./data:/app/data
+
+volumes:
+  mysql_data:

@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 import datetime as dt
-import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 from flask import Blueprint, abort, current_app, flash, redirect, render_template, request, url_for
+
+from kaymio.database import load_app_state, save_app_state
 
 file_manager_bp = Blueprint("file_manager", __name__)
 
@@ -50,10 +51,6 @@ class MediaItem:
 
 def _storage_root() -> Path:
     return Path(current_app.root_path) / "template_images"
-
-
-def _state_file() -> Path:
-    return Path(current_app.root_path) / "data" / "app_state.json"
 
 
 def _normalize_kind(raw_value: str) -> str:
@@ -155,18 +152,15 @@ def _media_summary(items: List[MediaItem]) -> Dict[str, int]:
 
 
 def _load_state_payload() -> Dict[str, Any]:
-    state_file = _state_file()
-    if not state_file.exists():
-        return {}
     try:
-        payload = json.loads(state_file.read_text())
+        payload = load_app_state()
     except Exception:
         return {}
     return payload if isinstance(payload, dict) else {}
 
 
 def _save_state_payload(payload: Dict[str, Any]) -> None:
-    _state_file().write_text(json.dumps(payload, indent=2))
+    save_app_state(payload)
 
 
 def _prune_media_references(node: Any, relative_path: str) -> bool:

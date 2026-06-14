@@ -9,7 +9,7 @@ from urllib.parse import quote_plus
 
 import requests
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
-from openai_helper import generate_story_cta_text
+from kaymio.utils.openai_helper import generate_story_cta_text
 
 STORY_CANVAS_SIZE = (1080, 1920)
 STORY_TARGET_RATIO = STORY_CANVAS_SIZE[0] / STORY_CANVAS_SIZE[1]
