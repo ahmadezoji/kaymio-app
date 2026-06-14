@@ -57,7 +57,7 @@ with session_scope() as session:
 if token_count > 0:
     print(f"OAuth tokens already present ({token_count}); skipping token migration.")
 else:
-    state_dir = "data"
+    state_dir = Path("data")
     try:
         migrate_all_oauth_from_files(state_dir)
         print("OAuth tokens migrated from JSON/TXT files.")
