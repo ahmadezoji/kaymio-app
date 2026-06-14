@@ -1,11 +1,50 @@
 template_images/*
 *.pyc
 *cpython-*.pyc
-instagram/instagram_token.json
-pintrest/access_token.txt
-access_token.txt
+
+# Environment & Secrets
 .env
-data/app_state.json
-kaymio/integrations/pintrest/pintrest_access_token.txt
-server_logs.txt
+.env.local
+.env.*.local
+
+# All token files (JSON and TXT)
+*token.json
+*token.txt
+*_token.json
+*_token.txt
+*access_token*
+*credentials.json
+*secret*.json
+*secret*.txt
+
+# Specific API token files
+instagram_token.json
+instagram_get_auth.py
+pinterest_access_token.txt
 pintrest_access_token.txt
+youtube_access_token.txt
+youtube_get_auth.py
+tiktok_access_token.txt
+tiktok_get_auth.py
+kaymio/integrations/instagram/instagram_token.json
+kaymio/integrations/instagram/instagram_get_auth.py
+kaymio/integrations/pintrest/access_token.txt
+kaymio/integrations/pintrest/pintrest_access_token.txt
+kaymio/integrations/pintrest/get_token.py
+kaymio/integrations/youtube/youtube_access_token.txt
+kaymio/integrations/youtube/youtube_get_auth.py
+kaymio/integrations/tiktok/tiktok_access_token.txt
+kaymio/integrations/tiktok/tiktok_get_auth.py
+
+# App state & logs
+data/app_state.json
+server_logs.txt
+docker.log
+*.log
+
+# IDE & OS
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
