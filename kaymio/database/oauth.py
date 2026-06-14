@@ -1,13 +1,11 @@
 """OAuth credential management backed by database.
 
 Handles storage and retrieval of API tokens for external platforms.
-Auto-migrates from legacy JSON/TXT files on first run.
 """
 from __future__ import annotations
 
 import json
 from datetime import datetime
-from pathlib import Path
 from typing import Any, Dict, Optional
 
 from .db import session_scope
@@ -97,134 +95,3 @@ def delete_oauth_credential(platform: str) -> bool:
             session.commit()
             return True
     return False
-
-
-# ==============================================================================
-# Auto-migration from legacy JSON/TXT files
-# ==============================================================================
-
-
-def migrate_instagram_token_from_json(json_file: Path) -> None:
-    """Auto-migrate Instagram token from instagram_token.json."""
-    if not json_file.exists():
-        return
-
-    with session_scope() as session:
-        existing = session.query(OAuthCredential).filter_by(platform="instagram").first()
-
-    if existing:
-        return
-
-    try:
-        data = json.loads(json_file.read_text())
-        save_oauth_credential(
-            platform="instagram",
-            access_token=data.get("INSTAGRAM_ACCESS_TOKEN", ""),
-            user_id=data.get("INSTAGRAM_USER_ID"),
-            raw_data=data,
-        )
-    except Exception:
-        pass
-
-
-def migrate_youtube_token_from_file(token_file: Path) -> None:
-    """Auto-migrate YouTube token from youtube_access_token.txt."""
-    if not token_file.exists():
-        return
-
-    with session_scope() as session:
-        existing = session.query(OAuthCredential).filter_by(platform="youtube").first()
-
-    if existing:
-        return
-
-    try:
-        token = token_file.read_text().strip()
-        if token:
-            save_oauth_credential(platform="youtube", access_token=token)
-    except Exception:
-        pass
-
-
-def migrate_tiktok_token_from_file(token_file: Path) -> None:
-    """Auto-migrate TikTok token from tiktok_access_token.txt."""
-    if not token_file.exists():
-        return
-
-    with session_scope() as session:
-        existing = session.query(OAuthCredential).filter_by(platform="tiktok").first()
-
-    if existing:
-        return
-
-    try:
-        token = token_file.read_text().strip()
-        if token:
-            save_oauth_credential(platform="tiktok", access_token=token)
-    except Exception:
-        pass
-
-
-def migrate_pinterest_token_from_file(token_file: Path) -> None:
-    """Auto-migrate Pinterest token from pintrest_access_token.txt."""
-    if not token_file.exists():
-        return
-
-    with session_scope() as session:
-        existing = session.query(OAuthCredential).filter_by(platform="pinterest").first()
-
-    if existing:
-        return
-
-    try:
-        token = token_file.read_text().strip()
-        if token:
-            save_oauth_credential(platform="pinterest", access_token=token)
-    except Exception:
-        pass
-
-
-def migrate_all_oauth_from_files(state_dir: Path) -> None:
-    """Auto-migrate all OAuth tokens from legacy files to database.
-
-    Checks both data/ directory and kaymio/integrations/* directories.
-    """
-    # Instagram: check both data/ and kaymio/integrations/instagram/
-    instagram_paths = [
-        state_dir / "instagram_token.json",
-        Path("kaymio/integrations/instagram/instagram_token.json"),
-    ]
-    for path in instagram_paths:
-        if path.exists():
-            migrate_instagram_token_from_json(path)
-            break
-
-    # YouTube: check both data/ and kaymio/integrations/youtube/
-    youtube_paths = [
-        state_dir / "youtube_access_token.txt",
-        Path("kaymio/integrations/youtube/youtube_access_token.txt"),
-    ]
-    for path in youtube_paths:
-        if path.exists():
-            migrate_youtube_token_from_file(path)
-            break
-
-    # TikTok: check both data/ and kaymio/integrations/tiktok/
-    tiktok_paths = [
-        state_dir / "tiktok_access_token.txt",
-        Path("kaymio/integrations/tiktok/tiktok_access_token.txt"),
-    ]
-    for path in tiktok_paths:
-        if path.exists():
-            migrate_tiktok_token_from_file(path)
-            break
-
-    # Pinterest: check both data/ and kaymio/integrations/pintrest/
-    pinterest_paths = [
-        state_dir / "pintrest_access_token.txt",
-        Path("kaymio/integrations/pintrest/pintrest_access_token.txt"),
-    ]
-    for path in pinterest_paths:
-        if path.exists():
-            migrate_pinterest_token_from_file(path)
-            break

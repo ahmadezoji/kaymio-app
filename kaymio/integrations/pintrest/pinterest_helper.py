@@ -7,7 +7,6 @@ import logging
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
 import requests
@@ -20,8 +19,8 @@ MEDIA_URL = "https://api.pinterest.com/v5/media"
 PINTEREST_ANALYTICS_URL = "https://api.pinterest.com/v5/user_account/analytics"
 
 
-def _load_pinterest_access_token_from_db() -> Optional[str]:
-    """Load Pinterest access token from database (new approach)."""
+def _load_pinterest_access_token() -> Optional[str]:
+    """Load Pinterest access token from the oauth_credentials table."""
     try:
         from kaymio.database.oauth import load_oauth_credential
         cred = load_oauth_credential("pinterest")
@@ -29,24 +28,6 @@ def _load_pinterest_access_token_from_db() -> Optional[str]:
             return cred["access_token"]
     except Exception:
         pass
-    return None
-
-
-def _load_pinterest_access_token() -> Optional[str]:
-    """Load Pinterest token from database or legacy files."""
-    # Try database first
-    db_token = _load_pinterest_access_token_from_db()
-    if db_token:
-        return db_token
-
-    # Fall back to legacy files
-    for candidate in ("pintrest/access_token.txt", "pintrest_access_token.txt", "access_token.txt"):
-        try:
-            token = Path(candidate).read_text().strip()
-            if token:
-                return token
-        except FileNotFoundError:
-            continue
     return None
 
 

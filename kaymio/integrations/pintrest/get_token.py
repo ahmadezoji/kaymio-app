@@ -60,8 +60,9 @@ def exchange_code_for_token(auth_code):
 
     if response.status_code == 200:
         token_data = response.json()
-        with open("pintrest_access_token.txt", "w") as f:
-            f.write(token_data["access_token"])
+        from kaymio.database.oauth import save_oauth_credential
+        save_oauth_credential(platform="pinterest", access_token=token_data["access_token"])
+        print("Saved Pinterest access token to the oauth_credentials table.")
     else:
         print("Error getting access token")
 

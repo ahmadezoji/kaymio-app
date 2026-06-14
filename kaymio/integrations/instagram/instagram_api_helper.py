@@ -1,7 +1,6 @@
 """Instagram Graph helpers for publishing feed posts, stories, and reels."""
 from __future__ import annotations
 
-import json
 import logging
 import os
 import random
@@ -20,7 +19,6 @@ FACEBOOK_GRAPH_API_BASE = "https://graph.facebook.com/v21.0"
 INSTAGRAM_GRAPH_API_BASE = "https://graph.instagram.com/v21.0"
 MEDIA_PREFIX = "/media/"
 TEMPLATE_IMAGES_ROOT = Path(__file__).resolve().parents[1] / "template_images"
-TOKEN_FILE = Path(__file__).with_name("instagram_token.json")
 PUBLISH_STATUS_TIMEOUT_SECONDS = 60
 PUBLISH_STATUS_POLL_SECONDS = 3
 INSTAGRAM_ANALYTICS_CACHE_TTL_SECONDS = int(os.getenv("INSTAGRAM_ANALYTICS_CACHE_TTL_SECONDS", "180"))
@@ -52,12 +50,12 @@ def _token_payload_looks_like_login_only(payload: Dict[str, str]) -> bool:
 
 
 def _resolve_graph_api_base(token_payload: Optional[Dict[str, str]] = None) -> str:
-    payload = token_payload if token_payload is not None else _load_token_file()
+    payload = token_payload if token_payload is not None else _load_token_from_db()
     return INSTAGRAM_GRAPH_API_BASE if _uses_instagram_login_flow(payload) else FACEBOOK_GRAPH_API_BASE
 
 
 def _load_token_from_db() -> Dict[str, str]:
-    """Load Instagram credentials from database (preferred)."""
+    """Load Instagram credentials from the oauth_credentials table."""
     try:
         from kaymio.database.oauth import load_oauth_credential
         cred = load_oauth_credential("instagram")
@@ -72,89 +70,38 @@ def _load_token_from_db() -> Dict[str, str]:
     return {}
 
 
-def _load_token_file() -> Dict[str, str]:
-    """Load Instagram credentials from database or legacy JSON file."""
-    # Try database first (new approach)
-    db_creds = _load_token_from_db()
-    if db_creds:
-        return db_creds
-
-    # Fall back to JSON file for backward compatibility
-    if not TOKEN_FILE.exists():
-        return {}
-    try:
-        payload = json.loads(TOKEN_FILE.read_text())
-    except json.JSONDecodeError:
-        logger.warning("Invalid JSON in %s", TOKEN_FILE)
-        return {}
-    if not isinstance(payload, dict):
-        return {}
-    return payload
-
-
 def _get_instagram_credentials() -> Dict[str, str]:
-    token_payload = _load_token_file()
-    access_token = os.getenv("INSTAGRAM_ACCESS_TOKEN") or token_payload.get("INSTAGRAM_ACCESS_TOKEN")
-    user_id = os.getenv("INSTAGRAM_USER_ID") or token_payload.get("INSTAGRAM_USER_ID")
+    token_payload = _load_token_from_db()
+    # The oauth_credentials table is the live source of truth (refreshed via the
+    # OAuth flow); env vars are a fallback for environments without a DB row.
+    access_token = token_payload.get("INSTAGRAM_ACCESS_TOKEN") or os.getenv("INSTAGRAM_ACCESS_TOKEN")
+    user_id = token_payload.get("INSTAGRAM_USER_ID") or os.getenv("INSTAGRAM_USER_ID")
     if not access_token or not user_id:
         raise RuntimeError(
             "INSTAGRAM_ACCESS_TOKEN and INSTAGRAM_USER_ID must be configured "
-            "(env vars or instagram/instagram_token.json)."
+            "(env vars or the oauth_credentials table)."
         )
     return {"access_token": access_token, "user_id": user_id}
 
 
 def _get_instagram_messaging_credentials() -> Dict[str, str]:
-    token_payload = _load_token_file()
+    token_payload = _load_token_from_db()
     env_instagram_access_token = os.getenv("INSTAGRAM_ACCESS_TOKEN")
     env_page_access_token = os.getenv("INSTAGRAM_PAGE_ACCESS_TOKEN")
     env_instagram_user_id = os.getenv("INSTAGRAM_USER_ID")
     use_instagram_login = _uses_instagram_login_flow(token_payload)
 
-    token_file_page_access_token = token_payload.get("INSTAGRAM_PAGE_ACCESS_TOKEN")
-    token_file_fallback_access_token = token_payload.get("FB_LONG_LIVED_USER_ACCESS_TOKEN")
-    token_file_instagram_access_token = token_payload.get("INSTAGRAM_ACCESS_TOKEN")
-    token_file_instagram_user_id = token_payload.get("INSTAGRAM_USER_ID")
+    db_page_access_token = token_payload.get("INSTAGRAM_PAGE_ACCESS_TOKEN")
+    db_fallback_access_token = token_payload.get("FB_LONG_LIVED_USER_ACCESS_TOKEN")
+    db_instagram_access_token = token_payload.get("INSTAGRAM_ACCESS_TOKEN")
+    db_instagram_user_id = token_payload.get("INSTAGRAM_USER_ID")
 
     access_token = (
-        (env_instagram_access_token or token_file_instagram_access_token)
+        (db_instagram_access_token or env_instagram_access_token)
         if use_instagram_login
-        else (env_page_access_token or token_file_page_access_token or token_file_fallback_access_token)
+        else (db_page_access_token or db_fallback_access_token or env_page_access_token)
     )
-    instagram_user_id = env_instagram_user_id or token_file_instagram_user_id
-
-    logger.warning(
-        "Instagram messaging credentials resolved: flow=%s "
-        "token_source=%s instagram_user_id_source=%s token_file_present=%s",
-        "instagram_login" if use_instagram_login else "facebook_login",
-        (
-            "env:INSTAGRAM_ACCESS_TOKEN"
-            if use_instagram_login and env_instagram_access_token
-            else (
-                "instagram_token.json:INSTAGRAM_ACCESS_TOKEN"
-                if use_instagram_login and token_file_instagram_access_token
-                else (
-                    "env:INSTAGRAM_PAGE_ACCESS_TOKEN"
-                    if not use_instagram_login and env_page_access_token
-                    else (
-                        "instagram_token.json:INSTAGRAM_PAGE_ACCESS_TOKEN"
-                        if not use_instagram_login and token_file_page_access_token
-                        else (
-                            "instagram_token.json:FB_LONG_LIVED_USER_ACCESS_TOKEN"
-                            if not use_instagram_login and token_file_fallback_access_token
-                            else "missing"
-                        )
-                    )
-                )
-            )
-        ),
-        (
-            "env:INSTAGRAM_USER_ID"
-            if env_instagram_user_id
-            else ("instagram_token.json:INSTAGRAM_USER_ID" if token_file_instagram_user_id else "missing")
-        ),
-        bool(token_payload),
-    )
+    instagram_user_id = db_instagram_user_id or env_instagram_user_id
 
     if not access_token or not instagram_user_id:
         raise RuntimeError(
@@ -334,6 +281,78 @@ def _wait_for_media_ready(creation_id: str, access_token: str) -> bool:
         time.sleep(PUBLISH_STATUS_POLL_SECONDS)
     logger.warning("Instagram media not ready after polling (last status: %s)", last_status)
     return False
+
+
+def _create_carousel_item_container(image_url: str) -> str:
+    """Create a non-published carousel child item container. Returns its creation ID."""
+    creds = _get_instagram_credentials()
+    graph_api_base = _resolve_graph_api_base()
+    public_image_url = _ensure_public_image_url(image_url)
+    payload = {
+        "access_token": creds["access_token"],
+        "image_url": public_image_url,
+        "is_carousel_item": "true",
+    }
+    creation_url = f"{graph_api_base}/{creds['user_id']}/media"
+    response = requests.post(creation_url, data=payload, timeout=30)
+    if response.status_code >= 400:
+        logger.error("Instagram carousel item creation failed: %s - %s", response.status_code, response.text)
+        response.raise_for_status()
+
+    creation_id = response.json().get("id")
+    if not creation_id:
+        raise RuntimeError("Instagram carousel item creation did not return an ID")
+    return creation_id
+
+
+def publish_instagram_carousel(
+    *,
+    image_urls: List[str],
+    caption: Optional[str] = None,
+) -> Dict[str, str]:
+    """Publish a multi-image Instagram FEED post (carousel) via the Graph API."""
+    if len(image_urls) < 2:
+        raise ValueError("Instagram carousels require at least 2 images")
+    if len(image_urls) > 10:
+        raise ValueError("Instagram carousels support at most 10 images")
+
+    creds = _get_instagram_credentials()
+    graph_api_base = _resolve_graph_api_base()
+
+    child_ids = [_create_carousel_item_container(image_url) for image_url in image_urls]
+    for child_id in child_ids:
+        if not _wait_for_media_ready(child_id, creds["access_token"]):
+            raise RuntimeError("Instagram carousel item is not ready to publish yet.")
+
+    parent_payload = {
+        "access_token": creds["access_token"],
+        "media_type": "CAROUSEL",
+        "children": ",".join(child_ids),
+    }
+    if caption:
+        parent_payload["caption"] = caption[:2200]
+
+    creation_url = f"{graph_api_base}/{creds['user_id']}/media"
+    response = requests.post(creation_url, data=parent_payload, timeout=30)
+    if response.status_code >= 400:
+        logger.error("Instagram carousel creation failed: %s - %s", response.status_code, response.text)
+        response.raise_for_status()
+
+    creation_id = response.json().get("id")
+    if not creation_id:
+        raise RuntimeError("Instagram carousel creation did not return an ID")
+
+    if not _wait_for_media_ready(creation_id, creds["access_token"]):
+        raise RuntimeError("Instagram carousel is not ready to publish yet.")
+
+    publish_url = f"{graph_api_base}/{creds['user_id']}/media_publish"
+    publish_payload = {"creation_id": creation_id, "access_token": creds["access_token"]}
+    publish_response = requests.post(publish_url, data=publish_payload, timeout=30)
+    if publish_response.status_code >= 400:
+        logger.error("Instagram carousel publish failed: %s - %s", publish_response.status_code, publish_response.text)
+        publish_response.raise_for_status()
+
+    return publish_response.json()
 
 
 def publish_instagram_post(

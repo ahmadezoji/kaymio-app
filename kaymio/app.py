@@ -65,18 +65,16 @@ from kaymio.database import (
 from kaymio.database.instagram_state import (
     load_instagram_scheduler_state,
     save_instagram_scheduler_state,
-    migrate_scheduler_state_from_json,
     load_instagram_media_reply_routes,
     save_instagram_media_reply_routes,
     upsert_instagram_media_reply_route,
-    migrate_media_routes_from_json,
     load_instagram_comment_reply_states,
     save_instagram_comment_reply_states,
     upsert_instagram_comment_reply_state,
-    migrate_comment_reply_states_from_json,
 )
 from PIL import Image, ImageOps
 from kaymio.routes.analytics_view import analytics_bp
+from kaymio.routes.collections_view import collections_bp, collections_page_bp
 from kaymio.routes.file_manager_view import file_manager_bp
 from kaymio.routes.kaymio_wp_admin_view import kaymio_wp_admin_bp
 from kaymio.widgets.story_qr_widget import (
@@ -90,6 +88,8 @@ load_dotenv()
 
 app = Flask(__name__)
 app.register_blueprint(analytics_bp)
+app.register_blueprint(collections_bp)
+app.register_blueprint(collections_page_bp)
 app.register_blueprint(file_manager_bp)
 app.register_blueprint(kaymio_wp_admin_bp)
 app.config["SECRET_KEY"] = os.getenv("FLASK_SECRET_KEY", "dev-secret-key")

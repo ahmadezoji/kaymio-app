@@ -10,6 +10,7 @@ import datetime
 import shutil
 import uuid
 import re
+from typing import Optional
 
 if __package__ in {None, ""}:
     project_root = Path(__file__).resolve().parents[2]
@@ -111,6 +112,94 @@ def create_wordpress_post(title, content, featured_image_path=None, tags=None):
     except Exception as e:
         print(f"Error creating WordPress post: {e}")
         return None
+
+def _get_or_create_parent_page(slug: str, title: str) -> Optional[int]:
+    """Find a published WordPress page by slug, creating it if missing. Returns its ID."""
+    try:
+        response = requests.get(
+            f"{wp_url}/wp-json/wp/v2/pages",
+            params={"slug": slug},
+            auth=(wp_username, wp_password),
+            timeout=30,
+        )
+        if response.status_code == 200:
+            existing = response.json()
+            if isinstance(existing, list) and existing:
+                return existing[0].get("id")
+    except Exception as e:
+        print(f"Error looking up WordPress page '{slug}': {e}")
+        return None
+
+    try:
+        response = requests.post(
+            f"{wp_url}/wp-json/wp/v2/pages",
+            json={"title": title, "slug": slug, "status": "publish", "content": ""},
+            auth=(wp_username, wp_password),
+            headers={"Content-Type": "application/json"},
+            timeout=30,
+        )
+        if response.status_code == 201:
+            return response.json().get("id")
+        print(f"Failed to create parent WordPress page '{slug}': {response.text}")
+    except Exception as e:
+        print(f"Error creating parent WordPress page '{slug}': {e}")
+    return None
+
+
+def create_wordpress_page(title, content, slug, parent_slug="collections", status="publish"):
+    """Create (or update) a WordPress page nested under /{parent_slug}/{slug}/.
+
+    Returns a dict with `id` and `url` on success, or `error` on failure.
+    """
+    if not all([wp_username, wp_password]):
+        return {"error": "WordPress credentials not found in environment variables."}
+
+    parent_id = _get_or_create_parent_page(parent_slug, parent_slug.title())
+
+    page_data = {
+        "title": title,
+        "content": content,
+        "slug": slug,
+        "status": status,
+    }
+    if parent_id:
+        page_data["parent"] = parent_id
+
+    try:
+        # Update the page if one with this slug already exists, otherwise create it.
+        existing_response = requests.get(
+            f"{wp_url}/wp-json/wp/v2/pages",
+            params={"slug": slug},
+            auth=(wp_username, wp_password),
+            timeout=30,
+        )
+        existing = existing_response.json() if existing_response.status_code == 200 else []
+        existing_id = existing[0].get("id") if isinstance(existing, list) and existing else None
+
+        if existing_id:
+            response = requests.post(
+                f"{wp_url}/wp-json/wp/v2/pages/{existing_id}",
+                json=page_data,
+                auth=(wp_username, wp_password),
+                headers={"Content-Type": "application/json"},
+                timeout=30,
+            )
+        else:
+            response = requests.post(
+                f"{wp_url}/wp-json/wp/v2/pages",
+                json=page_data,
+                auth=(wp_username, wp_password),
+                headers={"Content-Type": "application/json"},
+                timeout=30,
+            )
+
+        if response.status_code in (200, 201):
+            data = response.json()
+            return {"id": data.get("id"), "url": data.get("link")}
+        return {"error": f"Failed to create WordPress page: {response.status_code} - {response.text}"}
+    except Exception as e:
+        return {"error": f"Error creating WordPress page: {e}"}
+
 
 def get_tag_id(tag_name, wp_url, wp_username, wp_password):
     response = requests.get(
