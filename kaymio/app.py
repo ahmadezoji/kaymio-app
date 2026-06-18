@@ -121,6 +121,7 @@ VIDEO_GENERATION_OPTIONS = build_video_generation_options()
 VIDEO_DURATION_DEFAULT = 8
 VIDEO_DURATION_MIN = 4
 VIDEO_DURATION_MAX = 60
+PUBLIC_APP_BASE_URL = os.getenv("PUBLIC_APP_BASE_URL", "").rstrip("/")
 STORY_AUTOPUBLISH_TIME = os.getenv("INSTAGRAM_STORY_AUTOPUBLISH_TIME", "11:45")
 STORY_AUTOPUBLISH_COUNT = int(os.getenv("INSTAGRAM_STORY_AUTOPUBLISH_COUNT", "2"))
 STORY_AUTOPUBLISH_ENABLED = os.getenv("INSTAGRAM_STORY_AUTOPUBLISH_ENABLED", "1") in TRUTHY_VALUES
@@ -495,6 +496,22 @@ def _scheduled_story_candidates() -> List[Dict[str, str]]:
     return candidates
 
 
+def _build_public_media_url(relative_path: str) -> str:
+    """Build an externally-reachable /media/ URL for the scheduler thread.
+
+    The scheduler runs outside any Flask request, so url_for(_external=True)
+    has no request/host to build from and raises RuntimeError. PUBLIC_APP_BASE_URL
+    must be set to this app's publicly reachable origin for scheduled stories to
+    include the composed image (CTA/QR) instead of falling back to the raw product photo.
+    """
+    if not PUBLIC_APP_BASE_URL:
+        raise RuntimeError(
+            "PUBLIC_APP_BASE_URL is not configured; cannot build a public media URL "
+            "from the background scheduler."
+        )
+    return f"{PUBLIC_APP_BASE_URL}/media/{relative_path}"
+
+
 def _publish_scheduled_instagram_stories() -> None:
     posted = 0
     print("DEBUG: Getting WooCommerce candidates for scheduled stories", file=sys.stderr, flush=True)
@@ -536,7 +553,7 @@ def _publish_scheduled_instagram_stories() -> None:
                         cta_config=STORY_CTA_WIDGET_CONFIG,
                     )
                     relative_path = save_generated_image(story_image)
-                    image_url = url_for("serve_media", filename=relative_path, _external=True)
+                    image_url = _build_public_media_url(relative_path)
                 except Exception:
                     app.logger.exception("Unable to compose scheduled story image with CTA + affiliate QR.")
             elif compose_source:
@@ -549,7 +566,7 @@ def _publish_scheduled_instagram_stories() -> None:
                         config=STORY_CTA_WIDGET_CONFIG,
                     )
                     relative_path = save_generated_image(story_image)
-                    image_url = url_for("serve_media", filename=relative_path, _external=True)
+                    image_url = _build_public_media_url(relative_path)
                 except Exception:
                     app.logger.exception("Unable to compose scheduled story image with CTA.")
             
