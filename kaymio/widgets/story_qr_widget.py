@@ -37,8 +37,8 @@ class StoryCtaWidgetConfig:
     max_width_ratio: float = 0.78
     min_height_ratio: float = 0.12
     max_height_ratio: float = 0.22
-    title_font_ratio: float = 0.22
-    body_font_ratio: float = 0.18
+    title_font_ratio: float = 0.30
+    body_font_ratio: float = 0.24
     combined_target_width_px: int = 840
     combined_target_height_px: int = 210
     vertical_center_ratio: float = 0.68
@@ -216,7 +216,7 @@ def _load_font(size: int, *, bold: bool = False) -> ImageFont.ImageFont:
             return ImageFont.truetype(font_name, size)
         except Exception:
             continue
-    return ImageFont.load_default()
+    return ImageFont.load_default(size=size)
 
 
 def _pick_story_panel_theme() -> StoryPanelTheme:
