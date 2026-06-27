@@ -77,6 +77,7 @@ from kaymio.routes.analytics_view import analytics_bp
 from kaymio.routes.collections_view import collections_bp, collections_page_bp
 from kaymio.routes.file_manager_view import file_manager_bp
 from kaymio.routes.kaymio_wp_admin_view import kaymio_wp_admin_bp
+from kaymio.routes.settings_view import settings_bp
 from kaymio.widgets.story_qr_widget import (
     StoryCtaWidgetConfig,
     StoryQrWidgetConfig,
@@ -92,6 +93,7 @@ app.register_blueprint(collections_bp)
 app.register_blueprint(collections_page_bp)
 app.register_blueprint(file_manager_bp)
 app.register_blueprint(kaymio_wp_admin_bp)
+app.register_blueprint(settings_bp)
 app.config["SECRET_KEY"] = os.getenv("FLASK_SECRET_KEY", "dev-secret-key")
 app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp"}

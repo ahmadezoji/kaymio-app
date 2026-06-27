@@ -12,17 +12,18 @@ import argparse
 import json
 import os
 import sys
-import urllib.parse
 
-import requests
+from kaymio.integrations.oauth_providers import (
+    build_authorize_url,
+    exchange_code_for_tokens as _exchange_code_for_tokens,
+    get_provider,
+)
 
-AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
-TOKEN_URL = "https://oauth2.googleapis.com/token"
+_YOUTUBE = get_provider("youtube")
+AUTH_URL = _YOUTUBE.authorize_url
+TOKEN_URL = _YOUTUBE.token_url
+SCOPES = _YOUTUBE.scopes
 DEFAULT_REDIRECT_URI = "http://localhost:8080/oauth2callback"
-SCOPES = [
-    "https://www.googleapis.com/auth/youtube.upload",
-    "https://www.googleapis.com/auth/yt-analytics.readonly",
-]
 
 
 def _require_env(name: str) -> str:
@@ -35,15 +36,9 @@ def _require_env(name: str) -> str:
 
 
 def build_auth_url(client_id: str, redirect_uri: str) -> str:
-    params = {
-        "client_id": client_id,
-        "redirect_uri": redirect_uri,
-        "response_type": "code",
-        "scope": " ".join(SCOPES),
-        "access_type": "offline",
-        "prompt": "consent",
-    }
-    return f"{AUTH_URL}?{urllib.parse.urlencode(params)}"
+    # This CLI script has no Flask session to track CSRF state in, so it
+    # doesn't need one (it's a manual, single-operator emergency fallback).
+    return build_authorize_url(_YOUTUBE, client_id=client_id, redirect_uri=redirect_uri, state="cli")
 
 
 def exchange_code_for_tokens(
@@ -52,17 +47,13 @@ def exchange_code_for_tokens(
     code: str,
     redirect_uri: str,
 ) -> dict:
-    payload = {
-        "code": code,
-        "client_id": client_id,
-        "client_secret": client_secret,
-        "redirect_uri": redirect_uri,
-        "grant_type": "authorization_code",
-    }
-    resp = requests.post(TOKEN_URL, data=payload, timeout=30)
-    if resp.status_code >= 400:
-        raise RuntimeError(f"Token exchange failed: {resp.status_code} - {resp.text}")
-    return resp.json()
+    return _exchange_code_for_tokens(
+        _YOUTUBE,
+        client_id=client_id,
+        client_secret=client_secret,
+        code=code,
+        redirect_uri=redirect_uri,
+    )
 
 
 def write_access_token_to_file(access_token: str, refresh_token: str):

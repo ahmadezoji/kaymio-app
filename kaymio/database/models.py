@@ -264,6 +264,8 @@ class OAuthCredential(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     platform: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    client_id: Mapped[str | None] = mapped_column(Text)
+    client_secret: Mapped[str | None] = mapped_column(Text)
     access_token: Mapped[str | None] = mapped_column(Text)
     refresh_token: Mapped[str | None] = mapped_column(Text)
     token_type: Mapped[str] = mapped_column(String(32), default="bearer")

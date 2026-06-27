@@ -86,15 +86,26 @@ def _get_refresh_token() -> Optional[str]:
     return _get_refresh_token_from_db()
 
 
+def _get_youtube_client_config() -> tuple[Optional[str], Optional[str]]:
+    """DB-first client_id/secret lookup (set via the Settings page), env-var fallback."""
+    try:
+        from kaymio.database.oauth import get_platform_client_config
+        config = get_platform_client_config("youtube")
+        if config:
+            return config.get("client_id"), config.get("client_secret")
+    except Exception as e:
+        logger.debug("Failed to load YouTube client config from DB: %s", e)
+    return os.getenv("YOUTUBE_CLIENT_ID"), os.getenv("YOUTUBE_CLIENT_SECRET")
+
+
 def refresh_youtube_access_token() -> str:
     """Exchange a stored refresh token for a short-lived access token."""
 
-    client_id = os.getenv("YOUTUBE_CLIENT_ID")
-    client_secret = os.getenv("YOUTUBE_CLIENT_SECRET")
+    client_id, client_secret = _get_youtube_client_config()
     refresh_token = _get_refresh_token()
     if not all([client_id, client_secret, refresh_token]):
         raise RuntimeError(
-            "Missing YOUTUBE_CLIENT_ID, YOUTUBE_CLIENT_SECRET, or YOUTUBE_REFRESH_TOKEN in environment"
+            "Missing YouTube client_id/client_secret (Settings page or env) or refresh_token"
         )
 
     payload = {

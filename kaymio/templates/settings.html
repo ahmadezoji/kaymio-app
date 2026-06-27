@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Kaymio Settings</title>
+    <style>
+      body {
+        margin: 0;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #0f172a;
+        color: #e2e8f0;
+      }
+      .wrap {
+        max-width: 760px;
+        margin: 0 auto;
+        padding: 24px;
+      }
+      h1 {
+        margin: 0 0 8px;
+        font-size: 1.6rem;
+      }
+      .muted {
+        color: #94a3b8;
+        margin: 0 0 16px;
+      }
+      .card {
+        background: #111827;
+        border: 1px solid #1f2937;
+        border-radius: 10px;
+        padding: 20px;
+        margin-bottom: 20px;
+      }
+      .card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 12px;
+      }
+      .card-header h2 {
+        margin: 0;
+        font-size: 1.2rem;
+      }
+      .badge {
+        padding: 4px 10px;
+        border-radius: 999px;
+        font-size: 0.8rem;
+        font-weight: 600;
+      }
+      .badge.connected { background: #14532d; color: #bbf7d0; }
+      .badge.not_configured { background: #334155; color: #cbd5e1; }
+      .badge.expiring { background: #78350f; color: #fde68a; }
+      .field {
+        margin-bottom: 12px;
+      }
+      label {
+        display: block;
+        font-size: 0.85rem;
+        color: #94a3b8;
+        margin-bottom: 4px;
+      }
+      input[type="text"], input[type="password"] {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 8px 10px;
+        border-radius: 8px;
+        border: 1px solid #334155;
+        background: #1e293b;
+        color: #e2e8f0;
+      }
+      .btn {
+        border: 1px solid #334155;
+        background: #1e293b;
+        color: #e2e8f0;
+        padding: 8px 14px;
+        border-radius: 8px;
+        text-decoration: none;
+        cursor: pointer;
+        display: inline-block;
+        font-size: 0.9rem;
+      }
+      .btn-primary {
+        background: #1d4ed8;
+        border-color: #1d4ed8;
+      }
+      .btn-danger {
+        background: #7f1d1d;
+        border-color: #991b1b;
+      }
+      .actions {
+        display: flex;
+        gap: 10px;
+        margin-top: 12px;
+        flex-wrap: wrap;
+      }
+      .redirect-uri {
+        margin-top: 14px;
+        padding: 10px 12px;
+        background: #1e293b;
+        border-radius: 8px;
+        font-size: 0.85rem;
+        word-break: break-all;
+      }
+      .note {
+        margin-top: 10px;
+        font-size: 0.82rem;
+        color: #94a3b8;
+      }
+      .flash {
+        padding: 10px 12px;
+        border-radius: 8px;
+        margin-bottom: 12px;
+      }
+      .flash.success { background: #14532d; }
+      .flash.error { background: #7f1d1d; }
+      .lock-card {
+        max-width: 360px;
+        margin: 80px auto 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          {% for category, message in messages %}
+            <div class="flash {{ category }}">{{ message }}</div>
+          {% endfor %}
+        {% endif %}
+      {% endwith %}
+
+      {% if locked %}
+        <div class="card lock-card">
+          <h1>Settings</h1>
+          <p class="muted">Enter the settings password to continue.</p>
+          <form method="post" action="{{ url_for('settings.unlock') }}">
+            <div class="field">
+              <label for="password">Password</label>
+              <input type="password" id="password" name="password" autofocus />
+            </div>
+            <button type="submit" class="btn btn-primary">Unlock</button>
+          </form>
+        </div>
+      {% else %}
+        <h1>Settings</h1>
+        <p class="muted">Connect external platforms. Tokens are stored in the database — no more manual CLI scripts.</p>
+
+        {% for p in platforms %}
+          <div class="card">
+            <div class="card-header">
+              <h2>{{ p.display_name }}</h2>
+              {% if p.status.status == "configured" and p.status.expiring_soon %}
+                <span class="badge expiring">Expiring soon</span>
+              {% elif p.status.status == "configured" %}
+                <span class="badge connected">Connected</span>
+              {% else %}
+                <span class="badge not_configured">Not connected</span>
+              {% endif %}
+            </div>
+
+            {% if p.status.status == "configured" %}
+              <p class="muted">
+                {% if p.status.expires_at %}Token expires: {{ p.status.expires_at }}<br />{% endif %}
+                {% if p.status.user_id %}Account: {{ p.status.user_id }}{% endif %}
+              </p>
+              <form method="post" action="{{ url_for('settings.disconnect', platform=p.platform) }}">
+                <button type="submit" class="btn btn-danger">Disconnect</button>
+              </form>
+            {% endif %}
+
+            <form method="post" action="{{ url_for('settings.save_credentials', platform=p.platform) }}" style="margin-top: 16px;">
+              <div class="field">
+                <label for="client_id_{{ p.platform }}">Client ID</label>
+                <input type="text" id="client_id_{{ p.platform }}" name="client_id" value="{{ p.client_id }}" />
+              </div>
+              <div class="field">
+                <label for="client_secret_{{ p.platform }}">Client secret</label>
+                <input
+                  type="password"
+                  id="client_secret_{{ p.platform }}"
+                  name="client_secret"
+                  placeholder="{{ 'Leave blank to keep existing secret' if p.has_client_secret else 'Enter client secret' }}"
+                />
+              </div>
+              <div class="actions">
+                <button type="submit" class="btn">Save credentials</button>
+                <a class="btn btn-primary" href="{{ url_for('settings.connect', platform=p.platform) }}">
+                  {{ 'Reconnect' if p.status.status == 'configured' else 'Connect' }}
+                </a>
+              </div>
+            </form>
+
+            <div class="redirect-uri">
+              Authorized redirect URI for Google Cloud Console:<br />
+              <strong>{{ p.redirect_uri }}</strong>
+            </div>
+            <p class="note">
+              If this keeps disconnecting every few days, your Google Cloud OAuth client is likely still
+              in "Testing" publishing status, which auto-revokes refresh tokens after 7 days. Move the
+              OAuth consent screen to "Production", or add your account as a permanent test user, to fix
+              that independently of this page.
+            </p>
+          </div>
+        {% endfor %}
+      {% endif %}
+    </div>
+  </body>
+</html>

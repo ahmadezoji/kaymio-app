@@ -22,6 +22,8 @@ def load_oauth_credential(platform: str) -> Optional[Dict[str, Any]]:
 
         return {
             "platform": row.platform,
+            "client_id": row.client_id,
+            "client_secret": row.client_secret,
             "access_token": row.access_token,
             "refresh_token": row.refresh_token,
             "token_type": row.token_type,
@@ -95,3 +97,49 @@ def delete_oauth_credential(platform: str) -> bool:
             session.commit()
             return True
     return False
+
+
+def save_oauth_client_config(
+    platform: str,
+    client_id: str,
+    client_secret: Optional[str],
+) -> Dict[str, Any]:
+    """Save (or update) just the OAuth app config for a platform.
+
+    Never touches access_token/refresh_token/etc. Creates the row if it
+    doesn't exist yet, so credentials can be entered before ever connecting.
+    """
+    with session_scope() as session:
+        row = session.query(OAuthCredential).filter_by(platform=platform).first()
+        if row:
+            row.client_id = client_id
+            row.client_secret = client_secret
+        else:
+            row = OAuthCredential(platform=platform, client_id=client_id, client_secret=client_secret)
+            session.add(row)
+        session.commit()
+
+    return load_oauth_credential(platform) or {}
+
+
+def get_platform_client_config(platform: str) -> Optional[Dict[str, Optional[str]]]:
+    """Return {'client_id':..., 'client_secret':...} for a platform, or None if unset."""
+    cred = load_oauth_credential(platform)
+    if not cred or not cred.get("client_id"):
+        return None
+    return {"client_id": cred["client_id"], "client_secret": cred.get("client_secret")}
+
+
+def clear_oauth_tokens(platform: str) -> bool:
+    """Clear only the token fields for a platform, preserving client_id/secret."""
+    with session_scope() as session:
+        row = session.query(OAuthCredential).filter_by(platform=platform).first()
+        if not row:
+            return False
+        row.access_token = None
+        row.refresh_token = None
+        row.expires_at = None
+        row.scope = None
+        row.raw_data = None
+        session.commit()
+        return True

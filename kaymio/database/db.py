@@ -65,12 +65,35 @@ def session_scope() -> Iterator[Session]:
         session.close()
 
 
+def _ensure_columns(table_name: str, column_specs: dict[str, str]) -> None:
+    """Idempotently add missing columns to an already-existing table.
+
+    create_all() only creates missing tables, never adds columns to ones that
+    already exist, so a column added to a model after a table has shipped to
+    a live database needs this instead. Safe to call on every boot.
+    """
+    from sqlalchemy import inspect, text
+
+    engine = get_engine()
+    inspector = inspect(engine)
+    if table_name not in inspector.get_table_names():
+        return  # create_all() will create it fresh with all columns already.
+    existing_columns = {col["name"] for col in inspector.get_columns(table_name)}
+    with engine.begin() as conn:
+        for column_name, ddl_type in column_specs.items():
+            if column_name in existing_columns:
+                continue
+            logger.info("Adding missing column %s.%s", table_name, column_name)
+            conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {ddl_type}"))
+
+
 def init_db() -> None:
     """Create all tables (if missing) and seed the default admin + app_meta."""
     # Import models so they register on Base.metadata before create_all.
     from . import models  # noqa: F401
 
     Base.metadata.create_all(bind=get_engine())
+    _ensure_columns("oauth_credentials", {"client_id": "TEXT", "client_secret": "TEXT"})
     _seed_default_admin()
     logger.info("Database initialised (tables ensured, admin seeded).")
 
