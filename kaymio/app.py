@@ -15,6 +15,7 @@ from uuid import uuid4
 import requests
 from dotenv import load_dotenv
 from flask import Flask, abort, flash, jsonify, redirect, render_template, request, send_from_directory, url_for
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 from kaymio.integrations.amazon.amazon_api import build_affiliate_link, extract_asin, fetch_product_from_canopy
 from kaymio.utils.gemeni_api_helper import edit_image as edit_image_with_gemini, generate_video_from_image as generate_video_with_gemini
@@ -88,6 +89,9 @@ from kaymio.widgets.story_qr_widget import (
 load_dotenv()
 
 app = Flask(__name__)
+# Trust X-Forwarded-Proto/Host/For from the nginx reverse proxy in front of
+# this app, so url_for(_external=True) builds https:// URLs instead of http://.
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 app.register_blueprint(analytics_bp)
 app.register_blueprint(collections_bp)
 app.register_blueprint(collections_page_bp)
