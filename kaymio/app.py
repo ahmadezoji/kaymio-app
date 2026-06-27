@@ -2,6 +2,7 @@ import base64
 import datetime as dt
 import json
 import os
+import shutil
 import sys
 import threading
 import time
@@ -110,6 +111,30 @@ for directory in (ORIGINALS_DIR, GENERATED_DIR, VIDEOS_DIR):
     directory.mkdir(parents=True, exist_ok=True)
 STATE_DIR = Path(app.root_path) / "data"
 STATE_DIR.mkdir(parents=True, exist_ok=True)
+
+DISK_SPACE_WARNING_PERCENT = int(os.getenv("DISK_SPACE_WARNING_PERCENT", "85"))
+
+
+def _check_disk_space_warning() -> None:
+    """Flash + log a warning once disk usage crosses the threshold.
+
+    Generated images/videos are paid API calls; if the disk fills up the
+    write after generation silently has nowhere to go, so surface this
+    early instead of only finding out when a save fails.
+    """
+    try:
+        usage = shutil.disk_usage(STORAGE_ROOT)
+        used_percent = (usage.used / usage.total) * 100
+    except Exception:
+        return
+    if used_percent >= DISK_SPACE_WARNING_PERCENT:
+        free_gb = usage.free / (1024 ** 3)
+        message = (
+            f"Server disk is {used_percent:.0f}% full ({free_gb:.1f} GB free). "
+            "Generated images/videos may fail to save until space is freed."
+        )
+        app.logger.warning(message)
+        flash(message, "error")
 MARKET_OPTIONS = [
     "Shein",
     "Amazon",
@@ -2445,6 +2470,7 @@ def refresh_token_endpoint():
 
 @app.route("/", methods=["GET"])
 def home() -> str:
+    _check_disk_space_warning()
     state = load_app_state()
     last_product_id = state.get("last_product_id") or ""
     saved_state = state.get("products", {}).get(last_product_id, {})
@@ -2643,6 +2669,7 @@ def upload_product_image():
 
 @app.route("/generate-pinterest", methods=["POST"])
 def generate_pinterest():
+    _check_disk_space_warning()
     raw_form_values = collect_form_values(request.form)
     original_image_path = raw_form_values.pop("original_image_path", "")
     form_values = dict(raw_form_values)
@@ -3074,6 +3101,7 @@ def publish_pinterest_video():
 
 @app.route("/generate-instagram-image", methods=["POST"])
 def generate_instagram_image():
+    _check_disk_space_warning()
     raw_form_values = collect_form_values(request.form)
     form_values = extract_form_defaults(raw_form_values)
     form_values["image_generation_model"] = normalize_image_generation_model(
@@ -3555,6 +3583,7 @@ def publish_website():
 
 @app.route("/generate-video/<platform>", methods=["POST"])
 def generate_platform_video(platform: str):
+    _check_disk_space_warning()
     supported = {"youtube", "tiktok", "instagram", "pinterest"}
     target = platform.lower()
     if target not in supported:
