@@ -179,7 +179,7 @@ def refresh_all_expiring_tokens() -> Dict[str, bool]:
 def get_token_status(platform: str) -> Dict[str, Any]:
     """Get current token status for a platform."""
     cred = load_oauth_credential(platform)
-    if not cred:
+    if not cred or not cred.get("access_token"):
         return {
             "platform": platform,
             "status": "not_configured",
