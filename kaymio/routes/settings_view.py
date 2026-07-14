@@ -1,12 +1,17 @@
 """Settings page: connect external platforms via OAuth, stored in the DB.
 
-Currently wires up YouTube end-to-end; the route shapes are written against
-the generic kaymio.integrations.oauth_providers registry so adding another
-platform later means registering a ProviderConfig and appending to
-SUPPORTED_PLATFORMS, not writing new routes.
+Platforms are wired up through the generic kaymio.integrations.oauth_providers
+registry. Adding a new platform means:
+  1. Register a ProviderConfig in oauth_providers.PROVIDERS
+  2. Append the platform key to SUPPORTED_PLATFORMS below
+
+Instagram is special: its OAuth flow returns a short-lived token that must be
+exchanged for a 60-day long-lived token before saving. This is handled
+automatically in oauth_callback by checking provider.long_token_url.
 """
 from __future__ import annotations
 
+import datetime as dt
 import os
 import secrets
 
@@ -20,15 +25,67 @@ from kaymio.database.oauth import (
     save_oauth_credential,
 )
 from kaymio.database.token_manager import get_token_status
-from kaymio.integrations.oauth_providers import build_authorize_url, exchange_code_for_tokens, get_provider
-
-import datetime as dt
+from kaymio.integrations.oauth_providers import (
+    build_authorize_url,
+    exchange_code_for_tokens,
+    exchange_for_long_lived_token,
+    get_provider,
+)
 
 settings_bp = Blueprint("settings", __name__)
 
-SUPPORTED_PLATFORMS = ["youtube"]
+SUPPORTED_PLATFORMS = ["youtube", "instagram", "pinterest"]
+
+# Per-platform labels shown in the credentials form
+_CREDENTIAL_LABELS = {
+    "youtube":    ("Client ID",  "Client Secret"),
+    "instagram":  ("App ID",     "App Secret"),
+    "pinterest":  ("App ID",     "App Secret"),
+}
+
+# Where the user must register the redirect URI
+_CONSOLE_NOTES = {
+    "youtube": (
+        "Google Cloud Console",
+        "Google Cloud Console → APIs & Services → Credentials → your OAuth client → "
+        "Authorized redirect URIs",
+    ),
+    "instagram": (
+        "Meta for Developers",
+        "Meta for Developers → your App → Instagram → API setup with Instagram login → "
+        "Valid OAuth Redirect URIs",
+    ),
+    "pinterest": (
+        "Pinterest Developers",
+        "Pinterest Developers → My apps → your App → Authentication → "
+        "Redirect URIs",
+    ),
+}
+
+# Informational note shown below each card
+_PLATFORM_NOTES = {
+    "youtube": (
+        "If this disconnects every few days, your Google Cloud OAuth client is likely in "
+        '"Testing" publishing status — Google auto-revokes refresh tokens after 7 days for '
+        "apps in that state. Move the consent screen to Production (or add your account as "
+        "a permanent Test User) to stop that."
+    ),
+    "instagram": (
+        "Instagram long-lived tokens are valid for 60 days. The app refreshes them "
+        "automatically before they expire. If a token is revoked (e.g. you change your "
+        "Instagram password), click Connect again to re-authenticate."
+    ),
+    "pinterest": (
+        "Pinterest access tokens expire after 30 days. Click Connect again here when that "
+        "happens — your App ID and App Secret are already saved so you only need to go "
+        "through the Pinterest consent screen."
+    ),
+}
 
 
+# --------------------------------------------------------------------------- #
+# Password gate
+# --------------------------------------------------------------------------- #
 @settings_bp.before_request
 def _require_settings_password():
     if request.endpoint == "settings.unlock":
@@ -56,11 +113,19 @@ def unlock():
     return render_template("settings.html", locked=True, platforms=[])
 
 
+# --------------------------------------------------------------------------- #
+# View model
+# --------------------------------------------------------------------------- #
 def _platform_view_model(platform: str) -> dict:
     provider = get_provider(platform)
     status = get_token_status(platform)
     cred = load_oauth_credential(platform) or {}
     redirect_uri = url_for("settings.oauth_callback", platform=platform, _external=True)
+
+    id_label, secret_label = _CREDENTIAL_LABELS.get(platform, ("Client ID", "Client Secret"))
+    console_short, console_detail = _CONSOLE_NOTES.get(platform, ("your developer console", ""))
+    platform_note = _PLATFORM_NOTES.get(platform, "")
+
     return {
         "platform": platform,
         "display_name": provider.display_name,
@@ -68,12 +133,20 @@ def _platform_view_model(platform: str) -> dict:
         "client_id": cred.get("client_id") or "",
         "has_client_secret": bool(cred.get("client_secret")),
         "redirect_uri": redirect_uri,
+        "id_label": id_label,
+        "secret_label": secret_label,
+        "console_short": console_short,
+        "console_detail": console_detail,
+        "platform_note": platform_note,
     }
 
 
+# --------------------------------------------------------------------------- #
+# Routes
+# --------------------------------------------------------------------------- #
 @settings_bp.route("/settings", methods=["GET"])
 def settings_view():
-    platforms = [_platform_view_model(platform) for platform in SUPPORTED_PLATFORMS]
+    platforms = [_platform_view_model(p) for p in SUPPORTED_PLATFORMS]
     return render_template("settings.html", locked=False, platforms=platforms)
 
 
@@ -89,8 +162,8 @@ def save_credentials(platform: str):
     submitted_secret = (request.form.get("client_secret") or "").strip()
 
     existing = load_oauth_credential(platform) or {}
-    # Blank secret on submit means "keep existing" — the form never renders
-    # the real secret back, so a blank value unambiguously means unchanged.
+    # Blank secret on submit means "keep existing" — the form never renders the
+    # real secret, so a blank value unambiguously means unchanged.
     final_secret = submitted_secret or existing.get("client_secret") or ""
 
     save_oauth_client_config(platform, client_id, final_secret)
@@ -108,7 +181,8 @@ def connect(platform: str):
 
     client_config = get_platform_client_config(platform)
     if not client_config or not client_config.get("client_secret"):
-        flash("Save a client ID and client secret first.", "error")
+        id_label = _CREDENTIAL_LABELS.get(platform, ("App ID",))[0]
+        flash(f"Save a {id_label} and App Secret first.", "error")
         return redirect(url_for("settings.settings_view"))
 
     state = secrets.token_urlsafe(32)
@@ -150,7 +224,7 @@ def oauth_callback(platform: str):
 
     client_config = get_platform_client_config(platform)
     if not client_config or not client_config.get("client_secret"):
-        flash("Client ID/secret are no longer configured for this platform.", "error")
+        flash("Client credentials are no longer configured for this platform.", "error")
         return redirect(url_for("settings.settings_view"))
 
     redirect_uri = url_for("settings.oauth_callback", platform=platform, _external=True)
@@ -163,26 +237,52 @@ def oauth_callback(platform: str):
             code=code,
             redirect_uri=redirect_uri,
         )
+
+        if provider.long_token_url:
+            # Instagram: step 2 — exchange the short-lived token for a 60-day one.
+            # user_id comes from the short-lived response only.
+            short_token = str(token_response.get("access_token") or "")
+            user_id = str(token_response.get("user_id") or "") or None
+            long_response = exchange_for_long_lived_token(
+                provider,
+                app_secret=client_config["client_secret"],
+                short_token=short_token,
+            )
+            access_token = long_response.get("access_token")
+            refresh_token = None  # Instagram long-lived tokens have no refresh_token
+            expires_in = long_response.get("expires_in")
+            scope = long_response.get("scope") or token_response.get("scope")
+            raw_data = {"short_lived": token_response, "long_lived": long_response}
+        else:
+            existing = load_oauth_credential(platform) or {}
+            access_token = token_response.get("access_token")
+            user_id = token_response.get("user_id") or None
+            # Google only returns a refresh_token on first consent or when
+            # prompt=consent is forced; preserve the existing one if omitted.
+            refresh_token = token_response.get("refresh_token") or existing.get("refresh_token")
+            expires_in = token_response.get("expires_in")
+            scope = token_response.get("scope")
+            raw_data = token_response
+
     except Exception as exc:
         flash(f"Token exchange failed: {exc}", "error")
         return redirect(url_for("settings.settings_view"))
 
-    existing = load_oauth_credential(platform) or {}
-    access_token = token_response.get("access_token")
-    # Google only returns a refresh_token on first consent (or when consent
-    # is forced); preserve the existing one if this response omits it.
-    refresh_token = token_response.get("refresh_token") or existing.get("refresh_token")
-    expires_in = token_response.get("expires_in")
-    expires_at = dt.datetime.utcnow() + dt.timedelta(seconds=expires_in) if expires_in else None
+    expires_at = (
+        dt.datetime.utcnow() + dt.timedelta(seconds=int(expires_in))
+        if expires_in
+        else None
+    )
 
     save_oauth_credential(
         platform,
         access_token=access_token,
         refresh_token=refresh_token,
         token_type=token_response.get("token_type", "bearer"),
+        user_id=user_id,
         expires_at=expires_at,
-        scope=token_response.get("scope"),
-        raw_data=token_response,
+        scope=scope,
+        raw_data=raw_data,
     )
     flash(f"{provider.display_name} connected successfully.", "success")
     return redirect(url_for("settings.settings_view"))
