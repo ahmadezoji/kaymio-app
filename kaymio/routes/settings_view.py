@@ -257,18 +257,27 @@ def oauth_callback(platform: str):
             scope = long_response.get("scope") or token_response.get("scope")
             raw_data = {"short_lived": token_response, "long_lived": long_response}
 
-            # For Facebook-based Instagram auth, fetch the Facebook user ID
-            # from the long-lived token (short-lived response may not carry it).
-            if not user_id and access_token:
+            # For Facebook-based Instagram auth, we need the Instagram Business
+            # Account ID (not the Facebook user ID) — that's what the Graph API
+            # publishing endpoints use as the {user-id} path segment.
+            # Fetch it by looking up the connected Facebook Page's IG account.
+            if access_token:
                 try:
                     import requests as _req
-                    me = _req.get(
-                        "https://graph.facebook.com/me",
-                        params={"access_token": access_token, "fields": "id"},
-                        timeout=10,
+                    pages_resp = _req.get(
+                        "https://graph.facebook.com/me/accounts",
+                        params={
+                            "access_token": access_token,
+                            "fields": "id,access_token,instagram_business_account",
+                        },
+                        timeout=15,
                     )
-                    if me.status_code == 200:
-                        user_id = str(me.json().get("id") or "") or None
+                    if pages_resp.status_code == 200:
+                        for page in pages_resp.json().get("data", []):
+                            ig = page.get("instagram_business_account")
+                            if isinstance(ig, dict) and ig.get("id"):
+                                user_id = str(ig["id"])
+                                break
                 except Exception:
                     pass
         else:

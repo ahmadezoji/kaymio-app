@@ -60,10 +60,21 @@ def _load_token_from_db() -> Dict[str, str]:
         from kaymio.database.oauth import load_oauth_credential
         cred = load_oauth_credential("instagram")
         if cred:
+            raw_data = cred.get("raw_data") or {}
+            # raw_data from the Settings page Facebook OAuth contains
+            # {"short_lived": ..., "long_lived": ...}; the old CLI script stores
+            # {"AUTH_FLOW": "instagram_login"}.
+            explicit_flow = raw_data.get("AUTH_FLOW", "") if isinstance(raw_data, dict) else ""
+            if explicit_flow:
+                auth_flow = explicit_flow
+            elif isinstance(raw_data, dict) and "long_lived" in raw_data:
+                auth_flow = "facebook_login"
+            else:
+                auth_flow = "instagram_login"
             return {
                 "INSTAGRAM_ACCESS_TOKEN": cred.get("access_token", ""),
                 "INSTAGRAM_USER_ID": cred.get("user_id", ""),
-                "AUTH_FLOW": "instagram_login",
+                "AUTH_FLOW": auth_flow,
             }
     except Exception as e:
         logger.debug("Failed to load Instagram credentials from DB: %s", e)
