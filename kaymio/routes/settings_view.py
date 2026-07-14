@@ -52,7 +52,7 @@ _CONSOLE_NOTES = {
     ),
     "instagram": (
         "Meta for Developers",
-        "Meta for Developers → your App → Instagram → API setup with Instagram login → "
+        "Meta for Developers → your App → Facebook Login for Business → Settings → "
         "Valid OAuth Redirect URIs",
     ),
     "pinterest": (
@@ -71,9 +71,10 @@ _PLATFORM_NOTES = {
         "a permanent Test User) to stop that."
     ),
     "instagram": (
-        "Instagram long-lived tokens are valid for 60 days. The app refreshes them "
-        "automatically before they expire. If a token is revoked (e.g. you change your "
-        "Instagram password), click Connect again to re-authenticate."
+        "This connects via Facebook (required for Instagram Business accounts linked to a "
+        "Facebook Page). Clicking Connect opens Facebook's consent screen — approve the "
+        "permissions there and it will grant access to your linked Instagram Business account. "
+        "The resulting token is valid for 60 days and is refreshed automatically."
     ),
     "pinterest": (
         "Pinterest access tokens expire after 30 days. Click Connect again here when that "
@@ -239,20 +240,37 @@ def oauth_callback(platform: str):
         )
 
         if provider.long_token_url:
-            # Instagram: step 2 — exchange the short-lived token for a 60-day one.
-            # user_id comes from the short-lived response only.
+            # Step 2: exchange the short-lived token for a long-lived one.
+            # For Instagram Business (Facebook OAuth), the user_id in the
+            # short-lived response is the Facebook user ID; we fetch it below.
             short_token = str(token_response.get("access_token") or "")
             user_id = str(token_response.get("user_id") or "") or None
             long_response = exchange_for_long_lived_token(
                 provider,
                 app_secret=client_config["client_secret"],
                 short_token=short_token,
+                client_id=client_config.get("client_id"),
             )
             access_token = long_response.get("access_token")
-            refresh_token = None  # Instagram long-lived tokens have no refresh_token
+            refresh_token = None
             expires_in = long_response.get("expires_in")
             scope = long_response.get("scope") or token_response.get("scope")
             raw_data = {"short_lived": token_response, "long_lived": long_response}
+
+            # For Facebook-based Instagram auth, fetch the Facebook user ID
+            # from the long-lived token (short-lived response may not carry it).
+            if not user_id and access_token:
+                try:
+                    import requests as _req
+                    me = _req.get(
+                        "https://graph.facebook.com/me",
+                        params={"access_token": access_token, "fields": "id"},
+                        timeout=10,
+                    )
+                    if me.status_code == 200:
+                        user_id = str(me.json().get("id") or "") or None
+                except Exception:
+                    pass
         else:
             existing = load_oauth_credential(platform) or {}
             access_token = token_response.get("access_token")

@@ -36,8 +36,12 @@ class ProviderConfig:
     token_auth_style: str = "body"
     # Scope list is joined with this separator before being URL-encoded
     scope_separator: str = " "
-    # Instagram only: URL for the short-lived → long-lived token exchange (GET)
+    # URL for the short-lived → long-lived token exchange (GET request)
     long_token_url: Optional[str] = None
+    # Grant type used in the long-lived exchange request:
+    # "ig_exchange_token"  → Instagram Login API (personal/creator accounts)
+    # "fb_exchange_token"  → Facebook Graph API (Business accounts via Facebook Page)
+    long_token_grant_type: str = "ig_exchange_token"
 
 
 def build_authorize_url(config: ProviderConfig, *, client_id: str, redirect_uri: str, state: str) -> str:
@@ -92,22 +96,34 @@ def exchange_for_long_lived_token(
     *,
     app_secret: str,
     short_token: str,
+    client_id: Optional[str] = None,
 ) -> dict:
-    """Instagram: upgrade a short-lived access token to a 60-day long-lived token.
+    """Upgrade a short-lived access token to a long-lived one.
+
+    Supports two grant styles:
+    - "ig_exchange_token": Instagram Login API (personal/creator accounts)
+    - "fb_exchange_token": Facebook Graph API (Business via Facebook Page)
 
     Raises ValueError if the provider doesn't support this exchange.
     """
     if not config.long_token_url:
         raise ValueError(f"Provider '{config.platform}' does not support long-lived token exchange.")
-    resp = requests.get(
-        config.long_token_url,
-        params={
+
+    if config.long_token_grant_type == "fb_exchange_token":
+        params = {
+            "grant_type": "fb_exchange_token",
+            "client_id": client_id,
+            "client_secret": app_secret,
+            "fb_exchange_token": short_token,
+        }
+    else:
+        params = {
             "grant_type": "ig_exchange_token",
             "client_secret": app_secret,
             "access_token": short_token,
-        },
-        timeout=30,
-    )
+        }
+
+    resp = requests.get(config.long_token_url, params=params, timeout=30)
     if resp.status_code >= 400:
         raise RuntimeError(f"Long-lived token exchange failed: {resp.status_code} - {resp.text}")
     return resp.json()
@@ -128,14 +144,20 @@ PROVIDERS: Dict[str, ProviderConfig] = {
     "instagram": ProviderConfig(
         platform="instagram",
         display_name="Instagram",
-        authorize_url="https://api.instagram.com/oauth/authorize",
-        token_url="https://api.instagram.com/oauth/access_token",
-        long_token_url="https://graph.instagram.com/access_token",
+        # Facebook OAuth endpoints — required for Instagram Business accounts
+        # that are connected to a Facebook Page (the standard business setup).
+        # This flow authenticates with Facebook and grants access to both the
+        # Facebook Page and its linked Instagram Business account.
+        authorize_url="https://www.facebook.com/v22.0/dialog/oauth",
+        token_url="https://graph.facebook.com/v22.0/oauth/access_token",
+        long_token_url="https://graph.facebook.com/oauth/access_token",
+        long_token_grant_type="fb_exchange_token",
         scopes=[
-            "instagram_business_basic",
-            "instagram_business_content_publish",
-            "instagram_business_manage_comments",
-            "instagram_business_manage_insights",
+            "instagram_basic",
+            "instagram_content_publish",
+            "pages_read_engagement",
+            "pages_show_list",
+            "business_management",
         ],
         scope_separator=",",
     ),
