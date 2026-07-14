@@ -232,6 +232,14 @@ def save_product_entry(product_id: str, entry: Dict[str, Any]) -> None:
         _set_meta(session, LAST_PRODUCT_ID_KEY, product_id)
 
 
+def set_last_product_id(product_id: str) -> None:
+    """Update only the last_product_id meta without touching any product data."""
+    if not product_id:
+        return
+    with session_scope() as session:
+        _set_meta(session, LAST_PRODUCT_ID_KEY, product_id)
+
+
 def save_app_state(state: Dict[str, Any]) -> None:
     """Full sync: upsert every product present, delete those absent, set meta."""
     products = (state or {}).get("products") or {}

@@ -64,6 +64,7 @@ from kaymio.database import (
     save_app_state as db_save_app_state,
     save_product_entry as db_save_product_entry,
 )
+from kaymio.database.state_store import set_last_product_id as db_set_last_product_id
 from kaymio.database.instagram_state import (
     load_instagram_scheduler_state,
     save_instagram_scheduler_state,
@@ -2525,11 +2526,11 @@ def reset_platform():
 def select_product():
     raw_form_values = collect_form_values(request.form)
     selected_product = (raw_form_values.get("product_id") or "").strip()
-    state = load_app_state()
-    products = state.get("products") or {}
-    if selected_product and selected_product in products:
-        state["last_product_id"] = selected_product
-        save_app_state(state)
+    if selected_product:
+        state = load_app_state()
+        products = state.get("products") or {}
+        if selected_product in products:
+            db_set_last_product_id(selected_product)
     return redirect(url_for("home"))
 
 
