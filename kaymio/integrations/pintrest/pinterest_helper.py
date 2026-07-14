@@ -271,7 +271,24 @@ def create_pinterest_pin(
         "Content-Type": "application/json",
     }
 
-    response = requests.post(API_URL, headers=headers, json=payload, timeout=30)
+    # Retry once on 429, respecting Retry-After (capped at 60 s to keep the request responsive)
+    for attempt in range(2):
+        response = requests.post(API_URL, headers=headers, json=payload, timeout=30)
+        if response.status_code == 429 and attempt == 0:
+            retry_after = int(response.headers.get("Retry-After", 10))
+            wait = min(retry_after, 60)
+            logger.warning("Pinterest 429 rate-limit; waiting %s s before retry", wait)
+            time.sleep(wait)
+            continue
+        break
+
+    if response.status_code == 429:
+        retry_after = int(response.headers.get("Retry-After", 60))
+        raise RuntimeError(
+            f"Pinterest is rate-limiting this app. Please wait {retry_after} seconds "
+            "and try again. (429 Too Many Requests)"
+        )
+
     if response.status_code >= 400:
         logger.error("Pinterest API error: %s - %s", response.status_code, response.text)
         response.raise_for_status()
