@@ -3300,6 +3300,27 @@ def publish_instagram():
     return redirect_home_view()
 
 
+@app.route("/data-deletion", methods=["GET"])
+def data_deletion_instructions():
+    return """<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Data Deletion – Kaymio</title>
+<style>body{font-family:sans-serif;max-width:640px;margin:60px auto;padding:0 20px;color:#333}
+h1{font-size:1.4rem}p{line-height:1.6}</style></head>
+<body>
+<h1>Data Deletion Instructions</h1>
+<p>Kaymio affiliate app does not store personal data from Facebook or Instagram users beyond what is
+required to operate the connected business account (access tokens and account IDs used solely for
+publishing content to the connected Instagram Business profile).</p>
+<p>To request deletion of any data associated with your account, please send an email to
+<a href="mailto:salemikimia@gmail.com">salemikimia@gmail.com</a> with the subject line
+<strong>Data Deletion Request</strong>. We will process your request within 30 days.</p>
+<p>Alternatively, disconnecting the app from your Facebook/Instagram account via
+<em>Facebook Settings &rarr; Apps and Websites</em> will immediately revoke all access tokens,
+after which no further data is accessible.</p>
+</body></html>""", 200, {"Content-Type": "text/html"}
+
+
 @app.route("/webhooks/instagram", methods=["GET"])
 def verify_instagram_webhook():
     mode = request.args.get("hub.mode", "")
