@@ -3967,6 +3967,13 @@ def publish_youtube():
             preview_payload["youtube_keywords"] = keywords
             preview_payload["youtube_keywords_payload"] = json.dumps(keywords or [])
 
+    # Append affiliate or product link so YouTube auto-links it in the description
+    affiliate_link = str(form_values.get("affiliate_link") or "").strip()
+    product_url = str(form_values.get("product_url") or "").strip()
+    link_to_append = (affiliate_link if use_affiliate_link_flag and affiliate_link else product_url)
+    if link_to_append:
+        description = f"{description}\n\n🛒 Shop here: {link_to_append}"
+
     try:
         response = publish_short_video(
             video_bytes,
