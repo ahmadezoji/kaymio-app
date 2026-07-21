@@ -152,6 +152,8 @@
           <a class="ghost-btn" href="{{ url_for('analytics.analytics_view') }}">View analytics</a>
           <a class="ghost-btn" href="{{ url_for('file_manager.file_manager_view') }}">File manager</a>
           <a class="ghost-btn" href="{{ url_for('kaymio_wp_admin.kaymio_wp_admin_view') }}">WP Admin</a>
+          <a class="ghost-btn" href="{{ url_for('collections_page.collections_page') }}">Collections</a>
+          <a class="ghost-btn" href="{{ url_for('settings.settings_view') }}">Settings</a>
         </div>
       </header>
 
@@ -170,6 +172,8 @@
           <a class="ghost-btn" href="{{ url_for('analytics.analytics_view') }}">Analytics dashboard</a>
           <a class="ghost-btn" href="{{ url_for('file_manager.file_manager_view') }}">File manager</a>
           <a class="ghost-btn" href="{{ url_for('kaymio_wp_admin.kaymio_wp_admin_view') }}">WooCommerce admin</a>
+          <a class="ghost-btn" href="{{ url_for('collections_page.collections_page') }}">Collections</a>
+          <a class="ghost-btn" href="{{ url_for('settings.settings_view') }}">Settings</a>
         </div>
         {% set values = form_values or {} %}
         {% set preview_data = preview or {} %}

@@ -10,6 +10,7 @@ import datetime
 import shutil
 import uuid
 import re
+from typing import Optional
 
 if __package__ in {None, ""}:
     project_root = Path(__file__).resolve().parents[2]
@@ -111,6 +112,94 @@ def create_wordpress_post(title, content, featured_image_path=None, tags=None):
     except Exception as e:
         print(f"Error creating WordPress post: {e}")
         return None
+
+def _get_or_create_parent_page(slug: str, title: str) -> Optional[int]:
+    """Find a published WordPress page by slug, creating it if missing. Returns its ID."""
+    try:
+        response = requests.get(
+            f"{wp_url}/wp-json/wp/v2/pages",
+            params={"slug": slug},
+            auth=(wp_username, wp_password),
+            timeout=30,
+        )
+        if response.status_code == 200:
+            existing = response.json()
+            if isinstance(existing, list) and existing:
+                return existing[0].get("id")
+    except Exception as e:
+        print(f"Error looking up WordPress page '{slug}': {e}")
+        return None
+
+    try:
+        response = requests.post(
+            f"{wp_url}/wp-json/wp/v2/pages",
+            json={"title": title, "slug": slug, "status": "publish", "content": ""},
+            auth=(wp_username, wp_password),
+            headers={"Content-Type": "application/json"},
+            timeout=30,
+        )
+        if response.status_code == 201:
+            return response.json().get("id")
+        print(f"Failed to create parent WordPress page '{slug}': {response.text}")
+    except Exception as e:
+        print(f"Error creating parent WordPress page '{slug}': {e}")
+    return None
+
+
+def create_wordpress_page(title, content, slug, parent_slug="collections", status="publish"):
+    """Create (or update) a WordPress page nested under /{parent_slug}/{slug}/.
+
+    Returns a dict with `id` and `url` on success, or `error` on failure.
+    """
+    if not all([wp_username, wp_password]):
+        return {"error": "WordPress credentials not found in environment variables."}
+
+    parent_id = _get_or_create_parent_page(parent_slug, parent_slug.title())
+
+    page_data = {
+        "title": title,
+        "content": content,
+        "slug": slug,
+        "status": status,
+    }
+    if parent_id:
+        page_data["parent"] = parent_id
+
+    try:
+        # Update the page if one with this slug already exists, otherwise create it.
+        existing_response = requests.get(
+            f"{wp_url}/wp-json/wp/v2/pages",
+            params={"slug": slug},
+            auth=(wp_username, wp_password),
+            timeout=30,
+        )
+        existing = existing_response.json() if existing_response.status_code == 200 else []
+        existing_id = existing[0].get("id") if isinstance(existing, list) and existing else None
+
+        if existing_id:
+            response = requests.post(
+                f"{wp_url}/wp-json/wp/v2/pages/{existing_id}",
+                json=page_data,
+                auth=(wp_username, wp_password),
+                headers={"Content-Type": "application/json"},
+                timeout=30,
+            )
+        else:
+            response = requests.post(
+                f"{wp_url}/wp-json/wp/v2/pages",
+                json=page_data,
+                auth=(wp_username, wp_password),
+                headers={"Content-Type": "application/json"},
+                timeout=30,
+            )
+
+        if response.status_code in (200, 201):
+            data = response.json()
+            return {"id": data.get("id"), "url": data.get("link")}
+        return {"error": f"Failed to create WordPress page: {response.status_code} - {response.text}"}
+    except Exception as e:
+        return {"error": f"Error creating WordPress page: {e}"}
+
 
 def get_tag_id(tag_name, wp_url, wp_username, wp_password):
     response = requests.get(
@@ -837,9 +926,64 @@ def remove_aliexpress_products_and_media(
     }
 
 
+def shorten_long_product_names(word_limit: int = 8, keep_words: int = 5, dry_run: bool = True):
+    """Find WooCommerce products whose name is longer than `word_limit` words
+    and shorten the name to its first `keep_words` words.
+
+    The original full name is preserved by prepending it (followed by a
+    newline) to the product description before the name is shortened.
+
+    When dry_run is True (default), only prints the proposed changes without
+    updating WooCommerce.
+    """
+    if not all([wc_url, consumer_key, consumer_secret]):
+        print("WooCommerce API credentials are missing.")
+        return {"updated": 0, "skipped": 0, "errors": ["WooCommerce API credentials are missing."]}
+
+    result = _fetch_all_woocommerce_products()
+    if result.get("error"):
+        print(f"Failed to fetch products: {result['error']}")
+        return {"updated": 0, "skipped": 0, "errors": [result["error"]]}
+
+    updated = 0
+    skipped = 0
+    errors = []
+
+    for product in result.get("items", []):
+        name = str(product.get("name") or "").strip()
+        product_id = product.get("id")
+        words = name.split()
+        if not name or len(words) <= word_limit:
+            continue
+
+        short_name = " ".join(words[:keep_words])
+        description = str(product.get("description") or "")
+        new_description = f"{name}\n{description}"
+
+        if dry_run:
+            print(f"[dry-run] Product {product_id}: '{name}' -> '{short_name}'")
+            skipped += 1
+            continue
+
+        response = requests.put(
+            f"{wc_url}/wp-json/wc/v3/products/{product_id}",
+            json={"name": short_name, "description": new_description},
+            auth=(consumer_key, consumer_secret),
+            headers={"Content-Type": "application/json"},
+            timeout=30,
+        )
+        if response.status_code == 200:
+            print(f"Updated product {product_id}: '{name}' -> '{short_name}'")
+            updated += 1
+        else:
+            errors.append(f"Product {product_id} update failed: {response.text}")
+
+    print(f"Shorten product names complete. Updated: {updated}, Skipped(dry-run): {skipped}, Errors: {len(errors)}")
+    return {"updated": updated, "skipped": skipped, "errors": errors}
+
+
 def main() -> int:
-    matched_count = find_aliexpress_products_by_category_names()
-    print(f"Final matched count: {matched_count}")
+    # shorten_long_product_names()
     return 0
 
 

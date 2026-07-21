@@ -13,7 +13,6 @@ import requests
 
 FACEBOOK_GRAPH_API_BASE = "https://graph.facebook.com/v21.0"
 INSTAGRAM_GRAPH_API_BASE = "https://graph.instagram.com/v21.0"
-TOKEN_FILE = Path(__file__).with_name("instagram_token.json")
 DEFAULT_FIELDS = "messages,comments"
 
 
@@ -42,14 +41,19 @@ def _load_dotenv() -> None:
         break
 
 
-def _load_token_file() -> Dict[str, Any]:
-    if not TOKEN_FILE.exists():
-        return {}
+def _load_token_from_db() -> Dict[str, Any]:
     try:
-        payload = json.loads(TOKEN_FILE.read_text())
-    except json.JSONDecodeError:
-        return {}
-    return payload if isinstance(payload, dict) else {}
+        from kaymio.database.oauth import load_oauth_credential
+        cred = load_oauth_credential("instagram")
+        if cred:
+            return {
+                "INSTAGRAM_ACCESS_TOKEN": cred.get("access_token", ""),
+                "INSTAGRAM_USER_ID": cred.get("user_id", ""),
+                "AUTH_FLOW": "instagram_login",
+            }
+    except Exception:
+        pass
+    return {}
 
 
 def _token_payload_looks_like_login_only(payload: Dict[str, Any]) -> bool:
@@ -74,7 +78,7 @@ def _uses_instagram_login_flow(payload: Dict[str, Any]) -> bool:
 
 
 def _resolve_credentials() -> Dict[str, str]:
-    payload = _load_token_file()
+    payload = _load_token_from_db()
     use_instagram_login = _uses_instagram_login_flow(payload)
     user_id = str(os.getenv("INSTAGRAM_USER_ID") or payload.get("INSTAGRAM_USER_ID") or "").strip()
 
@@ -92,7 +96,7 @@ def _resolve_credentials() -> Dict[str, str]:
         ).strip()
 
     if not user_id or not access_token:
-        raise RuntimeError("Missing Instagram credentials in env or instagram_token.json.")
+        raise RuntimeError("Missing Instagram credentials in env or the oauth_credentials table.")
 
     return {
         "user_id": user_id,

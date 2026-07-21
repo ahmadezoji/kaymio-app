@@ -37,7 +37,7 @@ services:
         condition: service_healthy
     volumes:
       # Persist generated media and the JSON snapshot used for first-run migration.
-      - ./template_images:/app/template_images
+      - ./template_images:/app/kaymio/template_images
       - ./data:/app/data
       # Mount .env file so environment changes are reflected immediately
       - ./.env:/app/.env:ro

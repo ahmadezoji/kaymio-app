@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Kaymio Settings</title>
+    <style>
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #0f172a;
+        color: #e2e8f0;
+        font-size: 15px;
+      }
+      .wrap {
+        max-width: 820px;
+        margin: 0 auto;
+        padding: 28px 20px;
+      }
+      h1 { margin: 0 0 4px; font-size: 1.6rem; }
+      .page-sub { color: #94a3b8; margin: 0 0 24px; font-size: 0.9rem; }
+
+      /* Flash messages */
+      .flash {
+        padding: 10px 14px;
+        border-radius: 8px;
+        margin-bottom: 14px;
+        font-size: 0.9rem;
+      }
+      .flash.success { background: #14532d; color: #bbf7d0; }
+      .flash.error   { background: #7f1d1d; color: #fca5a5; }
+
+      /* Cards */
+      .card {
+        background: #111827;
+        border: 1px solid #1f2937;
+        border-radius: 12px;
+        padding: 22px;
+        margin-bottom: 22px;
+      }
+      .card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 14px;
+      }
+      .platform-title {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .platform-icon {
+        width: 32px;
+        height: 32px;
+        border-radius: 8px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.1rem;
+        flex-shrink: 0;
+      }
+      .icon-youtube   { background: #450a0a; }
+      .icon-instagram { background: #3b0764; }
+      .icon-pinterest { background: #450a0a; color: #fca5a5; }
+      .card-header h2 { margin: 0; font-size: 1.15rem; }
+
+      /* Badges */
+      .badge {
+        padding: 4px 10px;
+        border-radius: 999px;
+        font-size: 0.78rem;
+        font-weight: 600;
+        white-space: nowrap;
+      }
+      .badge.connected    { background: #14532d; color: #bbf7d0; }
+      .badge.not_connected{ background: #334155; color: #94a3b8; }
+      .badge.expiring     { background: #78350f; color: #fde68a; }
+
+      /* Status row */
+      .status-row {
+        background: #1e293b;
+        border-radius: 8px;
+        padding: 10px 14px;
+        margin-bottom: 16px;
+        font-size: 0.85rem;
+        color: #94a3b8;
+      }
+      .status-row span { color: #e2e8f0; }
+
+      /* Divider */
+      .divider {
+        border: none;
+        border-top: 1px solid #1f2937;
+        margin: 18px 0;
+      }
+
+      /* Form */
+      .field { margin-bottom: 12px; }
+      label {
+        display: block;
+        font-size: 0.82rem;
+        color: #94a3b8;
+        margin-bottom: 5px;
+      }
+      input[type="text"],
+      input[type="password"] {
+        width: 100%;
+        padding: 8px 11px;
+        border-radius: 8px;
+        border: 1px solid #334155;
+        background: #0f172a;
+        color: #e2e8f0;
+        font-size: 0.9rem;
+      }
+      input[type="text"]:focus,
+      input[type="password"]:focus {
+        outline: none;
+        border-color: #3b82f6;
+      }
+
+      /* Buttons */
+      .btn {
+        border: 1px solid #334155;
+        background: #1e293b;
+        color: #e2e8f0;
+        padding: 8px 16px;
+        border-radius: 8px;
+        text-decoration: none;
+        cursor: pointer;
+        display: inline-block;
+        font-size: 0.88rem;
+        transition: background 0.15s;
+      }
+      .btn:hover { background: #273549; }
+      .btn-primary { background: #1d4ed8; border-color: #1d4ed8; }
+      .btn-primary:hover { background: #1e40af; }
+      .btn-danger  { background: #7f1d1d; border-color: #991b1b; }
+      .btn-danger:hover { background: #6b1919; }
+
+      .actions {
+        display: flex;
+        gap: 10px;
+        margin-top: 14px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+
+      /* Redirect URI box */
+      .redirect-box {
+        margin-top: 16px;
+        background: #0f172a;
+        border: 1px solid #334155;
+        border-radius: 8px;
+        padding: 12px 14px;
+        font-size: 0.82rem;
+      }
+      .redirect-box .label {
+        color: #64748b;
+        margin-bottom: 5px;
+        font-size: 0.78rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+      .redirect-uri-value {
+        color: #93c5fd;
+        word-break: break-all;
+        font-family: "SF Mono", "Fira Code", monospace;
+        font-size: 0.82rem;
+        margin-bottom: 6px;
+      }
+      .redirect-where {
+        color: #64748b;
+        font-size: 0.78rem;
+      }
+
+      /* Note */
+      .note {
+        margin-top: 14px;
+        font-size: 0.8rem;
+        color: #64748b;
+        line-height: 1.5;
+        border-left: 2px solid #1f2937;
+        padding-left: 10px;
+      }
+
+      /* Lock screen */
+      .lock-card { max-width: 360px; margin: 80px auto 0; }
+
+      /* Nav */
+      .nav-back {
+        display: inline-block;
+        margin-bottom: 20px;
+        font-size: 0.88rem;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          {% for category, message in messages %}
+            <div class="flash {{ category }}">{{ message }}</div>
+          {% endfor %}
+        {% endif %}
+      {% endwith %}
+
+      {% if locked %}
+        <div class="card lock-card">
+          <h1>Settings</h1>
+          <p class="page-sub">Enter the settings password to continue.</p>
+          <form method="post" action="{{ url_for('settings.unlock') }}">
+            <div class="field">
+              <label for="password">Password</label>
+              <input type="password" id="password" name="password" autofocus />
+            </div>
+            <button type="submit" class="btn btn-primary">Unlock</button>
+          </form>
+        </div>
+
+      {% else %}
+        <a class="btn nav-back" href="{{ url_for('home') }}">&larr; Back to home</a>
+        <h1>Settings</h1>
+        <p class="page-sub">Connect your social platforms. Tokens are stored in the database — no CLI scripts needed.</p>
+
+        {% for p in platforms %}
+          {% set is_connected = p.status.status == "configured" %}
+          {% set is_expiring  = is_connected and p.status.expiring_soon %}
+
+          <div class="card">
+            <div class="card-header">
+              <div class="platform-title">
+                <div class="platform-icon icon-{{ p.platform }}">
+                  {% if p.platform == "youtube" %}▶{% elif p.platform == "instagram" %}📷{% else %}📌{% endif %}
+                </div>
+                <h2>{{ p.display_name }}</h2>
+              </div>
+              {% if is_expiring %}
+                <span class="badge expiring">Expiring soon</span>
+              {% elif is_connected %}
+                <span class="badge connected">Connected</span>
+              {% else %}
+                <span class="badge not_connected">Not connected</span>
+              {% endif %}
+            </div>
+
+            {# ---- Connected status row ---- #}
+            {% if is_connected %}
+              <div class="status-row">
+                {% if p.status.expires_at %}
+                  Expires: <span>{{ p.status.expires_at[:10] }}</span>
+                  {% if p.status.user_id %} &nbsp;·&nbsp; {% endif %}
+                {% endif %}
+                {% if p.status.user_id %}
+                  {% if p.platform == "instagram" %}Instagram account ID:{% else %}Account:{% endif %}
+                  <span>{{ p.status.user_id }}</span>
+                {% endif %}
+              </div>
+            {% endif %}
+
+            {# ---- App ID / Secret form ---- #}
+            <form method="post" action="{{ url_for('settings.save_credentials', platform=p.platform) }}">
+              <div class="field">
+                <label for="cid_{{ p.platform }}">{{ p.id_label }}</label>
+                <input type="text" id="cid_{{ p.platform }}" name="client_id"
+                       value="{{ p.client_id }}" autocomplete="off" />
+              </div>
+              <div class="field">
+                <label for="csec_{{ p.platform }}">{{ p.secret_label }}</label>
+                <input type="password" id="csec_{{ p.platform }}" name="client_secret"
+                       placeholder="{{ 'Leave blank to keep existing secret' if p.has_client_secret else 'Enter ' + p.secret_label }}"
+                       autocomplete="new-password" />
+              </div>
+              <div class="actions">
+                <button type="submit" class="btn">Save credentials</button>
+                <a class="btn btn-primary"
+                   href="{{ url_for('settings.connect', platform=p.platform) }}">
+                  {{ 'Reconnect' if is_connected else 'Connect to ' + p.display_name }}
+                </a>
+              </div>
+            </form>
+
+            {# Disconnect is a separate form so it can't be accidentally nested #}
+            {% if is_connected %}
+              <form method="post"
+                    action="{{ url_for('settings.disconnect', platform=p.platform) }}"
+                    style="margin-top: 10px;">
+                <button type="submit" class="btn btn-danger">Disconnect</button>
+              </form>
+            {% endif %}
+
+            {# ---- Redirect URI ---- #}
+            <div class="redirect-box">
+              <div class="label">Authorized redirect URI</div>
+              <div class="redirect-uri-value">{{ p.redirect_uri }}</div>
+              <div class="redirect-where">Add this URL in: {{ p.console_detail }}</div>
+            </div>
+
+            <p class="note">{{ p.platform_note }}</p>
+          </div>
+        {% endfor %}
+      {% endif %}
+    </div>
+  </body>
+</html>

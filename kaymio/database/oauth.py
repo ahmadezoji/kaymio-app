@@ -1,13 +1,11 @@
 """OAuth credential management backed by database.
 
 Handles storage and retrieval of API tokens for external platforms.
-Auto-migrates from legacy JSON/TXT files on first run.
 """
 from __future__ import annotations
 
 import json
 from datetime import datetime
-from pathlib import Path
 from typing import Any, Dict, Optional
 
 from .db import session_scope
@@ -24,6 +22,8 @@ def load_oauth_credential(platform: str) -> Optional[Dict[str, Any]]:
 
         return {
             "platform": row.platform,
+            "client_id": row.client_id,
+            "client_secret": row.client_secret,
             "access_token": row.access_token,
             "refresh_token": row.refresh_token,
             "token_type": row.token_type,
@@ -99,132 +99,47 @@ def delete_oauth_credential(platform: str) -> bool:
     return False
 
 
-# ==============================================================================
-# Auto-migration from legacy JSON/TXT files
-# ==============================================================================
+def save_oauth_client_config(
+    platform: str,
+    client_id: str,
+    client_secret: Optional[str],
+) -> Dict[str, Any]:
+    """Save (or update) just the OAuth app config for a platform.
 
-
-def migrate_instagram_token_from_json(json_file: Path) -> None:
-    """Auto-migrate Instagram token from instagram_token.json."""
-    if not json_file.exists():
-        return
-
-    with session_scope() as session:
-        existing = session.query(OAuthCredential).filter_by(platform="instagram").first()
-
-    if existing:
-        return
-
-    try:
-        data = json.loads(json_file.read_text())
-        save_oauth_credential(
-            platform="instagram",
-            access_token=data.get("INSTAGRAM_ACCESS_TOKEN", ""),
-            user_id=data.get("INSTAGRAM_USER_ID"),
-            raw_data=data,
-        )
-    except Exception:
-        pass
-
-
-def migrate_youtube_token_from_file(token_file: Path) -> None:
-    """Auto-migrate YouTube token from youtube_access_token.txt."""
-    if not token_file.exists():
-        return
-
-    with session_scope() as session:
-        existing = session.query(OAuthCredential).filter_by(platform="youtube").first()
-
-    if existing:
-        return
-
-    try:
-        token = token_file.read_text().strip()
-        if token:
-            save_oauth_credential(platform="youtube", access_token=token)
-    except Exception:
-        pass
-
-
-def migrate_tiktok_token_from_file(token_file: Path) -> None:
-    """Auto-migrate TikTok token from tiktok_access_token.txt."""
-    if not token_file.exists():
-        return
-
-    with session_scope() as session:
-        existing = session.query(OAuthCredential).filter_by(platform="tiktok").first()
-
-    if existing:
-        return
-
-    try:
-        token = token_file.read_text().strip()
-        if token:
-            save_oauth_credential(platform="tiktok", access_token=token)
-    except Exception:
-        pass
-
-
-def migrate_pinterest_token_from_file(token_file: Path) -> None:
-    """Auto-migrate Pinterest token from pintrest_access_token.txt."""
-    if not token_file.exists():
-        return
-
-    with session_scope() as session:
-        existing = session.query(OAuthCredential).filter_by(platform="pinterest").first()
-
-    if existing:
-        return
-
-    try:
-        token = token_file.read_text().strip()
-        if token:
-            save_oauth_credential(platform="pinterest", access_token=token)
-    except Exception:
-        pass
-
-
-def migrate_all_oauth_from_files(state_dir: Path) -> None:
-    """Auto-migrate all OAuth tokens from legacy files to database.
-
-    Checks both data/ directory and kaymio/integrations/* directories.
+    Never touches access_token/refresh_token/etc. Creates the row if it
+    doesn't exist yet, so credentials can be entered before ever connecting.
     """
-    # Instagram: check both data/ and kaymio/integrations/instagram/
-    instagram_paths = [
-        state_dir / "instagram_token.json",
-        Path("kaymio/integrations/instagram/instagram_token.json"),
-    ]
-    for path in instagram_paths:
-        if path.exists():
-            migrate_instagram_token_from_json(path)
-            break
+    with session_scope() as session:
+        row = session.query(OAuthCredential).filter_by(platform=platform).first()
+        if row:
+            row.client_id = client_id
+            row.client_secret = client_secret
+        else:
+            row = OAuthCredential(platform=platform, client_id=client_id, client_secret=client_secret)
+            session.add(row)
+        session.commit()
 
-    # YouTube: check both data/ and kaymio/integrations/youtube/
-    youtube_paths = [
-        state_dir / "youtube_access_token.txt",
-        Path("kaymio/integrations/youtube/youtube_access_token.txt"),
-    ]
-    for path in youtube_paths:
-        if path.exists():
-            migrate_youtube_token_from_file(path)
-            break
+    return load_oauth_credential(platform) or {}
 
-    # TikTok: check both data/ and kaymio/integrations/tiktok/
-    tiktok_paths = [
-        state_dir / "tiktok_access_token.txt",
-        Path("kaymio/integrations/tiktok/tiktok_access_token.txt"),
-    ]
-    for path in tiktok_paths:
-        if path.exists():
-            migrate_tiktok_token_from_file(path)
-            break
 
-    # Pinterest: check both data/ and kaymio/integrations/pintrest/
-    pinterest_paths = [
-        state_dir / "pintrest_access_token.txt",
-        Path("kaymio/integrations/pintrest/pintrest_access_token.txt"),
-    ]
-    for path in pinterest_paths:
-        if path.exists():
-            migrate_pinterest_token_from_file(path)
-            break
+def get_platform_client_config(platform: str) -> Optional[Dict[str, Optional[str]]]:
+    """Return {'client_id':..., 'client_secret':...} for a platform, or None if unset."""
+    cred = load_oauth_credential(platform)
+    if not cred or not cred.get("client_id"):
+        return None
+    return {"client_id": cred["client_id"], "client_secret": cred.get("client_secret")}
+
+
+def clear_oauth_tokens(platform: str) -> bool:
+    """Clear only the token fields for a platform, preserving client_id/secret."""
+    with session_scope() as session:
+        row = session.query(OAuthCredential).filter_by(platform=platform).first()
+        if not row:
+            return False
+        row.access_token = None
+        row.refresh_token = None
+        row.expires_at = None
+        row.scope = None
+        row.raw_data = None
+        session.commit()
+        return True

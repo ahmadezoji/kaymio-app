@@ -40,30 +40,5 @@ else:
     print("No app_state.json snapshot found; starting with an empty database.")
 PY
 
-# Migrate OAuth tokens from JSON/TXT files to database (first-run, idempotent)
-python - <<'PY'
-from pathlib import Path
-from dotenv import load_dotenv
-
-load_dotenv('.env')
-
-from kaymio.database.db import session_scope
-from kaymio.database.models import OAuthCredential
-from kaymio.database.oauth import migrate_all_oauth_from_files
-
-with session_scope() as session:
-    token_count = session.query(OAuthCredential).count()
-
-if token_count > 0:
-    print(f"OAuth tokens already present ({token_count}); skipping token migration.")
-else:
-    state_dir = Path("data")
-    try:
-        migrate_all_oauth_from_files(state_dir)
-        print("OAuth tokens migrated from JSON/TXT files.")
-    except Exception as e:
-        print(f"Token migration skipped or failed: {e}")
-PY
-
 echo "Starting Kaymio app on port ${PORT:-8081}..."
 exec python run.py

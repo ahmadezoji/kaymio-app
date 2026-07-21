@@ -1,11 +1,7 @@
-"""Instagram state management (scheduler, media routes, comment replies) backed by database.
-
-Handles backward compatibility: auto-migrates from JSON files on first run.
-"""
+"""Instagram state management (scheduler, media routes, comment replies) backed by database."""
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import Any, Dict
 
 from .db import session_scope
@@ -52,27 +48,6 @@ def save_instagram_scheduler_state(state: Dict[str, Any]) -> None:
             )
             session.add(row)
         session.commit()
-
-
-def migrate_scheduler_state_from_json(json_file: Path) -> None:
-    """Auto-migrate from JSON file if DB is empty."""
-    if not json_file.exists():
-        return
-
-    with session_scope() as session:
-        existing = session.query(InstagramSchedulerState).filter_by(
-            key="instagram_story_scheduler"
-        ).first()
-
-    if existing:
-        return
-
-    try:
-        data = json.loads(json_file.read_text())
-        if isinstance(data, dict):
-            save_instagram_scheduler_state(data)
-    except Exception:
-        pass
 
 
 # ==============================================================================
@@ -151,25 +126,6 @@ def upsert_instagram_media_reply_route(media_id: str, route_data: Dict[str, Any]
         session.commit()
 
 
-def migrate_media_routes_from_json(json_file: Path) -> None:
-    """Auto-migrate from JSON file if DB is empty."""
-    if not json_file.exists():
-        return
-
-    with session_scope() as session:
-        existing = session.query(InstagramMediaReplyRoute).first()
-
-    if existing:
-        return
-
-    try:
-        data = json.loads(json_file.read_text())
-        if isinstance(data, dict):
-            save_instagram_media_reply_routes(data)
-    except Exception:
-        pass
-
-
 # ==============================================================================
 # Instagram Comment Reply States
 # ==============================================================================
@@ -233,20 +189,3 @@ def upsert_instagram_comment_reply_state(
     return state_data
 
 
-def migrate_comment_reply_states_from_json(json_file: Path) -> None:
-    """Auto-migrate from JSON file if DB is empty."""
-    if not json_file.exists():
-        return
-
-    with session_scope() as session:
-        existing = session.query(InstagramCommentReplyState).first()
-
-    if existing:
-        return
-
-    try:
-        data = json.loads(json_file.read_text())
-        if isinstance(data, dict):
-            save_instagram_comment_reply_states(data)
-    except Exception:
-        pass

@@ -12,7 +12,7 @@ from typing import Any, Dict, Optional
 
 import requests
 
-from .oauth import load_oauth_credential, save_oauth_credential
+from .oauth import get_platform_client_config, load_oauth_credential, save_oauth_credential
 
 logger = logging.getLogger(__name__)
 
@@ -48,10 +48,11 @@ def refresh_youtube_token(platform: str = "youtube") -> bool:
         logger.warning("No YouTube refresh token available")
         return False
 
-    client_id = os.getenv("YOUTUBE_CLIENT_ID")
-    client_secret = os.getenv("YOUTUBE_CLIENT_SECRET")
+    client_config = get_platform_client_config(platform) or {}
+    client_id = client_config.get("client_id") or os.getenv("YOUTUBE_CLIENT_ID")
+    client_secret = client_config.get("client_secret") or os.getenv("YOUTUBE_CLIENT_SECRET")
     if not client_id or not client_secret:
-        logger.warning("Missing YOUTUBE_CLIENT_ID or YOUTUBE_CLIENT_SECRET")
+        logger.warning("Missing YouTube client_id/client_secret (DB or env)")
         return False
 
     try:
@@ -178,7 +179,7 @@ def refresh_all_expiring_tokens() -> Dict[str, bool]:
 def get_token_status(platform: str) -> Dict[str, Any]:
     """Get current token status for a platform."""
     cred = load_oauth_credential(platform)
-    if not cred:
+    if not cred or not cred.get("access_token"):
         return {
             "platform": platform,
             "status": "not_configured",

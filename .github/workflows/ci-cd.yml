@@ -60,64 +60,22 @@ jobs:
           set -e
           cd "${DEPLOY_PATH}"
 
-          # Backup local token/credential files (they're generated locally, not from repo)
-          echo "Backing up local credentials..."
-          mkdir -p /tmp/kaymio-backup
-          ENV_BACKED_UP=false
-          for file in .env kaymio/integrations/instagram/instagram_token.json kaymio/integrations/youtube/youtube_access_token.txt kaymio/integrations/tiktok/tiktok_access_token.txt kaymio/integrations/pintrest/pintrest_access_token.txt; do
-            if [ -f "\$file" ]; then
-              cp "\$file" "/tmp/kaymio-backup/\$(basename \$file)" 2>/dev/null || true
-              [ "\$(basename \$file)" = ".env" ] && ENV_BACKED_UP=true
-            fi
-          done
-
-          # Remove conflicting files so git checkout can proceed
-          echo "Removing conflicting files for git checkout..."
-          git rm --cached kaymio/integrations/instagram/instagram_token.json kaymio/integrations/youtube/youtube_access_token.txt kaymio/integrations/tiktok/tiktok_access_token.txt kaymio/integrations/pintrest/pintrest_access_token.txt .env 2>/dev/null || true
-          rm -f kaymio/integrations/instagram/instagram_token.json kaymio/integrations/youtube/youtube_access_token.txt kaymio/integrations/tiktok/tiktok_access_token.txt kaymio/integrations/pintrest/pintrest_access_token.txt .env
-
-          # Update code
+          # .env and the legacy OAuth token files are gitignored/untracked,
+          # so a git checkout never touches or conflicts with them. Only
+          # discard local edits to *tracked* files (e.g. docker-compose.yml
+          # tweaked directly on the server) so checkout doesn't abort.
           echo "Pulling latest code..."
           git fetch --all --tags --prune
+          git checkout -- .
           git checkout "${DEPLOY_REF}"
 
-          # Restore local token/credential files from backup
-          echo "Restoring backed-up credentials..."
-          for file in /tmp/kaymio-backup/*; do
-            if [ -f "\$file" ]; then
-              case "\$(basename \$file)" in
-                instagram_token.json) cp "\$file" "kaymio/integrations/instagram/instagram_token.json" && echo "✓ Restored instagram_token.json" ;;
-                youtube_access_token.txt) cp "\$file" "kaymio/integrations/youtube/youtube_access_token.txt" && echo "✓ Restored youtube_access_token.txt" ;;
-                tiktok_access_token.txt) cp "\$file" "kaymio/integrations/tiktok/tiktok_access_token.txt" && echo "✓ Restored tiktok_access_token.txt" ;;
-                pintrest_access_token.txt) cp "\$file" "kaymio/integrations/pintrest/pintrest_access_token.txt" && echo "✓ Restored pintrest_access_token.txt" ;;
-                .env) cp "\$file" ".env" && echo "✓ Restored .env from backup" ;;
-              esac
-            fi
-          done
-
-          # Ensure .env exists (critical for Docker Compose)
+          # .env holds real secrets (WooCommerce, WordPress, OpenAI,
+          # Instagram, etc.) and must already exist on the server - never
+          # auto-generate a stripped placeholder here, since that silently
+          # wipes production credentials.
           if [ ! -f ".env" ]; then
-            echo "⚠ .env not found. Creating default..."
-            echo "DB_HOST=db" > .env
-            echo "DB_PORT=3306" >> .env
-            echo "DB_NAME=kaymio_dev" >> .env
-            echo "DB_USER=kaymio" >> .env
-            echo "DB_PASSWORD=kaymio" >> .env
-            echo "MYSQL_ROOT_PASSWORD=rootpass" >> .env
-            echo "MYSQL_DATABASE=kaymio_dev" >> .env
-            echo "FLASK_SECRET_KEY=dev-secret-key-change-in-production" >> .env
-            echo "FLASK_DEBUG=0" >> .env
-            echo "PORT=8081" >> .env
-            echo "INSTAGRAM_STORY_AUTOPUBLISH_ENABLED=1" >> .env
-            echo "INSTAGRAM_STORY_AUTOPUBLISH_TIME=11:50" >> .env
-            echo "INSTAGRAM_STORY_AUTOPUBLISH_COUNT=2" >> .env
-            echo "ADMIN_DEFAULT_USERNAME=admin" >> .env
-            echo "ADMIN_DEFAULT_PASSWORD=admin123" >> .env
-            echo "ADMIN_DEFAULT_EMAIL=admin@kaymio.com" >> .env
-            echo "STATE_DIR=data" >> .env
-            echo "✓ Default .env created"
-          else
-            echo "✓ .env exists"
+            echo "ERROR: .env is missing on the server. Restore the real .env before retrying the deploy."
+            exit 1
           fi
 
           # Deploy

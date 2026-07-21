@@ -6,7 +6,6 @@ import json
 import logging
 import os
 import re
-from pathlib import Path
 from typing import Dict, Iterable, Optional
 
 import requests
@@ -16,26 +15,8 @@ UPLOAD_URL = "https://www.googleapis.com/upload/youtube/v3/videos"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 
 
-def _read_token_file(path: Path) -> Optional[Dict[str, str]]:
-    try:
-        raw = path.read_text().strip()
-        if not raw:
-            return None
-        data = json.loads(raw)
-        if not isinstance(data, dict):
-            return None
-        return {
-            "access_token": str(data.get("access_token") or ""),
-            "refresh_token": str(data.get("refresh_token") or ""),
-        }
-    except FileNotFoundError:
-        return None
-    except json.JSONDecodeError:
-        return None
-
-
-def _persist_access_token_to_db(token: str, refresh_token: str) -> None:
-    """Save YouTube token to database (new approach)."""
+def _persist_access_token(token: str, refresh_token: str) -> None:
+    """Save YouTube token to the oauth_credentials table."""
     try:
         from kaymio.database.oauth import save_oauth_credential
         save_oauth_credential(
@@ -46,23 +27,6 @@ def _persist_access_token_to_db(token: str, refresh_token: str) -> None:
         )
     except Exception as e:
         logger.debug("Failed to persist YouTube token to DB: %s", e)
-
-
-def _persist_access_token(token: str, refresh_token: str) -> None:
-    """Save YouTube token to database and legacy files (for backward compat)."""
-    _persist_access_token_to_db(token, refresh_token)
-    # Also save to files for backward compatibility
-    module_path = Path(__file__).resolve().parent / "youtube_access_token.txt"
-    root_path = Path.cwd() / "youtube_access_token.txt"
-    payload = json.dumps({"access_token": token, "refresh_token": refresh_token})
-    try:
-        module_path.write_text(payload)
-    except Exception:
-        pass
-    try:
-        root_path.write_text(payload)
-    except Exception:
-        pass
 
 
 def _get_youtube_token_from_db() -> Optional[str]:
@@ -86,18 +50,9 @@ def _get_youtube_token_from_db() -> Optional[str]:
 
 
 def _get_youtube_token() -> str:
-    # Try database first
     db_token = _get_youtube_token_from_db()
     if db_token:
         return db_token
-
-    # Fall back to files for backward compatibility
-    module_token = _read_token_file(Path(__file__).resolve().parent / "youtube_access_token.txt")
-    if module_token and module_token.get("access_token"):
-        return module_token["access_token"]
-    root_token = _read_token_file(Path.cwd() / "youtube_access_token.txt")
-    if root_token and root_token.get("access_token"):
-        return root_token["access_token"]
     return refresh_youtube_access_token()
 
 
@@ -128,30 +83,29 @@ def _get_refresh_token_from_db() -> Optional[str]:
 
 
 def _get_refresh_token() -> Optional[str]:
-    # Try database first
-    db_token = _get_refresh_token_from_db()
-    if db_token:
-        return db_token
+    return _get_refresh_token_from_db()
 
-    # Fall back to files for backward compatibility
-    module_token = _read_token_file(Path(__file__).resolve().parent / "youtube_access_token.txt")
-    if module_token and module_token.get("refresh_token"):
-        return module_token["refresh_token"]
-    root_token = _read_token_file(Path.cwd() / "youtube_access_token.txt")
-    if root_token and root_token.get("refresh_token"):
-        return root_token["refresh_token"]
-    return None
+
+def _get_youtube_client_config() -> tuple[Optional[str], Optional[str]]:
+    """DB-first client_id/secret lookup (set via the Settings page), env-var fallback."""
+    try:
+        from kaymio.database.oauth import get_platform_client_config
+        config = get_platform_client_config("youtube")
+        if config:
+            return config.get("client_id"), config.get("client_secret")
+    except Exception as e:
+        logger.debug("Failed to load YouTube client config from DB: %s", e)
+    return os.getenv("YOUTUBE_CLIENT_ID"), os.getenv("YOUTUBE_CLIENT_SECRET")
 
 
 def refresh_youtube_access_token() -> str:
     """Exchange a stored refresh token for a short-lived access token."""
 
-    client_id = os.getenv("YOUTUBE_CLIENT_ID")
-    client_secret = os.getenv("YOUTUBE_CLIENT_SECRET")
+    client_id, client_secret = _get_youtube_client_config()
     refresh_token = _get_refresh_token()
     if not all([client_id, client_secret, refresh_token]):
         raise RuntimeError(
-            "Missing YOUTUBE_CLIENT_ID, YOUTUBE_CLIENT_SECRET, or YOUTUBE_REFRESH_TOKEN in environment"
+            "Missing YouTube client_id/client_secret (Settings page or env) or refresh_token"
         )
 
     payload = {
@@ -258,21 +212,6 @@ YOUTUBE_ANALYTICS_API = "https://youtubeanalytics.googleapis.com/v2/reports"
 YOUTUBE_VIDEOS_API = "https://www.googleapis.com/youtube/v3/videos"
 
 
-def _get_access_token_from_file() -> Optional[str]:
-    token_path = Path("youtube_access_token.txt")
-    try:
-        raw = token_path.read_text().strip()
-    except FileNotFoundError:
-        return None
-    if not raw:
-        return None
-    try:
-        data = json.loads(raw)
-        return data.get("access_token")
-    except json.JSONDecodeError:
-        return raw
-
-
 def _parse_iso8601_duration_seconds(duration: str) -> int:
     if not duration:
         return 0
@@ -320,7 +259,6 @@ def _fetch_video_metadata(token: str, video_ids: Iterable[str]) -> Dict[str, Dic
 
 
 def fetch_youtube_analytics(days: int = 28) -> Dict[str, object]:
-    # token = _get_access_token_from_file() or _get_youtube_token()
     token = _get_youtube_token()
     if not token:
         return {"error": "Missing YouTube access token."}

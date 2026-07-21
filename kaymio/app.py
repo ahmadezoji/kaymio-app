@@ -2,6 +2,7 @@ import base64
 import datetime as dt
 import json
 import os
+import shutil
 import sys
 import threading
 import time
@@ -15,6 +16,7 @@ from uuid import uuid4
 import requests
 from dotenv import load_dotenv
 from flask import Flask, abort, flash, jsonify, redirect, render_template, request, send_from_directory, url_for
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 from kaymio.integrations.amazon.amazon_api import build_affiliate_link, extract_asin, fetch_product_from_canopy
 from kaymio.utils.gemeni_api_helper import edit_image as edit_image_with_gemini, generate_video_from_image as generate_video_with_gemini
@@ -62,23 +64,23 @@ from kaymio.database import (
     save_app_state as db_save_app_state,
     save_product_entry as db_save_product_entry,
 )
+from kaymio.database.state_store import set_last_product_id as db_set_last_product_id
 from kaymio.database.instagram_state import (
     load_instagram_scheduler_state,
     save_instagram_scheduler_state,
-    migrate_scheduler_state_from_json,
     load_instagram_media_reply_routes,
     save_instagram_media_reply_routes,
     upsert_instagram_media_reply_route,
-    migrate_media_routes_from_json,
     load_instagram_comment_reply_states,
     save_instagram_comment_reply_states,
     upsert_instagram_comment_reply_state,
-    migrate_comment_reply_states_from_json,
 )
 from PIL import Image, ImageOps
 from kaymio.routes.analytics_view import analytics_bp
+from kaymio.routes.collections_view import collections_bp, collections_page_bp
 from kaymio.routes.file_manager_view import file_manager_bp
 from kaymio.routes.kaymio_wp_admin_view import kaymio_wp_admin_bp
+from kaymio.routes.settings_view import settings_bp
 from kaymio.widgets.story_qr_widget import (
     StoryCtaWidgetConfig,
     StoryQrWidgetConfig,
@@ -89,9 +91,15 @@ from kaymio.widgets.story_qr_widget import (
 load_dotenv()
 
 app = Flask(__name__)
+# Trust X-Forwarded-Proto/Host/For from the nginx reverse proxy in front of
+# this app, so url_for(_external=True) builds https:// URLs instead of http://.
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 app.register_blueprint(analytics_bp)
+app.register_blueprint(collections_bp)
+app.register_blueprint(collections_page_bp)
 app.register_blueprint(file_manager_bp)
 app.register_blueprint(kaymio_wp_admin_bp)
+app.register_blueprint(settings_bp)
 app.config["SECRET_KEY"] = os.getenv("FLASK_SECRET_KEY", "dev-secret-key")
 app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp"}
@@ -104,6 +112,30 @@ for directory in (ORIGINALS_DIR, GENERATED_DIR, VIDEOS_DIR):
     directory.mkdir(parents=True, exist_ok=True)
 STATE_DIR = Path(app.root_path) / "data"
 STATE_DIR.mkdir(parents=True, exist_ok=True)
+
+DISK_SPACE_WARNING_PERCENT = int(os.getenv("DISK_SPACE_WARNING_PERCENT", "85"))
+
+
+def _check_disk_space_warning() -> None:
+    """Flash + log a warning once disk usage crosses the threshold.
+
+    Generated images/videos are paid API calls; if the disk fills up the
+    write after generation silently has nowhere to go, so surface this
+    early instead of only finding out when a save fails.
+    """
+    try:
+        usage = shutil.disk_usage(STORAGE_ROOT)
+        used_percent = (usage.used / usage.total) * 100
+    except Exception:
+        return
+    if used_percent >= DISK_SPACE_WARNING_PERCENT:
+        free_gb = usage.free / (1024 ** 3)
+        message = (
+            f"Server disk is {used_percent:.0f}% full ({free_gb:.1f} GB free). "
+            "Generated images/videos may fail to save until space is freed."
+        )
+        app.logger.warning(message)
+        flash(message, "error")
 MARKET_OPTIONS = [
     "Shein",
     "Amazon",
@@ -121,6 +153,7 @@ VIDEO_GENERATION_OPTIONS = build_video_generation_options()
 VIDEO_DURATION_DEFAULT = 8
 VIDEO_DURATION_MIN = 4
 VIDEO_DURATION_MAX = 60
+PUBLIC_APP_BASE_URL = os.getenv("PUBLIC_APP_BASE_URL", "").rstrip("/")
 STORY_AUTOPUBLISH_TIME = os.getenv("INSTAGRAM_STORY_AUTOPUBLISH_TIME", "11:45")
 STORY_AUTOPUBLISH_COUNT = int(os.getenv("INSTAGRAM_STORY_AUTOPUBLISH_COUNT", "2"))
 STORY_AUTOPUBLISH_ENABLED = os.getenv("INSTAGRAM_STORY_AUTOPUBLISH_ENABLED", "1") in TRUTHY_VALUES
@@ -495,6 +528,22 @@ def _scheduled_story_candidates() -> List[Dict[str, str]]:
     return candidates
 
 
+def _build_public_media_url(relative_path: str) -> str:
+    """Build an externally-reachable /media/ URL for the scheduler thread.
+
+    The scheduler runs outside any Flask request, so url_for(_external=True)
+    has no request/host to build from and raises RuntimeError. PUBLIC_APP_BASE_URL
+    must be set to this app's publicly reachable origin for scheduled stories to
+    include the composed image (CTA/QR) instead of falling back to the raw product photo.
+    """
+    if not PUBLIC_APP_BASE_URL:
+        raise RuntimeError(
+            "PUBLIC_APP_BASE_URL is not configured; cannot build a public media URL "
+            "from the background scheduler."
+        )
+    return f"{PUBLIC_APP_BASE_URL}/media/{relative_path}"
+
+
 def _publish_scheduled_instagram_stories() -> None:
     posted = 0
     print("DEBUG: Getting WooCommerce candidates for scheduled stories", file=sys.stderr, flush=True)
@@ -536,7 +585,7 @@ def _publish_scheduled_instagram_stories() -> None:
                         cta_config=STORY_CTA_WIDGET_CONFIG,
                     )
                     relative_path = save_generated_image(story_image)
-                    image_url = url_for("serve_media", filename=relative_path, _external=True)
+                    image_url = _build_public_media_url(relative_path)
                 except Exception:
                     app.logger.exception("Unable to compose scheduled story image with CTA + affiliate QR.")
             elif compose_source:
@@ -549,7 +598,7 @@ def _publish_scheduled_instagram_stories() -> None:
                         config=STORY_CTA_WIDGET_CONFIG,
                     )
                     relative_path = save_generated_image(story_image)
-                    image_url = url_for("serve_media", filename=relative_path, _external=True)
+                    image_url = _build_public_media_url(relative_path)
                 except Exception:
                     app.logger.exception("Unable to compose scheduled story image with CTA.")
             
@@ -2422,6 +2471,7 @@ def refresh_token_endpoint():
 
 @app.route("/", methods=["GET"])
 def home() -> str:
+    _check_disk_space_warning()
     state = load_app_state()
     last_product_id = state.get("last_product_id") or ""
     saved_state = state.get("products", {}).get(last_product_id, {})
@@ -2476,11 +2526,11 @@ def reset_platform():
 def select_product():
     raw_form_values = collect_form_values(request.form)
     selected_product = (raw_form_values.get("product_id") or "").strip()
-    state = load_app_state()
-    products = state.get("products") or {}
-    if selected_product and selected_product in products:
-        state["last_product_id"] = selected_product
-        save_app_state(state)
+    if selected_product:
+        state = load_app_state()
+        products = state.get("products") or {}
+        if selected_product in products:
+            db_set_last_product_id(selected_product)
     return redirect(url_for("home"))
 
 
@@ -2620,6 +2670,7 @@ def upload_product_image():
 
 @app.route("/generate-pinterest", methods=["POST"])
 def generate_pinterest():
+    _check_disk_space_warning()
     raw_form_values = collect_form_values(request.form)
     original_image_path = raw_form_values.pop("original_image_path", "")
     form_values = dict(raw_form_values)
@@ -3051,6 +3102,7 @@ def publish_pinterest_video():
 
 @app.route("/generate-instagram-image", methods=["POST"])
 def generate_instagram_image():
+    _check_disk_space_warning()
     raw_form_values = collect_form_values(request.form)
     form_values = extract_form_defaults(raw_form_values)
     form_values["image_generation_model"] = normalize_image_generation_model(
@@ -3246,6 +3298,27 @@ def publish_instagram():
         return render_home_view(form_values, preview_payload, product_id=product_id)
 
     return redirect_home_view()
+
+
+@app.route("/data-deletion", methods=["GET"])
+def data_deletion_instructions():
+    return """<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Data Deletion – Kaymio</title>
+<style>body{font-family:sans-serif;max-width:640px;margin:60px auto;padding:0 20px;color:#333}
+h1{font-size:1.4rem}p{line-height:1.6}</style></head>
+<body>
+<h1>Data Deletion Instructions</h1>
+<p>Kaymio affiliate app does not store personal data from Facebook or Instagram users beyond what is
+required to operate the connected business account (access tokens and account IDs used solely for
+publishing content to the connected Instagram Business profile).</p>
+<p>To request deletion of any data associated with your account, please send an email to
+<a href="mailto:salemikimia@gmail.com">salemikimia@gmail.com</a> with the subject line
+<strong>Data Deletion Request</strong>. We will process your request within 30 days.</p>
+<p>Alternatively, disconnecting the app from your Facebook/Instagram account via
+<em>Facebook Settings &rarr; Apps and Websites</em> will immediately revoke all access tokens,
+after which no further data is accessible.</p>
+</body></html>""", 200, {"Content-Type": "text/html"}
 
 
 @app.route("/webhooks/instagram", methods=["GET"])
@@ -3532,6 +3605,7 @@ def publish_website():
 
 @app.route("/generate-video/<platform>", methods=["POST"])
 def generate_platform_video(platform: str):
+    _check_disk_space_warning()
     supported = {"youtube", "tiktok", "instagram", "pinterest"}
     target = platform.lower()
     if target not in supported:
@@ -3892,6 +3966,13 @@ def publish_youtube():
             preview_payload["youtube_description"] = description
             preview_payload["youtube_keywords"] = keywords
             preview_payload["youtube_keywords_payload"] = json.dumps(keywords or [])
+
+    # Append affiliate or product link so YouTube auto-links it in the description
+    affiliate_link = str(form_values.get("affiliate_link") or "").strip()
+    product_url = str(form_values.get("product_url") or "").strip()
+    link_to_append = (affiliate_link if use_affiliate_link_flag and affiliate_link else product_url)
+    if link_to_append:
+        description = f"{description}\n\n🛒 Shop here: {link_to_append}"
 
     try:
         response = publish_short_video(

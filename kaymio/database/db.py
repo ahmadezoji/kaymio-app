@@ -65,16 +65,37 @@ def session_scope() -> Iterator[Session]:
         session.close()
 
 
+def _ensure_columns(table_name: str, column_specs: dict[str, str]) -> None:
+    """Idempotently add missing columns to an already-existing table.
+
+    create_all() only creates missing tables, never adds columns to ones that
+    already exist, so a column added to a model after a table has shipped to
+    a live database needs this instead. Safe to call on every boot.
+    """
+    from sqlalchemy import inspect, text
+
+    engine = get_engine()
+    inspector = inspect(engine)
+    if table_name not in inspector.get_table_names():
+        return  # create_all() will create it fresh with all columns already.
+    existing_columns = {col["name"] for col in inspector.get_columns(table_name)}
+    with engine.begin() as conn:
+        for column_name, ddl_type in column_specs.items():
+            if column_name in existing_columns:
+                continue
+            logger.info("Adding missing column %s.%s", table_name, column_name)
+            conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {ddl_type}"))
+
+
 def init_db() -> None:
     """Create all tables (if missing) and seed the default admin + app_meta."""
     # Import models so they register on Base.metadata before create_all.
     from . import models  # noqa: F401
 
     Base.metadata.create_all(bind=get_engine())
+    _ensure_columns("oauth_credentials", {"client_id": "TEXT", "client_secret": "TEXT"})
     _seed_default_admin()
-    _migrate_instagram_states_from_json()
-    _migrate_oauth_credentials_from_files()
-    logger.info("Database initialised (tables ensured, admin seeded, migrations completed).")
+    logger.info("Database initialised (tables ensured, admin seeded).")
 
 
 def _seed_default_admin() -> None:
@@ -103,40 +124,3 @@ def _seed_default_admin() -> None:
         logger.info("Seeded default admin user '%s'.", username)
 
 
-def _migrate_instagram_states_from_json() -> None:
-    """Auto-migrate Instagram state files from JSON to database on first run."""
-    from pathlib import Path
-
-    from .instagram_state import (
-        migrate_scheduler_state_from_json,
-        migrate_media_routes_from_json,
-        migrate_comment_reply_states_from_json,
-    )
-
-    state_dir = Path(os.getenv("STATE_DIR", "data"))
-    if not state_dir.exists():
-        return
-
-    try:
-        migrate_scheduler_state_from_json(state_dir / "instagram_story_scheduler.json")
-        migrate_media_routes_from_json(state_dir / "instagram_story_routes.json")
-        migrate_comment_reply_states_from_json(state_dir / "instagram_comment_reply_state.json")
-    except Exception as e:
-        logger.warning("Instagram state migration encountered an error: %s", e)
-
-
-def _migrate_oauth_credentials_from_files() -> None:
-    """Auto-migrate OAuth tokens from JSON/TXT files to database on first run."""
-    from pathlib import Path
-
-    from .oauth import migrate_all_oauth_from_files
-
-    state_dir = Path(os.getenv("STATE_DIR", "data"))
-    if not state_dir.exists():
-        state_dir = Path(".")
-
-    try:
-        migrate_all_oauth_from_files(state_dir)
-        logger.info("OAuth credentials migration completed")
-    except Exception as e:
-        logger.warning("OAuth credentials migration encountered an error: %s", e)

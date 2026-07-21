@@ -203,6 +203,60 @@ class InstagramCommentReplyState(Base):
     updated_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
 
 
+class Collection(Base):
+    """An Instagram FEED collection (e.g. "Summer Seaside") with a WordPress landing page."""
+
+    __tablename__ = "collections"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(191))
+    slug: Mapped[str] = mapped_column(String(191), unique=True, index=True)
+    description: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(32), default="draft")  # draft | published
+
+    # AI-generated content
+    caption: Mapped[str | None] = mapped_column(Text)
+    hashtags: Mapped[str | None] = mapped_column(Text)  # JSON-encoded list
+    landing_page_html: Mapped[str | None] = mapped_column(Text)
+
+    # Publish results
+    wordpress_page_id: Mapped[str | None] = mapped_column(String(191))
+    wordpress_page_url: Mapped[str | None] = mapped_column(Text)
+    instagram_media_id: Mapped[str | None] = mapped_column(String(191))
+    published_at: Mapped[dt.datetime | None] = mapped_column(DateTime)
+
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow)
+    updated_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+    products: Mapped[List["CollectionProduct"]] = relationship(
+        back_populates="collection",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="CollectionProduct.position",
+    )
+
+
+class CollectionProduct(Base):
+    """A WooCommerce product selected for a collection."""
+
+    __tablename__ = "collection_products"
+    __table_args__ = (
+        UniqueConstraint("collection_id", "wc_product_id", name="uq_collection_product"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    collection_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("collections.id", ondelete="CASCADE"), index=True
+    )
+    wc_product_id: Mapped[int] = mapped_column(Integer)
+    title: Mapped[str | None] = mapped_column(Text)
+    product_url: Mapped[str | None] = mapped_column(Text)
+    image_url: Mapped[str | None] = mapped_column(Text)
+    position: Mapped[int] = mapped_column(Integer, default=0)
+
+    collection: Mapped["Collection"] = relationship(back_populates="products")
+
+
 class OAuthCredential(Base):
     """OAuth tokens for external platforms (Instagram, YouTube, TikTok, Pinterest, etc.)."""
 
@@ -210,6 +264,8 @@ class OAuthCredential(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     platform: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    client_id: Mapped[str | None] = mapped_column(Text)
+    client_secret: Mapped[str | None] = mapped_column(Text)
     access_token: Mapped[str | None] = mapped_column(Text)
     refresh_token: Mapped[str | None] = mapped_column(Text)
     token_type: Mapped[str] = mapped_column(String(32), default="bearer")
