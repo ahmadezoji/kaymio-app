@@ -74,6 +74,7 @@ from kaymio.database.instagram_state import (
     load_instagram_comment_reply_states,
     save_instagram_comment_reply_states,
     upsert_instagram_comment_reply_state,
+    prune_old_story_reply_routes,
 )
 from PIL import Image, ImageOps
 from kaymio.routes.analytics_view import analytics_bp
@@ -544,7 +545,33 @@ def _build_public_media_url(relative_path: str) -> str:
     return f"{PUBLIC_APP_BASE_URL}/media/{relative_path}"
 
 
+def _cleanup_stale_generated_images(max_age_seconds: int = 86400) -> None:
+    """Delete files in GENERATED_DIR older than max_age_seconds (safety net for missed cleanups)."""
+    cutoff = dt.datetime.utcnow().timestamp() - max_age_seconds
+    try:
+        for f in GENERATED_DIR.iterdir():
+            if f.is_file() and f.stat().st_mtime < cutoff:
+                try:
+                    f.unlink()
+                    app.logger.info("Pruned stale generated image: %s", f.name)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+
 def _publish_scheduled_instagram_stories() -> None:
+    # Prune old story reply routes (Instagram Stories expire after 24 h)
+    try:
+        pruned = prune_old_story_reply_routes(max_age_hours=24)
+        if pruned:
+            app.logger.info("Pruned %d expired story reply routes.", pruned)
+    except Exception:
+        app.logger.exception("Failed to prune old story reply routes.")
+
+    # Safety-net: delete generated images older than 24 h that slipped through earlier runs
+    _cleanup_stale_generated_images(max_age_seconds=86400)
+
     posted = 0
     print("DEBUG: Getting WooCommerce candidates for scheduled stories", file=sys.stderr, flush=True)
     candidates = _scheduled_story_candidates_from_website()
@@ -556,6 +583,7 @@ def _publish_scheduled_instagram_stories() -> None:
     random.shuffle(candidates)
     used_products: set[str] = set()
     while posted < STORY_AUTOPUBLISH_COUNT:
+        _story_tmp_path: Optional[Path] = None
         try:
             candidate = None
             for item in candidates:
@@ -585,6 +613,7 @@ def _publish_scheduled_instagram_stories() -> None:
                         cta_config=STORY_CTA_WIDGET_CONFIG,
                     )
                     relative_path = save_generated_image(story_image)
+                    _story_tmp_path = STORAGE_ROOT / relative_path
                     image_url = _build_public_media_url(relative_path)
                 except Exception:
                     app.logger.exception("Unable to compose scheduled story image with CTA + affiliate QR.")
@@ -598,10 +627,11 @@ def _publish_scheduled_instagram_stories() -> None:
                         config=STORY_CTA_WIDGET_CONFIG,
                     )
                     relative_path = save_generated_image(story_image)
+                    _story_tmp_path = STORAGE_ROOT / relative_path
                     image_url = _build_public_media_url(relative_path)
                 except Exception:
                     app.logger.exception("Unable to compose scheduled story image with CTA.")
-            
+
             print(f"DEBUG: Publishing story with image_url={image_url}, affiliate_link={affiliate_link}", file=sys.stderr, flush=True)
             response = publish_instagram_story(
                 image_url=image_url,
@@ -615,20 +645,6 @@ def _publish_scheduled_instagram_stories() -> None:
                 _register_story_reply_route(str(media_id), candidate)
                 print(f"DEBUG: Registered story reply route for media_id={media_id}", file=sys.stderr, flush=True)
 
-            # Clean up temporary story image from server (stories are temporary, no need to persist)
-            try:
-                # Extract relative path from full URL (e.g., "generated/filename.png" from "http://server:8081/media/generated/filename.png")
-                if "/media/" in image_url:
-                    relative_path = image_url.split("/media/", 1)[1]
-                    full_path = STORAGE_ROOT / relative_path
-                    if full_path.exists():
-                        full_path.unlink()
-                        print(f"DEBUG: Deleted temporary story image: {relative_path}", file=sys.stderr, flush=True)
-                        app.logger.info("Deleted temporary story image: %s", relative_path)
-            except Exception as e:
-                print(f"DEBUG: Failed to delete story image: {e}", file=sys.stderr, flush=True)
-                app.logger.warning("Failed to delete story image: %s", e)
-
             print(f"Scheduled story publish response: {response}")
             app.logger.info("Scheduled Instagram story published: %s", response)
             posted += 1
@@ -639,6 +655,14 @@ def _publish_scheduled_instagram_stories() -> None:
             traceback.print_exc(file=sys.stderr)
             app.logger.exception("Scheduled Instagram story publish failed: %s", exc)
             break
+        finally:
+            # Always delete the locally composed image — it's only needed while Instagram fetches it
+            if _story_tmp_path and _story_tmp_path.exists():
+                try:
+                    _story_tmp_path.unlink()
+                    app.logger.info("Deleted temporary story image: %s", _story_tmp_path.name)
+                except Exception as e:
+                    app.logger.warning("Failed to delete story image: %s", e)
 
 
 def _find_nested_value(payload: Any, target_keys: set[str]) -> Optional[str]:

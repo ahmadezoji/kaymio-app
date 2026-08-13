@@ -1,6 +1,7 @@
 """Instagram state management (scheduler, media routes, comment replies) backed by database."""
 from __future__ import annotations
 
+import datetime as dt
 import json
 from typing import Any, Dict
 
@@ -124,6 +125,22 @@ def upsert_instagram_media_reply_route(media_id: str, route_data: Dict[str, Any]
             session.add(row)
 
         session.commit()
+
+
+def prune_old_story_reply_routes(max_age_hours: int = 24) -> int:
+    """Delete story reply routes older than max_age_hours. Returns number of deleted rows."""
+    cutoff = dt.datetime.utcnow() - dt.timedelta(hours=max_age_hours)
+    with session_scope() as session:
+        deleted = (
+            session.query(InstagramMediaReplyRoute)
+            .filter(
+                InstagramMediaReplyRoute.reply_surface == "story",
+                InstagramMediaReplyRoute.created_at < cutoff,
+            )
+            .delete(synchronize_session=False)
+        )
+        session.commit()
+    return deleted
 
 
 # ==============================================================================
