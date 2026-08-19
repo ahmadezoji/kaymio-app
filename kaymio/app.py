@@ -162,6 +162,7 @@ STORY_AUTOPUBLISH_STATE_FILE = STATE_DIR / "instagram_story_scheduler.json"
 INSTAGRAM_MEDIA_REPLY_ROUTE_FILE = STATE_DIR / "instagram_story_routes.json"
 INSTAGRAM_COMMENT_REPLY_STATE_FILE = STATE_DIR / "instagram_comment_reply_state.json"
 INSTAGRAM_WEBHOOK_VERIFY_TOKEN = os.getenv("INSTAGRAM_WEBHOOK_VERIFY_TOKEN", "")
+INSTAGRAM_WEBHOOK_RELAY_URL = os.getenv("INSTAGRAM_WEBHOOK_RELAY_URL", "")
 INSTAGRAM_PUBLIC_COMMENT_REPLY_ENABLED = (
     os.getenv("INSTAGRAM_PUBLIC_COMMENT_REPLY_ENABLED", "1") in TRUTHY_VALUES
 )
@@ -3401,6 +3402,20 @@ def receive_instagram_webhook():
                 _handle_instagram_comment_change(change)
             except Exception:
                 app.logger.exception("Instagram comment webhook handler failed.")
+    if INSTAGRAM_WEBHOOK_RELAY_URL:
+        try:
+            import threading
+            raw_body = request.get_data()
+            headers = {k: v for k, v in request.headers if k.lower() in
+                       ("content-type", "x-hub-signature", "x-hub-signature-256")}
+            def _relay():
+                try:
+                    requests.post(INSTAGRAM_WEBHOOK_RELAY_URL, data=raw_body, headers=headers, timeout=10)
+                except Exception as relay_err:
+                    app.logger.warning("Webhook relay to %s failed: %s", INSTAGRAM_WEBHOOK_RELAY_URL, relay_err)
+            threading.Thread(target=_relay, daemon=True).start()
+        except Exception:
+            app.logger.exception("Failed to start webhook relay thread.")
     return {"status": "ok"}, 200
 
 
