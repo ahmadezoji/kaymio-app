@@ -1,14 +1,16 @@
+import os
 import re
 import requests
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 # ============ CONFIGURATION =============
 
-CANOPY_API_KEY = "0f4b7573-08b4-4e7f-b771-fe75e16535fb"
+CANOPY_API_KEY = os.getenv("CANOPY_API_KEY")
 CANOPY_REST_ENDPOINT = "https://rest.canopyapi.co/api/amazon/product"
+CANOPY_SEARCH_ENDPOINT = "https://rest.canopyapi.co/api/amazon/search"
 
 
-STORE_ID = "kaymio09-20"
+STORE_ID = os.getenv("AMAZON_ASSOCIATE_TAG", "kaymio09-20")
 
 
 # ============ HELPERS =============
@@ -161,6 +163,54 @@ def fetch_product_from_canopy(
         "description": description,
         "price": price
     }
+
+
+def search_amazon_products(
+    search_term: str,
+    ship_to_country: str = "US",
+    limit: int = 5,
+) -> List[Dict[str, Any]]:
+    """Search Amazon (via Canopy) for products matching a keyword/theme.
+
+    Used to auto-curate a collection from a name/description instead of a
+    single known ASIN. Returns normalized dicts with asin/title/image_url/
+    product_url/price/affiliate_link.
+    """
+    headers = {"API-KEY": CANOPY_API_KEY}
+    marketplace = _normalize_canopy_marketplace(ship_to_country)
+    # Ask Canopy for a few extra results so de-duping repeated ASINs (seen in
+    # practice) still leaves enough distinct products to fill `limit`.
+    params = {"searchTerm": search_term, "domain": marketplace, "limit": max(limit * 2, 10)}
+    resp = requests.get(CANOPY_SEARCH_ENDPOINT, headers=headers, params=params, timeout=20)
+    if resp.status_code != 200:
+        raise Exception(f"Canopy search API error: {resp.status_code} / {resp.text}")
+    payload = resp.json()
+
+    results = (
+        ((payload.get("data") or {}).get("amazonProductSearchResults") or {})
+        .get("productResults", {})
+        .get("results", [])
+    ) or []
+
+    products: List[Dict[str, Any]] = []
+    seen_asins = set()
+    for item in results:
+        asin = item.get("asin")
+        if not asin or asin in seen_asins:
+            continue
+        seen_asins.add(asin)
+        price = (item.get("price") or {}).get("display") or ""
+        products.append({
+            "asin": asin,
+            "title": item.get("title") or "",
+            "image_url": item.get("mainImageUrl") or "",
+            "product_url": item.get("url") or "",
+            "price": price,
+            "affiliate_link": build_affiliate_link(asin),
+        })
+        if len(products) >= limit:
+            break
+    return products
 
 
 def fetch_amazon_product_details(asin: str,ship_to_country:str) -> dict:

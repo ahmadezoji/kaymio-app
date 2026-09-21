@@ -213,6 +213,7 @@ class Collection(Base):
     slug: Mapped[str] = mapped_column(String(191), unique=True, index=True)
     description: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(32), default="draft")  # draft | published
+    product_source: Mapped[str] = mapped_column(String(16), default="woocommerce")  # woocommerce | amazon
 
     # AI-generated content
     caption: Mapped[str | None] = mapped_column(Text)
@@ -237,21 +238,25 @@ class Collection(Base):
 
 
 class CollectionProduct(Base):
-    """A WooCommerce product selected for a collection."""
+    """A product selected for a collection, sourced from WooCommerce or Amazon."""
 
     __tablename__ = "collection_products"
     __table_args__ = (
-        UniqueConstraint("collection_id", "wc_product_id", name="uq_collection_product"),
+        UniqueConstraint("collection_id", "source", "external_id", name="uq_collection_product_source"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     collection_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("collections.id", ondelete="CASCADE"), index=True
     )
-    wc_product_id: Mapped[int] = mapped_column(Integer)
+    source: Mapped[str] = mapped_column(String(16), default="woocommerce")  # woocommerce | amazon
+    external_id: Mapped[str] = mapped_column(String(64), default="")  # wc product id or ASIN
+    wc_product_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # legacy column, kept for old rows
     title: Mapped[str | None] = mapped_column(Text)
     product_url: Mapped[str | None] = mapped_column(Text)
     image_url: Mapped[str | None] = mapped_column(Text)
+    price: Mapped[str | None] = mapped_column(String(64))
+    affiliate_link: Mapped[str | None] = mapped_column(Text)
     position: Mapped[int] = mapped_column(Integer, default=0)
 
     collection: Mapped["Collection"] = relationship(back_populates="products")

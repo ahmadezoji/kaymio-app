@@ -94,8 +94,32 @@ def init_db() -> None:
 
     Base.metadata.create_all(bind=get_engine())
     _ensure_columns("oauth_credentials", {"client_id": "TEXT", "client_secret": "TEXT"})
+    _ensure_columns("collections", {"product_source": "VARCHAR(16) NOT NULL DEFAULT 'woocommerce'"})
+    _ensure_columns("collection_products", {
+        "source": "VARCHAR(16) NOT NULL DEFAULT 'woocommerce'",
+        "external_id": "VARCHAR(64) NOT NULL DEFAULT ''",
+        "price": "VARCHAR(64)",
+        "affiliate_link": "TEXT",
+    })
+    _backfill_collection_product_external_id()
     _seed_default_admin()
     logger.info("Database initialised (tables ensured, admin seeded).")
+
+
+def _backfill_collection_product_external_id() -> None:
+    """One-time backfill: copy the legacy wc_product_id column into external_id.
+
+    Safe to run on every boot -- the WHERE clause only matches rows from
+    before the source/external_id columns existed.
+    """
+    from sqlalchemy import text
+
+    with session_scope() as session:
+        session.execute(text(
+            "UPDATE collection_products "
+            "SET external_id = CAST(wc_product_id AS CHAR), source = 'woocommerce' "
+            "WHERE (external_id IS NULL OR external_id = '') AND wc_product_id IS NOT NULL"
+        ))
 
 
 def _seed_default_admin() -> None:

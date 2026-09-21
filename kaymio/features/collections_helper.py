@@ -65,12 +65,71 @@ def find_related_products(collection_name: str, description: str = "", limit: in
     for _score, product in scored[:limit]:
         images = product.get("images") or []
         matches.append({
-            "wc_product_id": product.get("id"),
+            "source": "woocommerce",
+            "external_id": str(product.get("id")),
             "title": product.get("name"),
             "product_url": product.get("permalink"),
             "image_url": images[0].get("src") if images else None,
         })
     return matches
+
+
+def find_related_amazon_products(collection_name: str, description: str = "", limit: int = 5) -> List[Dict[str, Any]]:
+    """Search Amazon (via Canopy) for the top `limit` matches to a collection definition.
+
+    Amazon's search effectively requires every word in a query to match, so a
+    single query built from every keyword in a multi-theme collection (e.g.
+    "Beach, Glass, Sun cream") returns nothing. Instead each comma-separated
+    theme is searched separately (falling back to the collection name alone),
+    and results are merged/de-duplicated up to `limit`.
+    """
+    from kaymio.integrations.amazon.amazon_api import search_amazon_products
+
+    themes = [theme.strip() for theme in re.split(r"[,;/]|\band\b", description) if theme.strip()]
+    queries = list(dict.fromkeys(themes + [collection_name.strip()]))
+    queries = [q for q in queries if q]
+    if not queries:
+        return []
+
+    per_query_limit = max(2, -(-limit // len(queries)))  # ceil(limit / len(queries)), at least 2
+
+    seen_asins = set()
+    matches: List[Dict[str, Any]] = []
+    for query in queries:
+        if len(matches) >= limit:
+            break
+        try:
+            results = search_amazon_products(query, limit=per_query_limit)
+        except Exception:
+            logger.exception("Amazon product search failed for %r", query)
+            continue
+        for product in results:
+            asin = product["asin"]
+            if asin in seen_asins:
+                continue
+            seen_asins.add(asin)
+            matches.append({
+                "source": "amazon",
+                "external_id": asin,
+                "title": product.get("title"),
+                "product_url": product.get("affiliate_link") or product.get("product_url"),
+                "image_url": product.get("image_url"),
+                "price": product.get("price"),
+                "affiliate_link": product.get("affiliate_link"),
+            })
+            if len(matches) >= limit:
+                break
+
+    return matches[:limit]
+
+
+def find_related_products_by_source(
+    product_source: str, collection_name: str, description: str = "", limit: int = 5
+) -> List[Dict[str, Any]]:
+    """Dispatch to the WooCommerce or Amazon product finder based on `product_source`."""
+    if product_source == "amazon":
+        return find_related_amazon_products(collection_name, description, limit=limit)
+    return find_related_products(collection_name, description, limit=limit)
 
 
 def generate_collection_metadata(collection_name: str, description: str, products: List[Dict[str, Any]]) -> Dict[str, Any]:

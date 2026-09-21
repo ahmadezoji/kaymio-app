@@ -166,6 +166,21 @@
         padding: 6px 8px;
         text-align: center;
       }
+      .product-card .psource {
+        font-size: 0.65rem;
+        padding: 0 8px 6px;
+        text-align: center;
+        color: #64748b;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+      }
+      .source-toggle {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        cursor: pointer;
+      }
+      .source-toggle input { width: auto; }
       .section { margin-bottom: 20px; }
       .hashtags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
       .hashtag {
@@ -221,7 +236,7 @@
       <div class="toolbar">
         <div>
           <h1>Instagram Collections</h1>
-          <p class="muted">Curate WooCommerce products into an Instagram carousel + landing page.</p>
+          <p class="muted">Curate products from our store or Amazon into an Instagram carousel + landing page.</p>
         </div>
         <a class="btn" href="{{ url_for('home') }}">Back</a>
       </div>
@@ -239,6 +254,12 @@
             <div class="field">
               <label for="new-description">Description / theme</label>
               <textarea id="new-description" placeholder="Describe the theme so we can match related products (e.g. beach essentials, swimwear, coastal home decor)"></textarea>
+            </div>
+            <div class="field">
+              <label class="source-toggle">
+                <input type="checkbox" id="new-source-amazon" />
+                Source products from Amazon instead of our store
+              </label>
             </div>
             <button class="btn btn-primary" id="create-btn">Create draft</button>
           </div>
@@ -324,10 +345,12 @@
         const img = p.image_url
           ? `<img src="${esc(p.image_url)}" alt="${esc(p.title || "")}" />`
           : '<div style="aspect-ratio:1/1;background:#1f2937;"></div>';
+        const sourceLabel = p.source === "amazon" ? "Amazon" : "Store";
         return `
           <a class="product-card" href="${esc(p.product_url || "#")}" target="_blank" rel="noopener">
             ${img}
             <div class="ptitle">${esc(p.title || "")}</div>
+            <div class="psource">${sourceLabel}${p.price ? ` · ${esc(p.price)}` : ""}</div>
           </a>
         `;
       }
@@ -387,7 +410,16 @@
           </div>
 
           <div class="section">
-            <h2>Products (top 5 related)</h2>
+            <div class="field">
+              <label class="source-toggle">
+                <input type="checkbox" id="detail-source-amazon" ${c.product_source === "amazon" ? "checked" : ""} />
+                Source products from Amazon instead of our store
+              </label>
+            </div>
+          </div>
+
+          <div class="section">
+            <h2>Products (top 5 related — ${c.product_source === "amazon" ? "Amazon" : "our store"})</h2>
             ${productsHtml}
           </div>
 
@@ -449,11 +481,19 @@
       }
 
       async function generateCollection(id) {
-        setStatus("Finding related products and generating content (this can take a minute)...", true);
+        const sourceCheckbox = document.getElementById("detail-source-amazon");
+        const productSource = sourceCheckbox && sourceCheckbox.checked ? "amazon" : "woocommerce";
+        setStatus(
+          `Finding related ${productSource === "amazon" ? "Amazon" : "store"} products and generating content (this can take a minute)...`,
+          true
+        );
         document.getElementById("generate-btn").disabled = true;
         document.getElementById("publish-btn").disabled = true;
         try {
-          const data = await api(`${API_BASE}/${id}/generate`, { method: "POST", body: JSON.stringify({}) });
+          const data = await api(`${API_BASE}/${id}/generate`, {
+            method: "POST",
+            body: JSON.stringify({ product_source: productSource }),
+          });
           renderDetail(data.collection);
           await loadCollections();
           flash("Content generated.", "success");
@@ -507,14 +547,19 @@
       document.getElementById("create-btn").addEventListener("click", async () => {
         const name = document.getElementById("new-name").value.trim();
         const description = document.getElementById("new-description").value.trim();
+        const productSource = document.getElementById("new-source-amazon").checked ? "amazon" : "woocommerce";
         if (!name) {
           flash("Please enter a collection name.", "error");
           return;
         }
         try {
-          const data = await api(API_BASE, { method: "POST", body: JSON.stringify({ name, description }) });
+          const data = await api(API_BASE, {
+            method: "POST",
+            body: JSON.stringify({ name, description, product_source: productSource }),
+          });
           document.getElementById("new-name").value = "";
           document.getElementById("new-description").value = "";
+          document.getElementById("new-source-amazon").checked = false;
           await loadCollections();
           openCollection(data.collection.id);
           flash("Draft created.", "success");

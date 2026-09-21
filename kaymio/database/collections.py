@@ -36,6 +36,7 @@ def _collection_to_dict(row: Collection) -> Dict[str, Any]:
         "slug": row.slug,
         "description": row.description,
         "status": row.status,
+        "product_source": row.product_source,
         "caption": row.caption,
         "hashtags": json.loads(row.hashtags) if row.hashtags else [],
         "landing_page_html": row.landing_page_html,
@@ -48,10 +49,13 @@ def _collection_to_dict(row: Collection) -> Dict[str, Any]:
         "products": [
             {
                 "id": p.id,
-                "wc_product_id": p.wc_product_id,
+                "source": p.source,
+                "external_id": p.external_id,
                 "title": p.title,
                 "product_url": p.product_url,
                 "image_url": p.image_url,
+                "price": p.price,
+                "affiliate_link": p.affiliate_link,
                 "position": p.position,
             }
             for p in row.products
@@ -71,10 +75,16 @@ def get_collection(collection_id: int) -> Optional[Dict[str, Any]]:
         return _collection_to_dict(row) if row else None
 
 
-def create_collection(name: str, description: str = "") -> Dict[str, Any]:
+def create_collection(name: str, description: str = "", product_source: str = "woocommerce") -> Dict[str, Any]:
     with session_scope() as session:
         slug = _unique_slug(session, name)
-        row = Collection(name=name, slug=slug, description=description, status="draft")
+        row = Collection(
+            name=name,
+            slug=slug,
+            description=description,
+            status="draft",
+            product_source=product_source,
+        )
         session.add(row)
         session.flush()
         return _collection_to_dict(row)
@@ -96,6 +106,8 @@ def update_collection(collection_id: int, fields: Dict[str, Any]) -> Optional[Di
             row.description = fields["description"]
         if "status" in fields:
             row.status = fields["status"]
+        if "product_source" in fields:
+            row.product_source = fields["product_source"]
         if "caption" in fields:
             row.caption = fields["caption"]
         if "hashtags" in fields:
@@ -128,7 +140,9 @@ def delete_collection(collection_id: int) -> bool:
 def set_collection_products(collection_id: int, products: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     """Replace the product list for a collection.
 
-    Each item in `products` should have: wc_product_id, title, product_url, image_url.
+    Each item in `products` should have: source ("woocommerce" | "amazon"),
+    external_id (wc product id or ASIN), title, product_url, image_url, and
+    optionally price / affiliate_link.
     """
     with session_scope() as session:
         row = session.query(Collection).filter_by(id=collection_id).first()
@@ -137,17 +151,29 @@ def set_collection_products(collection_id: int, products: List[Dict[str, Any]]) 
 
         session.query(CollectionProduct).filter_by(collection_id=collection_id).delete()
 
-        for position, product in enumerate(products):
+        seen = set()
+        position = 0
+        for product in products:
+            source = product.get("source") or "woocommerce"
+            external_id = str(product.get("external_id") or "")
+            if not external_id or (source, external_id) in seen:
+                continue
+            seen.add((source, external_id))
             session.add(
                 CollectionProduct(
                     collection_id=collection_id,
-                    wc_product_id=int(product["wc_product_id"]),
+                    source=source,
+                    external_id=external_id,
+                    wc_product_id=int(external_id) if source == "woocommerce" and external_id.isdigit() else None,
                     title=product.get("title"),
                     product_url=product.get("product_url"),
                     image_url=product.get("image_url"),
+                    price=product.get("price"),
+                    affiliate_link=product.get("affiliate_link"),
                     position=position,
                 )
             )
+            position += 1
 
         session.flush()
         session.refresh(row)
