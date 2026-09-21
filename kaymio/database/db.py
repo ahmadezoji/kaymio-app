@@ -87,6 +87,27 @@ def _ensure_columns(table_name: str, column_specs: dict[str, str]) -> None:
             conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {ddl_type}"))
 
 
+def _ensure_nullable(table_name: str, column_name: str, ddl_type: str) -> None:
+    """Relax an existing column to NULL-able if it was created NOT NULL.
+
+    Like _ensure_columns, create_all() never alters an existing table's
+    constraints, so a column whose model changed from required to optional
+    needs this. Safe to call on every boot -- it's a no-op once relaxed.
+    """
+    from sqlalchemy import inspect, text
+
+    engine = get_engine()
+    inspector = inspect(engine)
+    if table_name not in inspector.get_table_names():
+        return  # create_all() will create it fresh as nullable already.
+    for col in inspector.get_columns(table_name):
+        if col["name"] == column_name and not col.get("nullable", True):
+            logger.info("Relaxing NOT NULL on %s.%s", table_name, column_name)
+            with engine.begin() as conn:
+                conn.execute(text(f"ALTER TABLE {table_name} MODIFY COLUMN {column_name} {ddl_type} NULL"))
+            break
+
+
 def init_db() -> None:
     """Create all tables (if missing) and seed the default admin + app_meta."""
     # Import models so they register on Base.metadata before create_all.
@@ -101,6 +122,9 @@ def init_db() -> None:
         "price": "VARCHAR(64)",
         "affiliate_link": "TEXT",
     })
+    # wc_product_id was originally NOT NULL; Amazon-sourced rows leave it
+    # NULL, so a pre-existing table needs the constraint relaxed.
+    _ensure_nullable("collection_products", "wc_product_id", "INT")
     _backfill_collection_product_external_id()
     _seed_default_admin()
     logger.info("Database initialised (tables ensured, admin seeded).")
