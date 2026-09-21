@@ -82,10 +82,17 @@ def find_related_amazon_products(collection_name: str, description: str = "", li
     "Beach, Glass, Sun cream") returns nothing. Instead each comma-separated
     theme is searched separately (falling back to the collection name alone),
     and results are merged/de-duplicated up to `limit`.
+
+    Only commas/semicolons/slashes count as theme separators -- splitting on
+    the word "and" too was tried and chopped natural-language descriptions
+    into meaningless single-word fragments (e.g. "Warm and cozy fall
+    essentials..." yielded a lone "Warm" query, which matched an unrelated
+    Amazon movie rental instead of any home-decor product).
     """
     from kaymio.integrations.amazon.amazon_api import search_amazon_products
 
-    themes = [theme.strip() for theme in re.split(r"[,;/]|\band\b", description) if theme.strip()]
+    themes = [theme.strip() for theme in re.split(r"[,;/]", description) if theme.strip()]
+    themes = [re.sub(r"^(and|or)\s+", "", theme, flags=re.IGNORECASE).strip().rstrip(".") for theme in themes]
     queries = list(dict.fromkeys(themes + [collection_name.strip()]))
     queries = [q for q in queries if q]
     if not queries:
