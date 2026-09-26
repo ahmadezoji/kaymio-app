@@ -47,6 +47,7 @@
       <input type="hidden" name="generated_video_path" value="{{ preview.generated_video_path | e }}" />
       <input type="hidden" name="video_prompt" value="{{ preview.video_prompt | e }}" />
       <input type="hidden" name="video_hook_style" value="{{ (values.get('video_hook_style') or preview.video_hook_style or '') | e }}" />
+      <input type="hidden" name="video_art_style" value="{{ (values.get('video_art_style') or preview.video_art_style or '') | e }}" />
       <input type="hidden" name="instagram_image_path" value="{{ preview.instagram_image_path | e }}" />
       <input
         type="hidden"
@@ -964,6 +965,22 @@
                       <option value="aesthetic" {% if hook_pref == 'aesthetic' %}selected{% endif %}>Aesthetic</option>
                     </select>
                   </label>
+                  <label>
+                    <span>Art style</span>
+                    <select name="video_art_style" {% if instagram_reel_published or platforms_locked %}disabled{% endif %}>
+                      {% set style_pref = values.get('video_art_style', '') %}
+                      {% if not style_pref %}
+                        {% set style_pref = preview_data.video_art_style | default('', true) %}
+                      {% endif %}
+                      <option value="" {% if not style_pref %}selected{% endif %}>Auto (randomized)</option>
+                      <option value="ugc" {% if style_pref == 'ugc' %}selected{% endif %}>UGC / Authentic</option>
+                      <option value="casual" {% if style_pref == 'casual' %}selected{% endif %}>Casual</option>
+                      <option value="cinematic" {% if style_pref == 'cinematic' %}selected{% endif %}>Cinematic</option>
+                      <option value="studio" {% if style_pref == 'studio' %}selected{% endif %}>Studio / Clean</option>
+                      <option value="luxury" {% if style_pref == 'luxury' %}selected{% endif %}>Luxury</option>
+                      <option value="energetic" {% if style_pref == 'energetic' %}selected{% endif %}>Energetic</option>
+                    </select>
+                  </label>
                   {{ video_duration_fields(values, preview_data, 'Reel duration (seconds)', instagram_reel_published or platforms_locked) }}
                   {{ preview_hidden_inputs(preview_data, values, include_video_duration=false) }}
                   <button type="submit" class="ghost-btn" {% if instagram_reel_published or platforms_locked or instagram_reel_generating %}disabled{% endif %}>
@@ -1095,6 +1112,22 @@
                       <option value="transformation" {% if hook_pref == 'transformation' %}selected{% endif %}>Transformation</option>
                       <option value="demo" {% if hook_pref == 'demo' %}selected{% endif %}>Instant demo</option>
                       <option value="aesthetic" {% if hook_pref == 'aesthetic' %}selected{% endif %}>Aesthetic</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>Art style</span>
+                    <select name="video_art_style" {% if youtube_published or platforms_locked %}disabled{% endif %}>
+                      {% set style_pref = values.get('video_art_style', '') %}
+                      {% if not style_pref %}
+                        {% set style_pref = preview_data.video_art_style | default('', true) %}
+                      {% endif %}
+                      <option value="" {% if not style_pref %}selected{% endif %}>Auto (randomized)</option>
+                      <option value="ugc" {% if style_pref == 'ugc' %}selected{% endif %}>UGC / Authentic</option>
+                      <option value="casual" {% if style_pref == 'casual' %}selected{% endif %}>Casual</option>
+                      <option value="cinematic" {% if style_pref == 'cinematic' %}selected{% endif %}>Cinematic</option>
+                      <option value="studio" {% if style_pref == 'studio' %}selected{% endif %}>Studio / Clean</option>
+                      <option value="luxury" {% if style_pref == 'luxury' %}selected{% endif %}>Luxury</option>
+                      <option value="energetic" {% if style_pref == 'energetic' %}selected{% endif %}>Energetic</option>
                     </select>
                   </label>
                   {{ video_duration_fields(values, preview_data, 'Short duration (seconds)', youtube_published or platforms_locked) }}
@@ -1237,6 +1270,22 @@
                       <option value="transformation" {% if hook_pref == 'transformation' %}selected{% endif %}>Transformation</option>
                       <option value="demo" {% if hook_pref == 'demo' %}selected{% endif %}>Instant demo</option>
                       <option value="aesthetic" {% if hook_pref == 'aesthetic' %}selected{% endif %}>Aesthetic</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>Art style</span>
+                    <select name="video_art_style" {% if tiktok_published or platforms_locked %}disabled{% endif %}>
+                      {% set style_pref = values.get('video_art_style', '') %}
+                      {% if not style_pref %}
+                        {% set style_pref = preview_data.video_art_style | default('', true) %}
+                      {% endif %}
+                      <option value="" {% if not style_pref %}selected{% endif %}>Auto (randomized)</option>
+                      <option value="ugc" {% if style_pref == 'ugc' %}selected{% endif %}>UGC / Authentic</option>
+                      <option value="casual" {% if style_pref == 'casual' %}selected{% endif %}>Casual</option>
+                      <option value="cinematic" {% if style_pref == 'cinematic' %}selected{% endif %}>Cinematic</option>
+                      <option value="studio" {% if style_pref == 'studio' %}selected{% endif %}>Studio / Clean</option>
+                      <option value="luxury" {% if style_pref == 'luxury' %}selected{% endif %}>Luxury</option>
+                      <option value="energetic" {% if style_pref == 'energetic' %}selected{% endif %}>Energetic</option>
                     </select>
                   </label>
                   <button type="submit" class="ghost-btn" {% if tiktok_published or platforms_locked or tiktok_generating %}disabled{% endif %}>

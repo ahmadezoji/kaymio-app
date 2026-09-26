@@ -995,6 +995,7 @@ PINTEREST_PREVIEW_KEYS = {
 
 INSTAGRAM_PREVIEW_KEYS = {
     "video_hook_style",
+    "video_art_style",
     "instagram_caption",
     "instagram_hashtags",
     "instagram_hashtags_payload",
@@ -1007,6 +1008,7 @@ INSTAGRAM_PREVIEW_KEYS = {
 
 TIKTOK_PREVIEW_KEYS = {
     "video_hook_style",
+    "video_art_style",
     "tiktok_caption",
     "tiktok_hashtags",
     "tiktok_hashtags_payload",
@@ -1014,6 +1016,7 @@ TIKTOK_PREVIEW_KEYS = {
 
 YOUTUBE_PREVIEW_KEYS = {
     "video_hook_style",
+    "video_art_style",
     "youtube_title",
     "youtube_description",
     "youtube_keywords",
@@ -1049,6 +1052,7 @@ FORM_COMMON_KEYS = {
     "video_generation_model",
     "video_duration_seconds",
     "video_hook_style",
+    "video_art_style",
 }
 
 
@@ -1579,7 +1583,7 @@ def _run_openai_video_generation_async(
                 context=context,
                 duration_seconds=duration_seconds,
                 aspect_ratio="9:16",
-                resolution="720p",
+                resolution="1080p",
                 reference_images=reference_images,
             )
             video_path = save_generated_video(video_bytes)
@@ -2373,6 +2377,7 @@ def rebuild_preview_payload(raw_form_values: Dict[str, str]):
         "website_boost_prompt": raw_form_values.get("website_boost_prompt", ""),
         "instagram_boost_prompt": raw_form_values.get("instagram_boost_prompt", ""),
         "video_hook_style": raw_form_values.get("video_hook_style", ""),
+        "video_art_style": raw_form_values.get("video_art_style", ""),
         "youtube_boost_prompt": raw_form_values.get("youtube_boost_prompt", ""),
         "video_duration_seconds": raw_form_values.get("video_duration_seconds", ""),
         "selected_original_images": raw_form_values.get("selected_original_images", ""),
@@ -3740,6 +3745,29 @@ def generate_platform_video(platform: str):
     hook_note = hook_styles[hook_style]
     form_values["video_hook_style"] = hook_style
 
+    art_style_raw = (
+        raw_form_values.get("video_art_style")
+        or (preview_payload.get("video_art_style") if preview_payload else "")
+        or get_platform_state(saved_state, target if target != "instagram" else "instagram_reel").get(
+            "video_art_style", ""
+        )
+    )
+    art_styles = {
+        "ugc": "Make it feel like authentic UGC, filmed casually on a phone, not a polished ad.",
+        "casual": "Keep it relaxed and casual, like an everyday moment, natural and unscripted.",
+        "cinematic": "Make it feel cinematic and premium, with dramatic lighting, shallow depth of field, and film-quality composition.",
+        "studio": "Make it feel like a clean, professional studio product ad with polished lighting and composition.",
+        "luxury": "Give it a high-end luxury feel: elegant, minimal, premium brand aesthetic.",
+        "energetic": "Make it vibrant and high-energy, with a fast-paced, trendy social-media feel.",
+    }
+    art_style = art_style_raw.strip().lower() if art_style_raw else "auto"
+    if art_style not in art_styles:
+        art_style = "auto"
+    if art_style == "auto":
+        art_style = random.choice(list(art_styles.keys()))
+    style_note = art_styles[art_style]
+    form_values["video_art_style"] = art_style
+
     camera_moves = ["push-in", "whip-pan", "macro detail", "over-shoulder", "handheld orbit", "top-down"]
     settings = [
         "bright kitchen counter",
@@ -3762,25 +3790,28 @@ def generate_platform_video(platform: str):
 
     prompt_templates = {
         "pinterest": (
-            "Create a Pinterest-optimized vertical product video for {product}. Hook: {hook}. "
+            "Create a Pinterest-optimized vertical product video for {product}. {style} "
+            "Hook: {hook}. "
             "Lead with an eye-catching opening shot, then show clear lifestyle use-cases and close-up details. "
             "Use {cut_style} and varied camera moves: {moves}. Setting: {setting}. Lighting: {lighting}. "
             "No on-screen text, no logos, no voiceover, no speech. Choose suitable music only."
         ),
         "youtube": (
-            "Create a vertical YouTube Short for {product}. Make it feel like authentic UGC, not an ad. "
+            "Create a vertical YouTube Short for {product}. {style} "
             "Hook: {hook}. Setting: {setting}. Lighting: {lighting}. "
             "Show a clear problem -> use -> satisfying result. Use {cut_style} and vary camera moves: {moves}. "
             "No on-screen text, no logos, no voiceover, no speech. Choose suitable music only."
         ),
         "tiktok": (
-            "Create a TikTok-ready vertical video for {product}. Hook: {hook}. "
+            "Create a TikTok-ready vertical video for {product}. {style} "
+            "Hook: {hook}. "
             "Use {cut_style}, tactile close-ups, and fast angle changes with camera moves: {moves}. "
             "Include a quick before/after or transformation moment. Setting: {setting}. Lighting: {lighting}. "
             "Keep it clean with no text or overlays. No voiceover or speech; choose suitable music only."
         ),
         "instagram": (
-            "Create an Instagram Reels-ready vertical video for {product}. Hook: {hook}. "
+            "Create an Instagram Reels-ready vertical video for {product}. {style} "
+            "Hook: {hook}. "
             "Lead with a thumb-stopping opening frame, then show close-ups, usage, and lifestyle context. "
             "Use {cut_style} and varied camera moves: {moves}. Setting: {setting}. Lighting: {lighting}. "
             "No on-screen text or logos. No voiceover or speech; choose suitable music only."
@@ -3788,6 +3819,7 @@ def generate_platform_video(platform: str):
     }
     prompt = prompt_templates[target].format(
         product=product_context,
+        style=style_note,
         hook=hook_note,
         setting=setting_choice,
         lighting=lighting_choice,
@@ -3843,15 +3875,10 @@ def generate_platform_video(platform: str):
                 f"OpenAI video generation supports 4, 8, or 12 seconds. Kaymio used {duration_seconds} seconds.",
                 "info",
             )
-    if (
-        video_provider == "gemini"
-        and selected_reference_images
-        and resolved_video_model == "veo-3.1-generate-preview"
-        and duration_seconds != 8
-    ):
+    if video_provider == "gemini" and duration_seconds != 8:
         duration_seconds = 8
         flash(
-            "Gemini Veo multi-image reference mode currently generates 8-second clips, so Kaymio used 8 seconds.",
+            "Gemini Veo 1080p generation requires 8-second clips, so Kaymio used 8 seconds.",
             "info",
         )
 
@@ -3886,7 +3913,7 @@ def generate_platform_video(platform: str):
             context=video_context_prompt,
             duration_seconds=duration_seconds,
             aspect_ratio="9:16",
-            resolution="720p",
+            resolution="1080p",
             reference_images=selected_reference_images,
         )
     except Exception as exc:
