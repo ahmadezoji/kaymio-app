@@ -218,7 +218,7 @@ def _create_media_container(
 
     publish_url = f"{graph_api_base}/{creds['user_id']}/media_publish"
     publish_payload = {"creation_id": creation_id, "access_token": creds["access_token"]}
-    publish_response = requests.post(publish_url, data=publish_payload, timeout=30)
+    publish_response = _publish_media_with_retry(publish_url, publish_payload)
     if publish_response.status_code >= 400:
         logger.error("Instagram media publish failed: %s - %s", publish_response.status_code, publish_response.text)
         publish_response.raise_for_status()
@@ -261,12 +261,46 @@ def _create_video_container(
 
     publish_url = f"{graph_api_base}/{creds['user_id']}/media_publish"
     publish_payload = {"creation_id": creation_id, "access_token": creds["access_token"]}
-    publish_response = requests.post(publish_url, data=publish_payload, timeout=30)
+    publish_response = _publish_media_with_retry(publish_url, publish_payload)
     if publish_response.status_code >= 400:
         logger.error("Instagram media publish failed: %s - %s", publish_response.status_code, publish_response.text)
         publish_response.raise_for_status()
 
     return publish_response.json()
+
+
+def _publish_media_with_retry(
+    publish_url: str,
+    publish_payload: Dict[str, str],
+    *,
+    max_attempts: int = 3,
+    backoff_seconds: float = 8.0,
+) -> requests.Response:
+    """POST to media_publish, retrying on Meta's generic/transient internal errors.
+
+    media_publish occasionally returns a 400 OAuthException "Fatal" / "Generic
+    internal error" even after the container status is FINISHED. Meta's own
+    error_user_msg says to try again later, so retry a couple of times before
+    surfacing the failure.
+    """
+    last_response: Optional[requests.Response] = None
+    for attempt in range(1, max_attempts + 1):
+        response = requests.post(publish_url, data=publish_payload, timeout=30)
+        if response.status_code < 400:
+            return response
+        last_response = response
+        is_last_attempt = attempt == max_attempts
+        logger.warning(
+            "Instagram media publish attempt %s/%s failed: %s - %s",
+            attempt,
+            max_attempts,
+            response.status_code,
+            response.text,
+        )
+        if is_last_attempt:
+            break
+        time.sleep(backoff_seconds)
+    return last_response
 
 
 def _wait_for_media_ready(creation_id: str, access_token: str) -> bool:
@@ -358,7 +392,7 @@ def publish_instagram_carousel(
 
     publish_url = f"{graph_api_base}/{creds['user_id']}/media_publish"
     publish_payload = {"creation_id": creation_id, "access_token": creds["access_token"]}
-    publish_response = requests.post(publish_url, data=publish_payload, timeout=30)
+    publish_response = _publish_media_with_retry(publish_url, publish_payload)
     if publish_response.status_code >= 400:
         logger.error("Instagram carousel publish failed: %s - %s", publish_response.status_code, publish_response.text)
         publish_response.raise_for_status()
