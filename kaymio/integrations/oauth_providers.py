@@ -9,9 +9,9 @@ Platform notes:
 - YouTube: standard body-param token exchange, space-separated scopes
 - Pinterest: Basic Auth token exchange (Authorization: Basic base64(id:secret)),
   comma-separated scopes
-- Instagram: two-step flow — standard body-param exchange returns a short-lived
-  token; a second GET to long_token_url upgrades it to a 60-day long-lived token.
-  Comma-separated scopes.
+- Instagram (Instagram Login): two-step flow — standard body-param exchange
+  returns a short-lived token; a second GET to long_token_url upgrades it to a
+  60-day long-lived token. Comma-separated scopes.
 """
 from __future__ import annotations
 
@@ -144,29 +144,23 @@ PROVIDERS: Dict[str, ProviderConfig] = {
     "instagram": ProviderConfig(
         platform="instagram",
         display_name="Instagram",
-        # Facebook OAuth endpoints — required for Instagram Business accounts
-        # that are connected to a Facebook Page (the standard business setup).
-        # This flow authenticates with Facebook and grants access to both the
-        # Facebook Page and its linked Instagram Business account.
-        authorize_url="https://www.facebook.com/v22.0/dialog/oauth",
-        token_url="https://graph.facebook.com/v22.0/oauth/access_token",
-        long_token_url="https://graph.facebook.com/oauth/access_token",
-        long_token_grant_type="fb_exchange_token",
+        # Instagram API with Instagram Login: the user signs in with the
+        # Instagram professional account itself -- no Facebook Page or
+        # business portfolio needed. Uses the *Instagram* app ID/secret
+        # (Meta dashboard -> Instagram API -> API setup with Instagram login).
+        authorize_url="https://www.instagram.com/oauth/authorize",
+        token_url="https://api.instagram.com/oauth/access_token",
+        long_token_url="https://graph.instagram.com/access_token",
+        long_token_grant_type="ig_exchange_token",
         scopes=[
-            "instagram_basic",
-            "instagram_content_publish",
-            # Comment webhooks, private replies (DM) and public comment replies.
-            "instagram_manage_comments",
-            "instagram_manage_messages",
-            "pages_read_engagement",
-            "pages_show_list",
-            # Subscribing the Page to the app's webhooks.
-            "pages_manage_metadata",
-            "business_management",
+            "instagram_business_basic",
+            "instagram_business_content_publish",
+            "instagram_business_manage_comments",
+            "instagram_business_manage_messages",
         ],
         scope_separator=",",
-        # Re-show the permission/Page picker instead of silently reusing old choices.
-        extra_authorize_params={"auth_type": "rerequest"},
+        # Always show the account picker so the right Instagram account is chosen.
+        extra_authorize_params={"force_reauth": "true", "enable_fb_login": "0"},
     ),
     "pinterest": ProviderConfig(
         platform="pinterest",

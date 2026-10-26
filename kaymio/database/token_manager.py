@@ -97,10 +97,10 @@ def refresh_youtube_token(platform: str = "youtube") -> bool:
 
 
 def refresh_instagram_token(platform: str = "instagram") -> bool:
-    """Refresh Instagram long-lived token.
+    """Extend an Instagram Login long-lived token by another 60 days.
 
-    Instagram tokens are long-lived (60 days) but can be refreshed to extend expiry.
-    Requires user to re-authenticate if token expires.
+    Instagram only refreshes tokens that are at least 24 hours old and not yet
+    expired; once expired the user must reconnect from Settings.
     """
     cred = load_oauth_credential(platform)
     if not cred:
@@ -113,33 +113,32 @@ def refresh_instagram_token(platform: str = "instagram") -> bool:
         return False
 
     try:
-        # Instagram's refresh endpoint for long-lived tokens
-        # GET /me?fields=id&access_token=YOUR_ACCESS_TOKEN
         response = requests.get(
-            "https://graph.instagram.com/me",
-            params={"fields": "id", "access_token": access_token},
+            "https://graph.instagram.com/refresh_access_token",
+            params={"grant_type": "ig_refresh_token", "access_token": access_token},
             timeout=30,
         )
-
         if response.status_code >= 400:
-            logger.warning("Instagram token appears to be invalid/expired: %s", response.status_code)
+            logger.warning("Instagram token refresh failed: %s - %s", response.status_code, response.text)
             return False
+        data = response.json()
 
-        # Token is still valid; update expiration (Instagram tokens are 60 days)
-        expires_at = dt.datetime.utcnow() + dt.timedelta(days=60)
-
+        expires_at = dt.datetime.utcnow() + dt.timedelta(seconds=int(data.get("expires_in") or 60 * 86400))
         save_oauth_credential(
             platform=platform,
-            access_token=access_token,
+            access_token=data.get("access_token") or access_token,
+            token_type=cred.get("token_type") or "bearer",
             user_id=cred.get("user_id"),
             expires_at=expires_at,
+            scope=cred.get("scope"),
+            raw_data=cred.get("raw_data"),
         )
 
-        logger.info("Instagram token validated, expires at %s", expires_at)
+        logger.info("Instagram token refreshed, expires at %s", expires_at)
         return True
 
     except Exception as e:
-        logger.error("Exception validating Instagram token: %s", e)
+        logger.error("Exception refreshing Instagram token: %s", e)
         return False
 
 

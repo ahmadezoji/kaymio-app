@@ -71,14 +71,10 @@ def _load_token_from_db() -> Dict[str, str]:
                 auth_flow = "facebook_login"
             else:
                 auth_flow = "instagram_login"
-            page = raw_data.get("page") if isinstance(raw_data, dict) else None
             return {
                 "INSTAGRAM_ACCESS_TOKEN": cred.get("access_token", ""),
                 "INSTAGRAM_USER_ID": cred.get("user_id", ""),
                 "AUTH_FLOW": auth_flow,
-                # Saved by the Settings connect flow; required for DMs/comment replies.
-                "INSTAGRAM_PAGE_ACCESS_TOKEN": page.get("access_token", "") if isinstance(page, dict) else "",
-                "FACEBOOK_PAGE_ID": page.get("id", "") if isinstance(page, dict) else "",
             }
     except Exception as e:
         logger.debug("Failed to load Instagram credentials from DB: %s", e)
@@ -125,12 +121,9 @@ def _get_instagram_messaging_credentials() -> Dict[str, str]:
             "or INSTAGRAM_PAGE_ACCESS_TOKEN/FB_LONG_LIVED_USER_ACCESS_TOKEN plus "
             "INSTAGRAM_USER_ID for Facebook Login."
         )
-    # With Facebook login, Messenger API for Instagram sends from the linked Page.
-    page_id = "" if use_instagram_login else (token_payload.get("FACEBOOK_PAGE_ID") or "")
     return {
         "access_token": access_token,
         "instagram_user_id": instagram_user_id,
-        "sender_id": page_id or instagram_user_id,
         "graph_api_base": _resolve_graph_api_base(token_payload),
     }
 
@@ -138,7 +131,7 @@ def _get_instagram_messaging_credentials() -> Dict[str, str]:
 def _post_instagram_message(payload: Dict[str, object]) -> Dict[str, str]:
     creds = _get_instagram_messaging_credentials()
     response = requests.post(
-        f"{creds['graph_api_base']}/{creds['sender_id']}/messages",
+        f"{creds['graph_api_base']}/{creds['instagram_user_id']}/messages",
         params={"access_token": creds["access_token"]},
         json=payload,
         timeout=30,
