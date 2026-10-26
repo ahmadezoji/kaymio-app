@@ -14,7 +14,9 @@ from __future__ import annotations
 import datetime as dt
 import os
 import secrets
+from typing import Optional
 
+import requests
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for
 
 from kaymio.database.oauth import (
@@ -143,6 +145,59 @@ def _platform_view_model(platform: str) -> dict:
 
 
 # --------------------------------------------------------------------------- #
+# Instagram (Facebook login) Page helpers
+# --------------------------------------------------------------------------- #
+_FACEBOOK_GRAPH = "https://graph.facebook.com/v21.0"
+# Any Page field works; the subscription is what lets Instagram webhooks flow.
+_PAGE_WEBHOOK_FIELDS = "feed"
+
+
+def _find_instagram_page(user_access_token: str) -> Optional[dict]:
+    """First granted Facebook Page that has a linked Instagram business account."""
+    try:
+        response = requests.get(
+            f"{_FACEBOOK_GRAPH}/me/accounts",
+            params={
+                "access_token": user_access_token,
+                "fields": "id,name,access_token,instagram_business_account",
+            },
+            timeout=15,
+        )
+        pages = response.json().get("data", []) if response.status_code == 200 else []
+    except (requests.RequestException, ValueError):
+        return None
+    for page in pages:
+        ig = page.get("instagram_business_account")
+        if isinstance(ig, dict) and ig.get("id") and page.get("access_token"):
+            return {
+                "id": str(page["id"]),
+                "name": str(page.get("name") or ""),
+                "access_token": page["access_token"],
+                "instagram_user_id": str(ig["id"]),
+            }
+    return None
+
+
+def _subscribe_page_to_webhooks(page_id: str, page_access_token: str) -> Optional[str]:
+    """Subscribe the app to the Page so Instagram comment/message webhooks are delivered.
+
+    Returns an error message, or None on success.
+    """
+    try:
+        response = requests.post(
+            f"{_FACEBOOK_GRAPH}/{page_id}/subscribed_apps",
+            params={"access_token": page_access_token, "subscribed_fields": _PAGE_WEBHOOK_FIELDS},
+            timeout=15,
+        )
+        body = response.json()
+    except (requests.RequestException, ValueError) as exc:
+        return str(exc)
+    if response.status_code >= 400 or not body.get("success"):
+        return str((body.get("error") or {}).get("message") or body)
+    return None
+
+
+# --------------------------------------------------------------------------- #
 # Routes
 # --------------------------------------------------------------------------- #
 @settings_bp.route("/settings", methods=["GET"])
@@ -262,24 +317,25 @@ def oauth_callback(platform: str):
             # publishing endpoints use as the {user-id} path segment.
             # Fetch it by looking up the connected Facebook Page's IG account.
             if access_token:
-                try:
-                    import requests as _req
-                    pages_resp = _req.get(
-                        "https://graph.facebook.com/me/accounts",
-                        params={
-                            "access_token": access_token,
-                            "fields": "id,access_token,instagram_business_account",
-                        },
-                        timeout=15,
+                page = _find_instagram_page(access_token)
+                if page:
+                    user_id = page["instagram_user_id"]
+                    # Page token: needed for DMs/comment replies; long-lived when
+                    # derived from a long-lived user token.
+                    raw_data["page"] = {
+                        "id": page["id"],
+                        "name": page["name"],
+                        "access_token": page["access_token"],
+                    }
+                    error = _subscribe_page_to_webhooks(page["id"], page["access_token"])
+                    if error:
+                        flash(f"Connected, but subscribing the Page to webhooks failed: {error}", "error")
+                else:
+                    flash(
+                        "No Facebook Page with a linked Instagram account was shared. Click Reconnect, "
+                        "choose “Edit settings”, and select your Page and Instagram account.",
+                        "error",
                     )
-                    if pages_resp.status_code == 200:
-                        for page in pages_resp.json().get("data", []):
-                            ig = page.get("instagram_business_account")
-                            if isinstance(ig, dict) and ig.get("id"):
-                                user_id = str(ig["id"])
-                                break
-                except Exception:
-                    pass
         else:
             existing = load_oauth_credential(platform) or {}
             access_token = token_response.get("access_token")

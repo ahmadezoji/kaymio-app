@@ -54,7 +54,7 @@ from kaymio.integrations.youtube.youtube_api_helper import publish_short_video
 from kaymio.wordpress.wordpress_api_helper import (
     create_woocommerce_product,
     find_wordpress_nearest_category,
-    list_woocommerce_products,
+    list_published_amazon_products,
     update_affiliate_links,
 )
 from kaymio.database import (
@@ -485,11 +485,13 @@ def _scheduled_story_candidates_from_state() -> List[Dict[str, str]]:
     return candidates
 
 
-def _scheduled_story_candidates_from_website(limit: int = 100) -> List[Dict[str, str]]:
-    result = list_woocommerce_products(page=1, per_page=max(1, min(limit, 100)))
+def _scheduled_story_candidates_from_website() -> List[Dict[str, str]]:
+    """Every published kaymio.com product that links to Amazon and has an image."""
+    result = list_published_amazon_products()
     if result.get("error"):
         app.logger.warning("Unable to load WooCommerce products for scheduled stories: %s", result["error"])
-        return []
+        if not result.get("items"):
+            return []
 
     candidates: List[Dict[str, str]] = []
     for product in result.get("items", []):

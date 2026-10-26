@@ -155,11 +155,18 @@ PROVIDERS: Dict[str, ProviderConfig] = {
         scopes=[
             "instagram_basic",
             "instagram_content_publish",
+            # Comment webhooks, private replies (DM) and public comment replies.
+            "instagram_manage_comments",
+            "instagram_manage_messages",
             "pages_read_engagement",
             "pages_show_list",
+            # Subscribing the Page to the app's webhooks.
+            "pages_manage_metadata",
             "business_management",
         ],
         scope_separator=",",
+        # Re-show the permission/Page picker instead of silently reusing old choices.
+        extra_authorize_params={"auth_type": "rerequest"},
     ),
     "pinterest": ProviderConfig(
         platform="pinterest",

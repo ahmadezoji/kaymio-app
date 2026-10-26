@@ -496,14 +496,21 @@ def update_affiliate_links():
     except Exception as e:
         print(f"Error updating affiliate links: {e}")
 
-def list_woocommerce_products(page: int = 1, per_page: int = 100):
-    """Return paginated WooCommerce products with total headers."""
+def list_woocommerce_products(page: int = 1, per_page: int = 100, status: Optional[str] = None):
+    """Return paginated WooCommerce products with total headers.
+
+    ``status`` (e.g. "publish") filters server-side; WooCommerce's default is "any",
+    which includes drafts and private products.
+    """
     if not all([wc_url, consumer_key, consumer_secret]):
         return {"error": "WooCommerce API credentials are missing."}
+    params = {"page": max(1, int(page)), "per_page": max(1, min(int(per_page), 100))}
+    if status:
+        params["status"] = status
     try:
         response = requests.get(
             f"{wc_url}/wp-json/wc/v3/products",
-            params={"page": max(1, int(page)), "per_page": max(1, min(int(per_page), 100))},
+            params=params,
             auth=(consumer_key, consumer_secret),
             headers={"Content-Type": "application/json"},
             timeout=30,
@@ -704,11 +711,11 @@ def _extract_product_media_ids(product):
     return media_ids
 
 
-def _fetch_all_woocommerce_products(per_page: int = 100):
+def _fetch_all_woocommerce_products(per_page: int = 100, status: Optional[str] = None):
     products = []
     page = 1
     while True:
-        result = list_woocommerce_products(page=page, per_page=per_page)
+        result = list_woocommerce_products(page=page, per_page=per_page, status=status)
         if result.get("error"):
             return {"error": result["error"], "items": products}
         page_items = result.get("items") or []
@@ -719,6 +726,19 @@ def _fetch_all_woocommerce_products(per_page: int = 100):
             break
         page += 1
     return {"items": products}
+
+
+def list_published_amazon_products():
+    """Every published WooCommerce product whose affiliate (external) link points to Amazon."""
+    result = _fetch_all_woocommerce_products(status="publish")
+    return {
+        "error": result.get("error"),
+        "items": [
+            product
+            for product in result.get("items") or []
+            if _product_external_link_matches(product, AMAZON_MATCH_TOKENS)
+        ],
+    }
 
 
 def count_products_with_amazon_or_aliexpress_links():
