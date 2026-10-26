@@ -433,6 +433,29 @@ def generate_text(
         return (title or "Unknown Concept").strip() or "Unknown Concept"
 
 
+def build_website_description(title: str, base_description: str, boost_prompt: str) -> str:
+    """Expand a product description into store-ready copy guided by a boost prompt."""
+    if not boost_prompt:
+        return base_description
+    payload = (
+        f"Title: {title}\nExisting Description: {base_description}\n"
+        f"Boost Prompt: {boost_prompt}"
+    )
+    enhanced = generate_text(
+        payload,
+        context=(
+            "You are an e-commerce copywriter. Expand concise marketing copy into "
+            "a compelling store-ready product description in under 180 words."
+        ),
+        user_prompt=(
+            "Rewrite the e-commerce product description using the boost prompt guidance:\n{text}"
+        ),
+        max_tokens=220,
+        temperature=0.6,
+    )
+    return enhanced or base_description
+
+
 def _generate_response_text(
     system_prompt: str,
     user_prompt: str,

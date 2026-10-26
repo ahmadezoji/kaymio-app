@@ -15,13 +15,15 @@ from kaymio.database.collections import (
 )
 from kaymio.features.collections_helper import (
     create_collection_landing_page_html,
-    find_related_products,
+    find_related_products_by_source,
     generate_collection_metadata,
     publish_collection_to_instagram,
     publish_collection_to_wordpress,
 )
 
 logger = logging.getLogger(__name__)
+
+PRODUCT_SOURCES = ("woocommerce", "amazon")
 
 collections_bp = Blueprint("collections", __name__, url_prefix="/api/collections")
 collections_page_bp = Blueprint("collections_page", __name__)
@@ -44,7 +46,15 @@ def api_create_collection():
     if not name:
         return jsonify({"error": "Collection name is required."}), 400
 
-    collection = create_collection(name=name, description=(payload.get("description") or "").strip())
+    product_source = payload.get("product_source") or "woocommerce"
+    if product_source not in PRODUCT_SOURCES:
+        return jsonify({"error": "product_source must be 'woocommerce' or 'amazon'."}), 400
+
+    collection = create_collection(
+        name=name,
+        description=(payload.get("description") or "").strip(),
+        product_source=product_source,
+    )
     return jsonify({"collection": collection}), 201
 
 
@@ -74,23 +84,30 @@ def api_delete_collection(collection_id: int):
 
 @collections_bp.route("/<int:collection_id>/generate", methods=["POST"])
 def api_generate_collection(collection_id: int):
-    """Fetch related WooCommerce products and generate AI captions/description/landing page."""
+    """Fetch related products (WooCommerce or Amazon) and generate AI captions/description/landing page."""
     collection = get_collection(collection_id)
     if not collection:
         return jsonify({"error": "Collection not found."}), 404
 
+    payload = request.get_json(silent=True) or {}
+    product_source = payload.get("product_source") or collection.get("product_source") or "woocommerce"
+    if product_source not in PRODUCT_SOURCES:
+        return jsonify({"error": "product_source must be 'woocommerce' or 'amazon'."}), 400
+
     name = collection["name"]
     description = collection.get("description") or ""
 
-    products = find_related_products(name, description, limit=5)
+    products = find_related_products_by_source(product_source, name, description, limit=5)
     if not products:
-        return jsonify({"error": "No related products found for this collection."}), 422
+        source_label = "Amazon" if product_source == "amazon" else "WooCommerce"
+        return jsonify({"error": f"No related {source_label} products found for this collection."}), 422
 
     metadata = generate_collection_metadata(name, description, products)
     landing_html = create_collection_landing_page_html(name, metadata["landing_copy"], products)
 
     collection = set_collection_products(collection_id, products)
     collection = update_collection(collection_id, {
+        "product_source": product_source,
         "caption": metadata["caption"],
         "hashtags": metadata["hashtags"],
         "landing_page_html": landing_html,

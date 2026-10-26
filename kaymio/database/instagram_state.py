@@ -1,6 +1,7 @@
 """Instagram state management (scheduler, media routes, comment replies) backed by database."""
 from __future__ import annotations
 
+import datetime as dt
 import json
 from typing import Any, Dict
 
@@ -17,12 +18,13 @@ from .models import (
 # ==============================================================================
 
 
-def load_instagram_scheduler_state() -> Dict[str, Any]:
-    """Load scheduler state from database (last_run_date, etc.)."""
+STORY_SCHEDULER_STATE_KEY = "instagram_story_scheduler"
+
+
+def load_scheduler_state(key: str) -> Dict[str, Any]:
+    """Load a scheduler's run state (last_run_date, last result, ...) by key."""
     with session_scope() as session:
-        row = session.query(InstagramSchedulerState).filter_by(
-            key="instagram_story_scheduler"
-        ).first()
+        row = session.query(InstagramSchedulerState).filter_by(key=key).first()
 
         if row and row.value:
             try:
@@ -32,22 +34,35 @@ def load_instagram_scheduler_state() -> Dict[str, Any]:
     return {}
 
 
-def save_instagram_scheduler_state(state: Dict[str, Any]) -> None:
-    """Save scheduler state to database."""
+def save_scheduler_state(key: str, state: Dict[str, Any]) -> None:
+    """Replace a scheduler's run state."""
     with session_scope() as session:
-        row = session.query(InstagramSchedulerState).filter_by(
-            key="instagram_story_scheduler"
-        ).first()
+        row = session.query(InstagramSchedulerState).filter_by(key=key).first()
 
         if row:
             row.value = json.dumps(state)
         else:
-            row = InstagramSchedulerState(
-                key="instagram_story_scheduler",
-                value=json.dumps(state)
-            )
+            row = InstagramSchedulerState(key=key, value=json.dumps(state))
             session.add(row)
         session.commit()
+
+
+def update_scheduler_state(key: str, **fields: Any) -> Dict[str, Any]:
+    """Merge fields into a scheduler's run state and return the result."""
+    state = load_scheduler_state(key)
+    state.update(fields)
+    save_scheduler_state(key, state)
+    return state
+
+
+def load_instagram_scheduler_state() -> Dict[str, Any]:
+    """Load the story scheduler state from database (last_run_date, etc.)."""
+    return load_scheduler_state(STORY_SCHEDULER_STATE_KEY)
+
+
+def save_instagram_scheduler_state(state: Dict[str, Any]) -> None:
+    """Save the story scheduler state to database."""
+    save_scheduler_state(STORY_SCHEDULER_STATE_KEY, state)
 
 
 # ==============================================================================
@@ -124,6 +139,51 @@ def upsert_instagram_media_reply_route(media_id: str, route_data: Dict[str, Any]
             session.add(row)
 
         session.commit()
+
+
+def register_media_reply_route(
+    media_id: str,
+    candidate: Dict[str, Any],
+    *,
+    reply_surface: str,
+) -> bool:
+    """Map a published media id to its product so comment/DM replies can send the link.
+
+    Returns False (and stores nothing) when the media id or affiliate link is missing.
+    """
+    normalized_media_id = str(media_id or "").strip()
+    affiliate_link = str(candidate.get("affiliate_link") or "").strip()
+    if not normalized_media_id or not affiliate_link:
+        return False
+    upsert_instagram_media_reply_route(
+        normalized_media_id,
+        {
+            "product_id": str(candidate.get("product_id") or ""),
+            "affiliate_link": affiliate_link,
+            "product_url": str(candidate.get("product_url") or "").strip(),
+            "title": str(candidate.get("title") or ""),
+            "description": str(candidate.get("description") or ""),
+            "reply_surface": reply_surface,
+            "published_at": dt.datetime.utcnow().isoformat(),
+        },
+    )
+    return True
+
+
+def prune_old_story_reply_routes(max_age_hours: int = 24) -> int:
+    """Delete story reply routes older than max_age_hours. Returns number of deleted rows."""
+    cutoff = dt.datetime.utcnow() - dt.timedelta(hours=max_age_hours)
+    with session_scope() as session:
+        deleted = (
+            session.query(InstagramMediaReplyRoute)
+            .filter(
+                InstagramMediaReplyRoute.reply_surface == "story",
+                InstagramMediaReplyRoute.created_at < cutoff,
+            )
+            .delete(synchronize_session=False)
+        )
+        session.commit()
+    return deleted
 
 
 # ==============================================================================

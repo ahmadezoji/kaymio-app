@@ -14,7 +14,9 @@ from __future__ import annotations
 import datetime as dt
 import os
 import secrets
+from typing import Optional
 
+import requests
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for
 
 from kaymio.database.oauth import (
@@ -39,7 +41,7 @@ SUPPORTED_PLATFORMS = ["youtube", "instagram", "pinterest"]
 # Per-platform labels shown in the credentials form
 _CREDENTIAL_LABELS = {
     "youtube":    ("Client ID",  "Client Secret"),
-    "instagram":  ("App ID",     "App Secret"),
+    "instagram":  ("Instagram App ID", "Instagram App Secret"),
     "pinterest":  ("App ID",     "App Secret"),
 }
 
@@ -52,8 +54,9 @@ _CONSOLE_NOTES = {
     ),
     "instagram": (
         "Meta for Developers",
-        "Meta for Developers → your App → Facebook Login for Business → Settings → "
-        "Valid OAuth Redirect URIs",
+        "Meta for Developers → your App → Use cases → Instagram API → API setup with "
+        "Instagram login → Set up Instagram business login → Business login settings → "
+        "OAuth redirect URIs",
     ),
     "pinterest": (
         "Pinterest Developers",
@@ -71,10 +74,10 @@ _PLATFORM_NOTES = {
         "a permanent Test User) to stop that."
     ),
     "instagram": (
-        "This connects via Facebook (required for Instagram Business accounts linked to a "
-        "Facebook Page). Clicking Connect opens Facebook's consent screen — approve the "
-        "permissions there and it will grant access to your linked Instagram Business account. "
-        "The resulting token is valid for 60 days and is refreshed automatically."
+        "This connects with Instagram Login — sign in with the Instagram professional account "
+        "itself; no Facebook Page is needed. Use the Instagram App ID and Instagram App Secret "
+        "from Meta → Instagram API → API setup with Instagram login (not the Facebook app ID). "
+        "The token is valid for 60 days and is refreshed automatically."
     ),
     "pinterest": (
         "Pinterest access tokens expire after 30 days. Click Connect again here when that "
@@ -140,6 +143,58 @@ def _platform_view_model(platform: str) -> dict:
         "console_detail": console_detail,
         "platform_note": platform_note,
     }
+
+
+# --------------------------------------------------------------------------- #
+# Instagram Login helpers
+# --------------------------------------------------------------------------- #
+_INSTAGRAM_GRAPH = "https://graph.instagram.com/v21.0"
+_INSTAGRAM_WEBHOOK_FIELDS = "comments,messages"
+
+
+def _unwrap_instagram_token_response(token_response: dict) -> dict:
+    """The code exchange returns either a flat object or ``{"data": [{...}]}``."""
+    data = token_response.get("data")
+    if isinstance(data, list) and data and isinstance(data[0], dict):
+        return data[0]
+    return token_response
+
+
+def _fetch_instagram_account(access_token: Optional[str]) -> dict:
+    """Return ``{"user_id", "username"}`` of the connected professional account (empty on failure)."""
+    if not access_token:
+        return {}
+    try:
+        response = requests.get(
+            f"{_INSTAGRAM_GRAPH}/me",
+            params={"fields": "user_id,username", "access_token": access_token},
+            timeout=15,
+        )
+        body = response.json() if response.status_code == 200 else {}
+    except (requests.RequestException, ValueError):
+        return {}
+    return {
+        "user_id": str(body.get("user_id") or body.get("id") or ""),
+        "username": str(body.get("username") or ""),
+    }
+
+
+def _subscribe_instagram_webhooks(access_token: Optional[str]) -> Optional[str]:
+    """Subscribe the account to comment/message webhooks. Returns an error message or None."""
+    if not access_token:
+        return "no access token"
+    try:
+        response = requests.post(
+            f"{_INSTAGRAM_GRAPH}/me/subscribed_apps",
+            params={"subscribed_fields": _INSTAGRAM_WEBHOOK_FIELDS, "access_token": access_token},
+            timeout=15,
+        )
+        body = response.json()
+    except (requests.RequestException, ValueError) as exc:
+        return str(exc)
+    if response.status_code >= 400 or not body.get("success"):
+        return str((body.get("error") or {}).get("message") or body)
+    return None
 
 
 # --------------------------------------------------------------------------- #
@@ -240,46 +295,28 @@ def oauth_callback(platform: str):
         )
 
         if provider.long_token_url:
-            # Step 2: exchange the short-lived token for a long-lived one.
-            # For Instagram Business (Facebook OAuth), the user_id in the
-            # short-lived response is the Facebook user ID; we fetch it below.
-            short_token = str(token_response.get("access_token") or "")
-            user_id = str(token_response.get("user_id") or "") or None
+            # Instagram Login: short-lived token -> 60-day long-lived token.
+            short_lived = _unwrap_instagram_token_response(token_response)
             long_response = exchange_for_long_lived_token(
                 provider,
                 app_secret=client_config["client_secret"],
-                short_token=short_token,
+                short_token=str(short_lived.get("access_token") or ""),
                 client_id=client_config.get("client_id"),
             )
             access_token = long_response.get("access_token")
             refresh_token = None
             expires_in = long_response.get("expires_in")
-            scope = long_response.get("scope") or token_response.get("scope")
-            raw_data = {"short_lived": token_response, "long_lived": long_response}
+            permissions = short_lived.get("permissions")
+            scope = ",".join(permissions) if isinstance(permissions, list) else permissions
+            account = _fetch_instagram_account(access_token)
+            # The API's {ig-user-id} is /me.user_id; the token response's user_id
+            # is app-scoped and only a fallback.
+            user_id = account.get("user_id") or str(short_lived.get("user_id") or "") or None
+            raw_data = {"AUTH_FLOW": "instagram_login", "username": account.get("username", "")}
 
-            # For Facebook-based Instagram auth, we need the Instagram Business
-            # Account ID (not the Facebook user ID) — that's what the Graph API
-            # publishing endpoints use as the {user-id} path segment.
-            # Fetch it by looking up the connected Facebook Page's IG account.
-            if access_token:
-                try:
-                    import requests as _req
-                    pages_resp = _req.get(
-                        "https://graph.facebook.com/me/accounts",
-                        params={
-                            "access_token": access_token,
-                            "fields": "id,access_token,instagram_business_account",
-                        },
-                        timeout=15,
-                    )
-                    if pages_resp.status_code == 200:
-                        for page in pages_resp.json().get("data", []):
-                            ig = page.get("instagram_business_account")
-                            if isinstance(ig, dict) and ig.get("id"):
-                                user_id = str(ig["id"])
-                                break
-                except Exception:
-                    pass
+            error = _subscribe_instagram_webhooks(access_token)
+            if error:
+                flash(f"Connected, but subscribing to comment/message webhooks failed: {error}", "error")
         else:
             existing = load_oauth_credential(platform) or {}
             access_token = token_response.get("access_token")

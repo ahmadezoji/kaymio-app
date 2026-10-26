@@ -8,3 +8,4 @@ google-genai
 SQLAlchemy>=2.0
 PyMySQL>=1.1
 gunicorn>=21.2
+beautifulsoup4>=4.12

@@ -213,6 +213,7 @@ class Collection(Base):
     slug: Mapped[str] = mapped_column(String(191), unique=True, index=True)
     description: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(32), default="draft")  # draft | published
+    product_source: Mapped[str] = mapped_column(String(16), default="woocommerce")  # woocommerce | amazon
 
     # AI-generated content
     caption: Mapped[str | None] = mapped_column(Text)
@@ -237,21 +238,25 @@ class Collection(Base):
 
 
 class CollectionProduct(Base):
-    """A WooCommerce product selected for a collection."""
+    """A product selected for a collection, sourced from WooCommerce or Amazon."""
 
     __tablename__ = "collection_products"
     __table_args__ = (
-        UniqueConstraint("collection_id", "wc_product_id", name="uq_collection_product"),
+        UniqueConstraint("collection_id", "source", "external_id", name="uq_collection_product_source"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     collection_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("collections.id", ondelete="CASCADE"), index=True
     )
-    wc_product_id: Mapped[int] = mapped_column(Integer)
+    source: Mapped[str] = mapped_column(String(16), default="woocommerce")  # woocommerce | amazon
+    external_id: Mapped[str] = mapped_column(String(64), default="")  # wc product id or ASIN
+    wc_product_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # legacy column, kept for old rows
     title: Mapped[str | None] = mapped_column(Text)
     product_url: Mapped[str | None] = mapped_column(Text)
     image_url: Mapped[str | None] = mapped_column(Text)
+    price: Mapped[str | None] = mapped_column(String(64))
+    affiliate_link: Mapped[str | None] = mapped_column(Text)
     position: Mapped[int] = mapped_column(Integer, default=0)
 
     collection: Mapped["Collection"] = relationship(back_populates="products")
@@ -275,3 +280,43 @@ class OAuthCredential(Base):
     raw_data: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow)
     updated_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+
+class ScheduledTaskSetting(Base):
+    """UI overrides for a background scheduled task; .env values are the defaults."""
+
+    __tablename__ = "scheduled_task_settings"
+
+    task_key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    run_time: Mapped[str] = mapped_column(String(5))  # HH:MM, server local time
+    options: Mapped[str | None] = mapped_column(Text)  # JSON-encoded dict
+    updated_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+
+class AutoPostCandidate(Base):
+    """An Amazon product proposed by the auto-post task and its approval/publish lifecycle."""
+
+    __tablename__ = "auto_post_candidates"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    asin: Mapped[str] = mapped_column(String(16), unique=True, index=True)
+    # pending_approval | rejected | expired | publishing | published | failed
+    status: Mapped[str] = mapped_column(String(32), index=True, default="pending_approval")
+    title: Mapped[str | None] = mapped_column(Text)
+    product_url: Mapped[str | None] = mapped_column(Text)
+    image_url: Mapped[str | None] = mapped_column(Text)
+    product_data: Mapped[str | None] = mapped_column(Text)  # JSON: AmazonProduct
+    content: Mapped[str | None] = mapped_column(Text)  # JSON: generated captions/descriptions
+
+    telegram_chat_id: Mapped[str | None] = mapped_column(String(64))
+    telegram_message_id: Mapped[int | None] = mapped_column(Integer)
+
+    website_product_url: Mapped[str | None] = mapped_column(Text)
+    instagram_media_id: Mapped[str | None] = mapped_column(String(191))
+    error: Mapped[str | None] = mapped_column(Text)
+
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow)
+    updated_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
+    decided_at: Mapped[dt.datetime | None] = mapped_column(DateTime)
+    published_at: Mapped[dt.datetime | None] = mapped_column(DateTime)
