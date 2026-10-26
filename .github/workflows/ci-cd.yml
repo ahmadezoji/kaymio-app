@@ -78,6 +78,14 @@ jobs:
             exit 1
           fi
 
+          # Warn (don't fail) when integration settings are missing: the
+          # app still boots, but those features stay disabled until set.
+          for key in CRAWL4AI_BASE_URL CRAWL4AI_API_TOKEN TELEGRAM_BOT_TOKEN TELEGRAM_CHAT_ID PUBLIC_APP_BASE_URL; do
+            if ! grep -Eq "^\${key}=.+" .env; then
+              echo "WARNING: \${key} is not set in the server .env"
+            fi
+          done
+
           # Deploy
           echo "Deploying Docker containers..."
           docker compose up -d --build --remove-orphans

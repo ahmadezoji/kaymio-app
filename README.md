@@ -37,3 +37,31 @@ flask --app app run --debug
   - `pinterest_helper.create_pinterest_pin` to publish the final creatives to the configured Pinterest board.
 
 Outputs (title, description, tags, and Pin URL) are surfaced back on the dashboard once everything succeeds.
+
+## Automation (scheduled tasks)
+
+The **Automation** page (`/automation`) lists every background task. You can stop/start it, change its daily
+time and options, run it now, or reset it to the `.env` defaults. UI edits are saved in the
+`scheduled_task_settings` table and take effect within 20 seconds. No redeploy is needed.
+
+| Task | What it does | `.env` defaults |
+| --- | --- | --- |
+| Instagram stories | Publishes random kaymio.com products as stories with a CTA and QR code | `INSTAGRAM_STORY_AUTOPUBLISH_*` |
+| Instagram auto-post | Amazon trending product, then Telegram approval, then WooCommerce product and Instagram carousel | `INSTAGRAM_AUTO_POST_*`, `AMAZON_TRENDING_*` |
+
+### Auto-post flow
+
+1. Crawls Amazon's lists (`AMAZON_TRENDING_SOURCE_URLS`, tried in order) through the self-hosted **Crawl4AI**
+   service (`CRAWL4AI_BASE_URL`, `CRAWL4AI_API_TOKEN`).
+2. Picks the highest-ranked product that is **not already on kaymio.com** (ASINs from WooCommerce `external_url`/SKU),
+   has never been suggested before, and meets the rating and review thresholds. Then crawls its product page for
+   title, price, images, bullets and category. Canopy fills any gaps when `CANOPY_API_KEY` is set.
+3. Generates the store title/description/tags and the Instagram caption (same CTA and hashtag format as manual posts).
+4. Sends the top image and details to Telegram with **Approve** and **Cancel** buttons. Nothing is published before you approve.
+5. On approval, it creates the WooCommerce external product and posts the images as an Instagram carousel
+   (padded to 1080×1350). It also registers the post so "comment BUY" replies DM the affiliate link.
+   If a step fails, you can retry it from the Automation page, and steps that already succeeded are skipped.
+
+Telegram setup: create a bot with @BotFather, set `TELEGRAM_BOT_TOKEN`, send `/start` to the bot to see your chat id,
+and set `TELEGRAM_CHAT_ID`. Button clicks are received by long polling (`TELEGRAM_UPDATES_MODE=polling`, the default)
+or by webhook (`webhook` plus `TELEGRAM_WEBHOOK_SECRET` and `PUBLIC_APP_BASE_URL`).

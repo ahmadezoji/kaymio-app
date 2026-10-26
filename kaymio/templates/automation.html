@@ -1,0 +1,373 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Kaymio Automation</title>
+    <style>
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #0f172a;
+        color: #e2e8f0;
+      }
+      .wrap { max-width: 1100px; margin: 0 auto; padding: 24px 16px; }
+      h1 { margin: 0 0 8px; font-size: 1.6rem; }
+      h2 { font-size: 1.15rem; margin: 0 0 6px; }
+      .muted { color: #94a3b8; margin: 0 0 16px; font-size: 0.9rem; }
+      .toolbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 16px;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      .btn {
+        border: 1px solid #334155;
+        background: #1e293b;
+        color: #e2e8f0;
+        padding: 8px 12px;
+        border-radius: 8px;
+        text-decoration: none;
+        cursor: pointer;
+        font-size: 0.9rem;
+      }
+      .btn:hover { background: #273449; }
+      .btn-primary { background: #4f46e5; border-color: #4338ca; }
+      .btn-primary:hover { background: #4338ca; }
+      .btn:disabled { opacity: 0.5; cursor: default; }
+      .panel {
+        background: #111827;
+        border: 1px solid #1f2937;
+        border-radius: 12px;
+        padding: 18px;
+        margin-bottom: 18px;
+      }
+      .task-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      .fields {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+        gap: 12px;
+        margin: 14px 0;
+      }
+      .field label {
+        display: block;
+        font-size: 0.8rem;
+        color: #94a3b8;
+        margin-bottom: 6px;
+      }
+      .field.wide { grid-column: 1 / -1; }
+      .field input, .field textarea {
+        width: 100%;
+        background: #0b1220;
+        border: 1px solid #334155;
+        color: #e2e8f0;
+        border-radius: 8px;
+        padding: 8px 10px;
+        font-family: inherit;
+        font-size: 0.9rem;
+      }
+      .field textarea { min-height: 84px; resize: vertical; }
+      .field .help { font-size: 0.75rem; color: #64748b; margin-top: 4px; }
+      .switch { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-weight: 600; }
+      .switch input { width: 18px; height: 18px; }
+      .badge {
+        display: inline-block;
+        font-size: 0.75rem;
+        padding: 2px 8px;
+        border-radius: 999px;
+        background: #334155;
+        color: #cbd5e1;
+        margin-right: 6px;
+      }
+      .badge.on, .badge.published, .badge.ok { background: #14532d; color: #bbf7d0; }
+      .badge.off, .badge.failed, .badge.error, .badge.rejected { background: #7f1d1d; color: #fecaca; }
+      .badge.running, .badge.publishing, .badge.pending_approval { background: #78350f; color: #fde68a; }
+      .meta { font-size: 0.8rem; color: #94a3b8; line-height: 1.6; }
+      .meta .err { color: #fca5a5; }
+      .actions-row { display: flex; gap: 8px; flex-wrap: wrap; }
+      .flash { padding: 10px 12px; border-radius: 8px; margin-bottom: 12px; }
+      .flash.success { background: #14532d; }
+      .flash.error { background: #7f1d1d; }
+      .health { display: flex; gap: 18px; flex-wrap: wrap; font-size: 0.85rem; }
+      .table-wrap { overflow-x: auto; }
+      table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+      th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid #1f2937; vertical-align: top; }
+      th { color: #94a3b8; font-weight: 600; }
+      td img { width: 48px; height: 48px; object-fit: contain; background: #fff; border-radius: 6px; }
+      td a { color: #93c5fd; word-break: break-all; }
+      .empty-state { color: #94a3b8; text-align: center; padding: 24px 0; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="toolbar">
+        <div>
+          <h1>Automation</h1>
+          <p class="muted">Pause, reschedule, or run the background publishing tasks. Times use the server clock.</p>
+        </div>
+        <a class="btn" href="{{ url_for('home') }}">Back</a>
+      </div>
+
+      <div id="flash-box"></div>
+
+      <div class="panel">
+        <div class="task-head">
+          <h2>Connections</h2>
+          <button class="btn" id="health-btn">Check connections</button>
+        </div>
+        <div class="health" id="health-box"><span class="muted">Not checked yet.</span></div>
+      </div>
+
+      <div id="task-list"><div class="panel empty-state">Loading tasks…</div></div>
+
+      <div class="panel">
+        <div class="task-head">
+          <h2>Auto-post suggestions</h2>
+          <button class="btn" id="refresh-candidates-btn">Refresh</button>
+        </div>
+        <p class="muted">Every product the auto-post task proposed on Telegram and what happened to it.</p>
+        <div class="table-wrap" id="candidate-box"><div class="empty-state">Loading…</div></div>
+      </div>
+    </div>
+
+    <script>
+      const API_BASE = "{{ url_for('automation.api_list_tasks') }}".replace(/\/tasks$/, "");
+      const taskListEl = document.getElementById("task-list");
+      const candidateBox = document.getElementById("candidate-box");
+      const flashBox = document.getElementById("flash-box");
+
+      function esc(value) {
+        return String(value ?? "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#39;");
+      }
+
+      function flash(message, kind) {
+        flashBox.innerHTML = `<div class="flash ${kind}">${esc(message)}</div>`;
+        setTimeout(() => { flashBox.innerHTML = ""; }, 6000);
+      }
+
+      async function api(path, options) {
+        const res = await fetch(`${API_BASE}${path}`, {
+          headers: { "Content-Type": "application/json" },
+          ...options,
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+        return data;
+      }
+
+      function fmtDate(value) {
+        if (!value) return "—";
+        const date = new Date(value);
+        return Number.isNaN(date.getTime()) ? esc(value) : date.toLocaleString();
+      }
+
+      function optionInput(task, field) {
+        const id = `opt-${task.key}-${field.name}`;
+        const value = task.options[field.name];
+        const help = field.help ? `<div class="help">${esc(field.help)}</div>` : "";
+        if (field.kind === "text") {
+          const lines = String(value ?? "").split(/[\s,]+/).filter(Boolean).join("\n");
+          return `<div class="field wide"><label for="${id}">${esc(field.label)}</label>
+            <textarea id="${id}" data-option="${esc(field.name)}">${esc(lines)}</textarea>${help}</div>`;
+        }
+        const step = field.kind === "float" ? "0.1" : "1";
+        const min = field.min !== null ? `min="${field.min}"` : "";
+        const max = field.max !== null ? `max="${field.max}"` : "";
+        return `<div class="field"><label for="${id}">${esc(field.label)}</label>
+          <input id="${id}" type="number" step="${step}" ${min} ${max} value="${esc(value)}" data-option="${esc(field.name)}" />${help}</div>`;
+      }
+
+      function renderTask(task) {
+        const state = task.state || {};
+        const lastResult = state.last_result
+          ? `<span class="badge ${esc(state.last_result)}">${esc(state.last_result)}</span>`
+          : "";
+        const lastError = state.last_error ? `<div class="err">Last error: ${esc(state.last_error)}</div>` : "";
+        return `
+          <div class="panel" data-task="${esc(task.key)}">
+            <div class="task-head">
+              <div>
+                <span class="badge ${task.enabled ? "on" : "off"}">${task.enabled ? "Active" : "Stopped"}</span>
+                ${task.running ? '<span class="badge running">Running</span>' : ""}
+                ${task.overridden ? '<span class="badge">Edited in UI</span>' : '<span class="badge">.env defaults</span>'}
+                <h2 style="margin-top:6px;">${esc(task.label)}</h2>
+                <p class="muted" style="margin:0;">${esc(task.description)}</p>
+              </div>
+              <label class="switch">
+                <input type="checkbox" data-field="enabled" ${task.enabled ? "checked" : ""} /> Enabled
+              </label>
+            </div>
+            <div class="fields">
+              <div class="field">
+                <label for="time-${esc(task.key)}">Daily run time (HH:MM)</label>
+                <input id="time-${esc(task.key)}" type="time" data-field="run_time" value="${esc(task.run_time)}" />
+              </div>
+              ${task.option_fields.map((field) => optionInput(task, field)).join("")}
+            </div>
+            <div class="meta">
+              Last scheduled run date: ${esc(state.last_run_date || "—")} ·
+              Last started: ${fmtDate(state.last_started_at)} (${esc(state.last_trigger || "—")}) ·
+              Last finished: ${fmtDate(state.last_finished_at)} ${lastResult}
+              ${lastError}
+            </div>
+            <div class="actions-row" style="margin-top:12px;">
+              <button class="btn btn-primary" data-action="save">Save</button>
+              <button class="btn" data-action="run" ${task.running ? "disabled" : ""}>Run now</button>
+              <button class="btn" data-action="reset" ${task.overridden ? "" : "disabled"}>Reset to .env defaults</button>
+            </div>
+          </div>`;
+      }
+
+      async function loadTasks() {
+        try {
+          const data = await api("/tasks");
+          const tasks = data.tasks || [];
+          taskListEl.innerHTML = tasks.length
+            ? tasks.map(renderTask).join("")
+            : '<div class="panel empty-state">No scheduled tasks registered.</div>';
+        } catch (err) {
+          taskListEl.innerHTML = `<div class="panel empty-state">${esc(err.message)}</div>`;
+        }
+      }
+
+      function collectTaskPayload(panel) {
+        const options = {};
+        panel.querySelectorAll("[data-option]").forEach((el) => {
+          options[el.dataset.option] = el.tagName === "TEXTAREA"
+            ? el.value.split(/\s+/).filter(Boolean).join("\n")
+            : el.value;
+        });
+        return {
+          enabled: panel.querySelector('[data-field="enabled"]').checked,
+          run_time: panel.querySelector('[data-field="run_time"]').value,
+          options,
+        };
+      }
+
+      taskListEl.addEventListener("click", async (event) => {
+        const button = event.target.closest("button[data-action]");
+        if (!button) return;
+        const panel = button.closest("[data-task]");
+        const key = panel.dataset.task;
+        const action = button.dataset.action;
+        button.disabled = true;
+        try {
+          if (action === "save") {
+            await api(`/tasks/${key}`, { method: "PUT", body: JSON.stringify(collectTaskPayload(panel)) });
+            flash("Schedule saved. It applies from the next check (within 20 seconds).", "success");
+          } else if (action === "run") {
+            if (!confirm("Run this task now? It may publish content or send a Telegram approval request.")) return;
+            await api(`/tasks/${key}/run`, { method: "POST" });
+            flash("Task started in the background.", "success");
+          } else if (action === "reset") {
+            await api(`/tasks/${key}/settings`, { method: "DELETE" });
+            flash("Reverted to .env defaults.", "success");
+          }
+          await loadTasks();
+        } catch (err) {
+          flash(err.message, "error");
+        } finally {
+          button.disabled = false;
+        }
+      });
+
+      function candidateRow(c) {
+        const content = c.content || {};
+        const product = c.product_data || {};
+        const retry = c.status === "failed"
+          ? `<button class="btn" data-retry="${c.id}">Retry publish</button>`
+          : "";
+        return `
+          <tr>
+            <td>${c.image_url ? `<img src="${esc(c.image_url)}" alt="" />` : ""}</td>
+            <td>
+              <div><strong>#${c.id}</strong> ${esc(content.title || c.title || "")}</div>
+              <div class="meta">${esc(product.price || "")} · ⭐ ${esc(product.rating ?? "—")} · ${esc(c.asin)}</div>
+              <a href="${esc(c.product_url || "#")}" target="_blank" rel="noopener">Amazon</a>
+              ${c.website_product_url ? ` · <a href="${esc(c.website_product_url)}" target="_blank" rel="noopener">kaymio.com</a>` : ""}
+              ${c.error ? `<div class="meta err" style="color:#fca5a5;">${esc(c.error)}</div>` : ""}
+            </td>
+            <td><span class="badge ${esc(c.status)}">${esc(c.status.replace("_", " "))}</span></td>
+            <td class="meta">Suggested ${fmtDate(c.created_at)}<br />Published ${fmtDate(c.published_at)}</td>
+            <td>${retry}</td>
+          </tr>`;
+      }
+
+      async function loadCandidates() {
+        try {
+          const data = await api("/auto-post/candidates");
+          const rows = data.candidates || [];
+          candidateBox.innerHTML = rows.length
+            ? `<table><thead><tr><th></th><th>Product</th><th>Status</th><th>Dates</th><th></th></tr></thead>
+                <tbody>${rows.map(candidateRow).join("")}</tbody></table>`
+            : '<div class="empty-state">No suggestions yet.</div>';
+        } catch (err) {
+          candidateBox.innerHTML = `<div class="empty-state">${esc(err.message)}</div>`;
+        }
+      }
+
+      candidateBox.addEventListener("click", async (event) => {
+        const button = event.target.closest("button[data-retry]");
+        if (!button) return;
+        if (!confirm("Retry publishing this product to the website and Instagram?")) return;
+        button.disabled = true;
+        try {
+          await api(`/auto-post/candidates/${button.dataset.retry}/retry`, { method: "POST" });
+          flash("Retry started. Results will also be sent to Telegram.", "success");
+          await loadCandidates();
+        } catch (err) {
+          flash(err.message, "error");
+          button.disabled = false;
+        }
+      });
+
+      function healthBadge(label, status) {
+        let badge = '<span class="badge off">not configured</span>';
+        if (status.configured || status.bot_username) {
+          badge = status.ok
+            ? '<span class="badge ok">connected</span>'
+            : `<span class="badge error">error</span>`;
+        }
+        const details = [];
+        if (status.bot_username) details.push(`@${esc(status.bot_username)}`);
+        if (status.updates_mode) details.push(`updates: ${esc(status.updates_mode)}`);
+        if (status.base_url) details.push(esc(status.base_url));
+        if (status.error) details.push(`<span style="color:#fca5a5;">${esc(status.error)}</span>`);
+        return `<div><strong>${label}</strong> ${badge}<div class="meta">${details.join(" · ")}</div></div>`;
+      }
+
+      document.getElementById("health-btn").addEventListener("click", async (event) => {
+        const button = event.currentTarget;
+        button.disabled = true;
+        try {
+          const data = await api("/health");
+          document.getElementById("health-box").innerHTML =
+            healthBadge("Crawl4AI", data.crawl4ai || {}) + healthBadge("Telegram bot", data.telegram || {});
+        } catch (err) {
+          flash(err.message, "error");
+        } finally {
+          button.disabled = false;
+        }
+      });
+
+      document.getElementById("refresh-candidates-btn").addEventListener("click", loadCandidates);
+
+      loadTasks();
+      loadCandidates();
+    </script>
+  </body>
+</html>

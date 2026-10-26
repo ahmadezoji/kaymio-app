@@ -11,7 +11,6 @@ from pathlib import Path
 import random
 from typing import Any, Dict, List, Optional, Sequence
 from urllib.parse import urlparse
-from uuid import uuid4
 
 import requests
 from dotenv import load_dotenv
@@ -32,6 +31,7 @@ from kaymio.integrations.instagram.instagram_api_helper import (
     send_instagram_private_reply,
 )
 from kaymio.utils.openai_helper import (
+    build_website_description,
     edit_image as edit_image_with_openai,
     generate_video_from_image as generate_video_with_openai,
     generate_caption_for_instagram,
@@ -66,22 +66,42 @@ from kaymio.database import (
 )
 from kaymio.database.state_store import set_last_product_id as db_set_last_product_id
 from kaymio.database.instagram_state import (
-    load_instagram_scheduler_state,
-    save_instagram_scheduler_state,
     load_instagram_media_reply_routes,
     save_instagram_media_reply_routes,
-    upsert_instagram_media_reply_route,
     load_instagram_comment_reply_states,
     save_instagram_comment_reply_states,
     upsert_instagram_comment_reply_state,
     prune_old_story_reply_routes,
+    register_media_reply_route,
 )
+from kaymio.features.auto_post import register_auto_post
+from kaymio.features.instagram_caption import (
+    compose_caption_with_hashtags,
+    prepend_comment_reply_caption_cta,
+)
+from kaymio.integrations.telegram import start_telegram_updates
+from kaymio.tasks import (
+    OptionField,
+    ScheduledTask,
+    TaskSettings,
+    register_task,
+    start_scheduled_tasks,
+    start_token_refresh_scheduler,
+)
+from kaymio.utils.media_storage import (
+    build_public_media_url,
+    download_image_bytes,
+    store_media,
+)
+from kaymio.utils.tags import sanitize_tag_list
 from PIL import Image, ImageOps
 from kaymio.routes.analytics_view import analytics_bp
+from kaymio.routes.automation_view import automation_bp, automation_page_bp
 from kaymio.routes.collections_view import collections_bp, collections_page_bp
 from kaymio.routes.file_manager_view import file_manager_bp
 from kaymio.routes.kaymio_wp_admin_view import kaymio_wp_admin_bp
 from kaymio.routes.settings_view import settings_bp
+from kaymio.routes.telegram_webhook_view import telegram_webhook_bp
 from kaymio.widgets.story_qr_widget import (
     StoryCtaWidgetConfig,
     StoryQrWidgetConfig,
@@ -101,6 +121,9 @@ app.register_blueprint(collections_page_bp)
 app.register_blueprint(file_manager_bp)
 app.register_blueprint(kaymio_wp_admin_bp)
 app.register_blueprint(settings_bp)
+app.register_blueprint(automation_bp)
+app.register_blueprint(automation_page_bp)
+app.register_blueprint(telegram_webhook_bp)
 app.config["SECRET_KEY"] = os.getenv("FLASK_SECRET_KEY", "dev-secret-key")
 app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp"}
@@ -202,14 +225,6 @@ def _empty_app_state() -> Dict[str, Any]:
     return {"products": {}, "last_product_id": ""}
 
 
-def _load_story_scheduler_state() -> Dict[str, Any]:
-    return load_instagram_scheduler_state()
-
-
-def _save_story_scheduler_state(payload: Dict[str, Any]) -> None:
-    save_instagram_scheduler_state(payload)
-
-
 def _load_instagram_media_reply_route_state() -> Dict[str, Any]:
     return load_instagram_media_reply_routes()
 
@@ -251,30 +266,13 @@ def _register_instagram_media_reply_route(
     *,
     reply_surface: str,
 ) -> None:
-    normalized_media_id = str(media_id or "").strip()
-    if not normalized_media_id:
+    if not register_media_reply_route(media_id, candidate, reply_surface=reply_surface):
         return
-    affiliate_link = str(candidate.get("affiliate_link") or "").strip()
-    if not affiliate_link:
-        return
-    route_data = {
-        "product_id": str(candidate.get("product_id") or ""),
-        "affiliate_link": affiliate_link,
-        "product_url": str(candidate.get("product_url") or "").strip(),
-        "title": str(candidate.get("title") or ""),
-        "description": str(candidate.get("description") or ""),
-        "reply_surface": reply_surface,
-        "published_at": dt.datetime.utcnow().isoformat(),
-    }
-    upsert_instagram_media_reply_route(normalized_media_id, route_data)
-    routes = _load_instagram_media_reply_route_state()
     app.logger.info(
-        "Registered Instagram media reply route: media_id=%s surface=%s product_id=%s affiliate_link_present=%s total_routes=%s",
-        normalized_media_id,
+        "Registered Instagram media reply route: media_id=%s surface=%s product_id=%s",
+        str(media_id).strip(),
         reply_surface,
         str(candidate.get("product_id") or ""),
-        bool(affiliate_link),
-        len(routes),
     )
 
 
@@ -534,16 +532,11 @@ def _build_public_media_url(relative_path: str) -> str:
     """Build an externally-reachable /media/ URL for the scheduler thread.
 
     The scheduler runs outside any Flask request, so url_for(_external=True)
-    has no request/host to build from and raises RuntimeError. PUBLIC_APP_BASE_URL
-    must be set to this app's publicly reachable origin for scheduled stories to
-    include the composed image (CTA/QR) instead of falling back to the raw product photo.
+    has no request/host to build from. PUBLIC_APP_BASE_URL must be set for
+    scheduled stories to include the composed image (CTA/QR) instead of
+    falling back to the raw product photo.
     """
-    if not PUBLIC_APP_BASE_URL:
-        raise RuntimeError(
-            "PUBLIC_APP_BASE_URL is not configured; cannot build a public media URL "
-            "from the background scheduler."
-        )
-    return f"{PUBLIC_APP_BASE_URL}/media/{relative_path}"
+    return build_public_media_url(relative_path)
 
 
 def _cleanup_stale_generated_images(max_age_seconds: int = 86400) -> None:
@@ -561,7 +554,7 @@ def _cleanup_stale_generated_images(max_age_seconds: int = 86400) -> None:
         pass
 
 
-def _publish_scheduled_instagram_stories() -> None:
+def _publish_scheduled_instagram_stories(count: int = STORY_AUTOPUBLISH_COUNT) -> None:
     # Prune old story reply routes (Instagram Stories expire after 24 h)
     try:
         pruned = prune_old_story_reply_routes(max_age_hours=24)
@@ -583,7 +576,7 @@ def _publish_scheduled_instagram_stories() -> None:
         return
     random.shuffle(candidates)
     used_products: set[str] = set()
-    while posted < STORY_AUTOPUBLISH_COUNT:
+    while posted < count:
         _story_tmp_path: Optional[Path] = None
         try:
             candidate = None
@@ -711,19 +704,6 @@ def _is_instagram_comment_reply_trigger(comment_text: str) -> bool:
     if not normalized_text:
         return False
     return normalized_text in INSTAGRAM_COMMENT_REPLY_TRIGGER_VALUES
-
-
-def _build_instagram_comment_reply_caption_cta() -> str:
-    trigger = str(INSTAGRAM_COMMENT_REPLY_DISPLAY_TRIGGER or "buy").strip().upper()
-    return f'COMMENT "{trigger}" FOR PRODUCT INFO + LINK'
-
-
-def _prepend_instagram_comment_reply_caption_cta(caption: str) -> str:
-    base_caption = str(caption or "").strip()
-    cta = _build_instagram_comment_reply_caption_cta()
-    if base_caption.casefold().startswith(cta.casefold()):
-        return base_caption
-    return f"{cta}\n\n{base_caption}" if base_caption else cta
 
 
 def _handle_instagram_messaging_event(event: Dict[str, Any]) -> None:
@@ -905,54 +885,31 @@ def _handle_instagram_comment_change(change: Dict[str, Any]) -> None:
     )
 
 
-def _instagram_story_scheduler_loop() -> None:
-    import sys
-    print(f"🔔 Instagram story scheduler started for {STORY_AUTOPUBLISH_TIME}", file=sys.stderr, flush=True)
-    app.logger.info("Instagram story scheduler started for %s", STORY_AUTOPUBLISH_TIME)
-    while True:
-        try:
-            now = dt.datetime.now()
-            target_hour, target_minute = [int(part) for part in STORY_AUTOPUBLISH_TIME.split(":", 1)]
-            state = _load_story_scheduler_state()
-            last_run_date = state.get("last_run_date")
-            today = now.date().isoformat()
-            should_run = (
-                now.hour == target_hour
-                and now.minute >= target_minute
-                and last_run_date != today
-            )
-            # Log every minute for debugging
-            if now.minute % 10 == 0:  # Log every 10 minutes to avoid spam
-                print(f"DEBUG scheduler: now={now.time()}, target={target_hour}:{target_minute:02d}, last_run={last_run_date}, today={today}, should_run={should_run}", file=sys.stderr, flush=True)
-            if should_run:
-                print(f"DEBUG: TRIGGERING story publish at {now.time()}", file=sys.stderr, flush=True)
-                _publish_scheduled_instagram_stories()
-                _save_story_scheduler_state({"last_run_date": today})
-            time.sleep(20)
-        except Exception:
-            print(f"DEBUG: Scheduler loop exception", file=sys.stderr, flush=True)
-            import traceback
-            traceback.print_exc(file=sys.stderr)
-            app.logger.exception("Instagram scheduler loop error")
-            time.sleep(30)
+def _run_scheduled_instagram_stories(settings: TaskSettings) -> None:
+    _publish_scheduled_instagram_stories(count=int(settings.options["count"]))
 
 
-def start_instagram_story_scheduler() -> None:
-    import sys
-    enabled = STORY_AUTOPUBLISH_ENABLED
-    print(f"DEBUG: STORY_AUTOPUBLISH_ENABLED={enabled}", file=sys.stderr, flush=True)
-    if not enabled:
-        print("DEBUG: Instagram story scheduler disabled.", file=sys.stderr, flush=True)
-        app.logger.info("Instagram story scheduler disabled.")
-        return
-    print("DEBUG: Starting Instagram scheduler thread...", file=sys.stderr, flush=True)
-    thread = threading.Thread(
-        target=_instagram_story_scheduler_loop,
-        name="instagram-story-scheduler",
-        daemon=True,
+register_task(
+    ScheduledTask(
+        key="instagram_story",
+        label="Instagram stories",
+        description="Publishes random kaymio.com products as Instagram stories with a CTA + affiliate QR code.",
+        run=_run_scheduled_instagram_stories,
+        default_enabled=STORY_AUTOPUBLISH_ENABLED,
+        default_run_time=STORY_AUTOPUBLISH_TIME,
+        option_fields=(
+            OptionField("count", "Stories per run", "int", STORY_AUTOPUBLISH_COUNT, min=1, max=10),
+        ),
     )
-    thread.start()
-    print("DEBUG: Instagram scheduler thread started (daemon).", file=sys.stderr, flush=True)
+)
+register_auto_post()
+
+
+def start_background_services() -> None:
+    """Start the task scheduler, OAuth token refresh, and the Telegram bot listener."""
+    start_scheduled_tasks()
+    start_token_refresh_scheduler()
+    start_telegram_updates()
 
 
 def _json_safe(data: Any) -> Any:
@@ -1794,19 +1751,7 @@ def allowed_video_file(filename: str) -> bool:
 
 
 def _store_image(bytes_data: bytes, directory: Path, suffix: str) -> str:
-    print(f"DEBUG _store_image: bytes_data type={type(bytes_data)}, len={len(bytes_data) if bytes_data else 0}", file=sys.stderr, flush=True)
-    directory.mkdir(parents=True, exist_ok=True)
-    print(f"DEBUG _store_image: directory created/ensured at {directory}", file=sys.stderr, flush=True)
-    filename = f"{uuid4().hex}{suffix}"
-    destination = directory / filename
-    print(f"DEBUG _store_image: writing to {destination}", file=sys.stderr, flush=True)
-    with open(destination, "wb") as file_handle:
-        bytes_written = file_handle.write(bytes_data)
-        print(f"DEBUG _store_image: wrote {bytes_written} bytes", file=sys.stderr, flush=True)
-    print(f"DEBUG _store_image: file exists after write? {destination.exists()}", file=sys.stderr, flush=True)
-    relative_path = destination.relative_to(STORAGE_ROOT).as_posix()
-    print(f"DEBUG _store_image: returning {relative_path}", file=sys.stderr, flush=True)
-    return relative_path
+    return store_media(bytes_data, directory, suffix)
 
 
 def resolve_storage_path(relative_path: str) -> Optional[str]:
@@ -1891,25 +1836,6 @@ def parse_tags_payload(raw_tags: str) -> List[str]:
     return sanitize_tag_list(normalized.split(","))
 
 
-def sanitize_tag_list(raw_items: List[str]) -> List[str]:
-    cleaned: List[str] = []
-    seen = set()
-    for raw_item in raw_items:
-        token = str(raw_item or "").strip()
-        if not token:
-            continue
-        token = token.lstrip("#").strip()
-        token = token.strip(" \t\r\n.,:;!?/\\|()[]{}<>\"'`")
-        if not token or token in {"&", "+", "-", "_"}:
-            continue
-        normalized_key = token.casefold()
-        if normalized_key in seen:
-            continue
-        cleaned.append(token)
-        seen.add(normalized_key)
-    return cleaned
-
-
 def resolve_destination_url(product_id: str, affiliate_link: str, use_affiliate_link: bool) -> str:
     if use_affiliate_link or not product_id:
         return affiliate_link
@@ -1931,28 +1857,6 @@ def build_prompt_context(form_values: Dict[str, str]) -> str:
         if value:
             context_bits.append(f"{field.replace('_', ' ').title()}: {value}")
     return " | ".join(context_bits)
-
-
-def build_website_description(title: str, base_description: str, boost_prompt: str) -> str:
-    if not boost_prompt:
-        return base_description
-    payload = (
-        f"Title: {title}\nExisting Description: {base_description}\n"
-        f"Boost Prompt: {boost_prompt}"
-    )
-    enhanced = generate_text(
-        payload,
-        context=(
-            "You are an e-commerce copywriter. Expand concise marketing copy into "
-            "a compelling store-ready product description in under 180 words."
-        ),
-        user_prompt=(
-            "Rewrite the e-commerce product description using the boost prompt guidance:\n{text}"
-        ),
-        max_tokens=220,
-        temperature=0.6,
-    )
-    return enhanced or base_description
 
 
 def resolve_amazon_domain(raw_url: str) -> str:
@@ -1996,13 +1900,6 @@ def guess_filename_from_url(raw_url: str, default_name: str = "amazon") -> str:
     if suffix.lstrip(".") not in ALLOWED_EXTENSIONS:
         suffix = ".jpg"
     return f"{default_name}{suffix}"
-
-
-def download_image_bytes(image_url: str) -> bytes:
-    resp = requests.get(image_url, timeout=15)
-    if resp.status_code != 200:
-        raise ValueError(f"Image download failed ({resp.status_code}).")
-    return resp.content
 
 
 def resolve_source_image_urls(saved_state: Dict[str, Any]) -> List[str]:
@@ -2848,7 +2745,7 @@ def generate_pinterest():
             generated_description,
             call_to_action=form_values.get("pinterest_extra"),
         )
-        instagram_caption = _prepend_instagram_comment_reply_caption_cta(instagram_caption)
+        instagram_caption = prepend_comment_reply_caption_cta(instagram_caption)
         instagram_hashtags = sanitize_tag_list(
             generate_hashtags_for_instagram(refined_title, generated_description)
         )
@@ -3267,17 +3164,10 @@ def publish_instagram():
         return render_home_view(form_values, preview_payload, product_id=product_id)
 
     caption = raw_form_values.get("instagram_caption", "")
-    caption_with_comment_cta = _prepend_instagram_comment_reply_caption_cta(caption)
-    hashtags = parse_tags_payload(raw_form_values.get("instagram_hashtags_payload", "[]"))
-    normalized_tags = [tag.lstrip("#").replace(" ", "") for tag in hashtags if tag]
-    if normalized_tags:
-        tags_block = " ".join(f"#{tag}" for tag in normalized_tags)
-        caption_to_publish = caption_with_comment_cta.strip()
-        caption_to_publish = (
-            f"{caption_to_publish}\n\n{tags_block}" if caption_to_publish else tags_block
-        )
-    else:
-        caption_to_publish = caption_with_comment_cta.strip()
+    caption_to_publish = compose_caption_with_hashtags(
+        prepend_comment_reply_caption_cta(caption),
+        parse_tags_payload(raw_form_values.get("instagram_hashtags_payload", "[]")),
+    )
 
     target = raw_form_values.get("target", "feed")
     try:
@@ -3437,19 +3327,10 @@ def publish_instagram_reel_route():
         flash("Generate the Instagram Reel video first, then publish.", "error")
         return render_home_view(form_values, preview_payload, product_id=product_id)
 
-    caption = _prepend_instagram_comment_reply_caption_cta(
-        raw_form_values.get("instagram_caption", "")
+    caption_to_publish = compose_caption_with_hashtags(
+        prepend_comment_reply_caption_cta(raw_form_values.get("instagram_caption", "")),
+        parse_tags_payload(raw_form_values.get("instagram_hashtags_payload", "[]")),
     )
-    hashtags = parse_tags_payload(raw_form_values.get("instagram_hashtags_payload", "[]"))
-    normalized_tags = [tag.lstrip("#").replace(" ", "") for tag in hashtags if tag]
-    if normalized_tags:
-        tags_block = " ".join(f"#{tag}" for tag in normalized_tags)
-        caption_to_publish = caption.strip()
-        caption_to_publish = (
-            f"{caption_to_publish}\n\n{tags_block}" if caption_to_publish else tags_block
-        )
-    else:
-        caption_to_publish = caption.strip()
 
     try:
         media_url = url_for("serve_media", filename=video_path, _external=True)
@@ -4140,6 +4021,6 @@ if __name__ == "__main__":
     debug_enabled = os.getenv("FLASK_DEBUG", "0") in TRUTHY_VALUES
     init_db()
     if not debug_enabled or os.getenv("WERKZEUG_RUN_MAIN") == "true":
-        start_instagram_story_scheduler()
+        start_background_services()
     app.run(debug=debug_enabled, host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
     # update_affiliate_links()

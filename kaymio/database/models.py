@@ -280,3 +280,43 @@ class OAuthCredential(Base):
     raw_data: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow)
     updated_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+
+class ScheduledTaskSetting(Base):
+    """UI overrides for a background scheduled task; .env values are the defaults."""
+
+    __tablename__ = "scheduled_task_settings"
+
+    task_key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    run_time: Mapped[str] = mapped_column(String(5))  # HH:MM, server local time
+    options: Mapped[str | None] = mapped_column(Text)  # JSON-encoded dict
+    updated_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+
+class AutoPostCandidate(Base):
+    """An Amazon product proposed by the auto-post task and its approval/publish lifecycle."""
+
+    __tablename__ = "auto_post_candidates"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    asin: Mapped[str] = mapped_column(String(16), unique=True, index=True)
+    # pending_approval | rejected | expired | publishing | published | failed
+    status: Mapped[str] = mapped_column(String(32), index=True, default="pending_approval")
+    title: Mapped[str | None] = mapped_column(Text)
+    product_url: Mapped[str | None] = mapped_column(Text)
+    image_url: Mapped[str | None] = mapped_column(Text)
+    product_data: Mapped[str | None] = mapped_column(Text)  # JSON: AmazonProduct
+    content: Mapped[str | None] = mapped_column(Text)  # JSON: generated captions/descriptions
+
+    telegram_chat_id: Mapped[str | None] = mapped_column(String(64))
+    telegram_message_id: Mapped[int | None] = mapped_column(Integer)
+
+    website_product_url: Mapped[str | None] = mapped_column(Text)
+    instagram_media_id: Mapped[str | None] = mapped_column(String(191))
+    error: Mapped[str | None] = mapped_column(Text)
+
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow)
+    updated_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
+    decided_at: Mapped[dt.datetime | None] = mapped_column(DateTime)
+    published_at: Mapped[dt.datetime | None] = mapped_column(DateTime)
