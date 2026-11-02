@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
+from typing import Optional
 from uuid import uuid4
 
 import requests
@@ -35,6 +36,16 @@ def store_media(bytes_data: bytes, directory: Path, suffix: str) -> str:
 
 def save_generated_image(bytes_data: bytes, suffix: str = ".png") -> str:
     return store_media(bytes_data, GENERATED_DIR, suffix)
+
+
+def load_media(relative_path: str) -> Optional[bytes]:
+    """Bytes of a stored file, or None if the path is empty, outside storage or missing."""
+    if not relative_path:
+        return None
+    target = (STORAGE_ROOT / relative_path).resolve()
+    if not str(target).startswith(str(STORAGE_ROOT.resolve())) or not target.is_file():
+        return None
+    return target.read_bytes()
 
 
 def delete_media(relative_path: str) -> None:

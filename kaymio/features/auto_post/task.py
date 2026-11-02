@@ -55,6 +55,7 @@ def run_auto_post(settings: TaskSettings) -> None:
         image_count=int(options["image_count"]),
         call_to_action=config.CAPTION_CTA,
         website_boost_prompt=config.WEBSITE_BOOST_PROMPT,
+        include_ai_image_concept=config.AI_IMAGE_ENABLED,
     )
     candidate = create_candidate(
         asin=product.asin,
@@ -78,7 +79,8 @@ AUTO_POST_TASK = ScheduledTask(
     label="Instagram auto-post (Amazon trending)",
     description=(
         "Finds the top trending, well-rated Amazon product that kaymio.com doesn't have yet, "
-        "asks for approval on Telegram, then adds it to the website and posts a carousel to Instagram."
+        "asks for approval on Telegram, then adds it to the website, generates an AI hero image, "
+        "posts a carousel to Instagram (AI image first) and pins the AI image on Pinterest."
     ),
     run=run_auto_post,
     default_enabled=config.ENABLED,

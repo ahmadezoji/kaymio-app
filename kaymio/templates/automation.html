@@ -299,6 +299,7 @@
               <div class="meta">${esc(product.price || "")} · ⭐ ${esc(product.rating ?? "—")} · ${esc(c.asin)}</div>
               <a href="${esc(c.product_url || "#")}" target="_blank" rel="noopener">Amazon</a>
               ${c.website_product_url ? ` · <a href="${esc(c.website_product_url)}" target="_blank" rel="noopener">kaymio.com</a>` : ""}
+              ${c.pinterest_pin_url ? ` · <a href="${esc(c.pinterest_pin_url)}" target="_blank" rel="noopener">Pinterest</a>` : ""}
               ${c.error ? `<div class="meta err" style="color:#fca5a5;">${esc(c.error)}</div>` : ""}
             </td>
             <td><span class="badge ${esc(c.status)}">${esc(c.status.replace("_", " "))}</span></td>

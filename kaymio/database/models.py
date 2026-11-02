@@ -314,6 +314,8 @@ class AutoPostCandidate(Base):
 
     website_product_url: Mapped[str | None] = mapped_column(Text)
     instagram_media_id: Mapped[str | None] = mapped_column(String(191))
+    ai_image_path: Mapped[str | None] = mapped_column(Text)  # generated hero image (storage-relative)
+    pinterest_pin_url: Mapped[str | None] = mapped_column(Text)
     error: Mapped[str | None] = mapped_column(Text)
 
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow)

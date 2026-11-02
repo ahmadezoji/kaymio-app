@@ -19,6 +19,9 @@ from kaymio.utils.openai_helper import (
     build_website_description,
     generate_caption_for_instagram,
     generate_hashtags_for_instagram,
+    generate_pinterest_description,
+    generate_pinterest_title,
+    generate_product_scene_concept,
     generate_tags_for_product_for_pintrest,
     generate_text,
 )
@@ -33,7 +36,10 @@ class AutoPostContent:
     website_description: str
     website_tags: List[str] = field(default_factory=list)
     instagram_caption: str = ""  # final caption incl. CTA + hashtags
-    image_urls: List[str] = field(default_factory=list)  # images used for website + carousel
+    image_urls: List[str] = field(default_factory=list)  # original images: website + carousel
+    pinterest_title: str = ""
+    pinterest_description: str = ""  # hashtags from website_tags are appended on publish
+    ai_image_concept: str = ""  # scene for the AI hero image (environment only, product unchanged)
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -50,6 +56,7 @@ def generate_auto_post_content(
     image_count: int,
     call_to_action: str = "",
     website_boost_prompt: str = "",
+    include_ai_image_concept: bool = False,
 ) -> AutoPostContent:
     title = _store_title(product.title)
     summary = _product_summary(product)
@@ -61,12 +68,16 @@ def generate_auto_post_content(
         hashtags,
     )
 
+    pinterest_title = generate_pinterest_title(title, summary)
     return AutoPostContent(
         title=title,
         website_description=_website_description(title, summary, product.bullets, website_boost_prompt),
         website_tags=sanitize_tag_list(generate_tags_for_product_for_pintrest(title, summary)),
         instagram_caption=instagram_caption,
         image_urls=product.image_urls[: max(1, image_count)],
+        pinterest_title=pinterest_title,
+        pinterest_description=generate_pinterest_description(pinterest_title, summary),
+        ai_image_concept=generate_product_scene_concept(title, summary) if include_ai_image_concept else "",
     )
 
 
