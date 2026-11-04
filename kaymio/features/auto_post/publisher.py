@@ -1,8 +1,9 @@
 """Publish an approved candidate: kaymio.com, AI hero image, Instagram, Pinterest.
 
-Order: website (original Amazon images) -> AI hero image generated from the
-primary photo -> Instagram carousel (AI image first, then the originals) ->
-Pinterest pin (AI image only, linking to the affiliate URL).
+Order: website (original product images) -> AI hero image generated from the
+primary photo (only when "Use AI image" was ticked on Telegram) -> Instagram
+carousel (AI image first when used, then the originals) -> Pinterest pin (the AI
+image, or the original main image, linking to the affiliate URL).
 
 Each step stores its result as soon as it succeeds, so a retry after a
 partial failure (e.g. website done, Instagram failed) only redoes what's left.
@@ -65,7 +66,7 @@ def publish_candidate(candidate_id: int) -> Dict[str, Any]:
             update_candidate(candidate_id, website_product_url=website_url)
 
         ai_image: Optional[bytes] = None
-        if config.AI_IMAGE_ENABLED:
+        if config.AI_IMAGE_ENABLED and content.use_ai_image:
             ai_image = _ensure_ai_image(candidate_id, candidate.get("ai_image_path") or "", product, content)
 
         media_id = candidate.get("instagram_media_id") or ""
@@ -73,7 +74,7 @@ def publish_candidate(candidate_id: int) -> Dict[str, Any]:
             media_id = publish_to_instagram(product, content, website_url=website_url, lead_image=ai_image)
             update_candidate(candidate_id, instagram_media_id=media_id)
 
-        if config.PINTEREST_ENABLED and ai_image and not candidate.get("pinterest_pin_url"):
+        if config.PINTEREST_ENABLED and not candidate.get("pinterest_pin_url"):
             pin_url = publish_to_pinterest(product, content, ai_image)
             update_candidate(candidate_id, pinterest_pin_url=pin_url)
     except Exception as exc:
@@ -167,10 +168,20 @@ def _ensure_ai_image(
     return image
 
 
-def publish_to_pinterest(product: AmazonProduct, content: AutoPostContent, ai_image: bytes) -> str:
-    """Pin the AI hero image, linking to the affiliate URL. Returns the pin URL."""
+def publish_to_pinterest(product: AmazonProduct, content: AutoPostContent, ai_image: Optional[bytes]) -> str:
+    """Pin the AI hero image, or the original main photo when no AI image is used.
+
+    Links to the affiliate URL. Returns the pin URL.
+    """
+    if ai_image:
+        pin_image = cover_to_size(ai_image, config.PINTEREST_IMAGE_SIZE)
+    else:
+        if not content.image_urls:
+            raise RuntimeError("Product has no image to pin on Pinterest.")
+        # Pad (never crop) the original so the whole product stays visible.
+        pin_image = pad_to_canvas(download_image_bytes(content.image_urls[0]), config.PINTEREST_IMAGE_SIZE)
     response = create_pinterest_pin(
-        cover_to_size(ai_image, config.PINTEREST_IMAGE_SIZE),
+        pin_image,
         content.pinterest_title or content.title,
         content.pinterest_description or (product.bullets[0] if product.bullets else content.title),
         product.affiliate_link,

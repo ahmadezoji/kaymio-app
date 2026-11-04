@@ -1,7 +1,9 @@
 """Telegram approval step: nothing is published until the user taps Approve.
 
-Message: the product's top image + title/price/rating/Amazon link + caption
-preview, with ✅ Approve / ❌ Cancel buttons (callback ``autopost:<action>:<id>``).
+Message: the product's top image + title/price/rating/link + caption preview,
+with a "Use AI image" toggle (off by default) and ✅ Approve / ❌ Cancel buttons
+(callback ``autopost:<action>:<id>``). The toggle decides whether the post leads
+with an AI-generated hero image or uses only the original product photos.
 """
 from __future__ import annotations
 
@@ -39,8 +41,10 @@ logger = logging.getLogger(__name__)
 CALLBACK_NAMESPACE = "autopost"
 ACTION_APPROVE = "approve"
 ACTION_CANCEL = "cancel"
+ACTION_TOGGLE_AI = "toggleai"
 CAPTION_PREVIEW_CHARS = 300
 CONCEPT_PREVIEW_CHARS = 220
+CAPTION_LIMIT = 1024  # Telegram photo caption limit
 
 
 # --------------------------------------------------------------------------- #
@@ -49,21 +53,33 @@ CONCEPT_PREVIEW_CHARS = 220
 def send_approval_request(candidate: Dict[str, Any]) -> Dict[str, Any]:
     """Send the approval message and store its Telegram ids on the candidate."""
     settings = get_telegram_settings()
-    keyboard = inline_keyboard([[
-        InlineButton("✅ Approve & publish", f"{CALLBACK_NAMESPACE}:{ACTION_APPROVE}:{candidate['id']}"),
-        InlineButton("❌ Cancel", f"{CALLBACK_NAMESPACE}:{ACTION_CANCEL}:{candidate['id']}"),
-    ]])
     message = get_telegram_bot().send_photo(
         settings.chat_id,
         candidate["image_url"],
         caption=build_approval_caption(candidate),
-        reply_markup=keyboard,
+        reply_markup=approval_keyboard(candidate["id"], use_ai_image=_uses_ai_image(candidate)),
     )
     return update_candidate(
         candidate["id"],
         telegram_chat_id=settings.chat_id,
         telegram_message_id=int(message["message_id"]),
     )
+
+
+def approval_keyboard(candidate_id: int, *, use_ai_image: bool) -> Dict[str, Any]:
+    rows = []
+    if config.AI_IMAGE_ENABLED:
+        label = "☑ Use AI image" if use_ai_image else "☐ Use AI image"
+        rows.append([InlineButton(label, f"{CALLBACK_NAMESPACE}:{ACTION_TOGGLE_AI}:{candidate_id}")])
+    rows.append([
+        InlineButton("✅ Approve & publish", f"{CALLBACK_NAMESPACE}:{ACTION_APPROVE}:{candidate_id}"),
+        InlineButton("❌ Cancel", f"{CALLBACK_NAMESPACE}:{ACTION_CANCEL}:{candidate_id}"),
+    ])
+    return inline_keyboard(rows)
+
+
+def _uses_ai_image(candidate: Dict[str, Any]) -> bool:
+    return bool((candidate.get("content") or {}).get("use_ai_image"))
 
 
 def build_approval_caption(candidate: Dict[str, Any]) -> str:
@@ -90,10 +106,9 @@ def build_approval_caption(candidate: Dict[str, Any]) -> str:
         facts.append(f"🔥 #{product['source_rank']} {where}")
     id_label = "AliExpress ID" if is_aliexpress else "ASIN"
 
-    preview = _shorten(str(content.get("instagram_caption") or ""), CAPTION_PREVIEW_CHARS)
-    concept = _shorten(str(content.get("ai_image_concept") or ""), CONCEPT_PREVIEW_CHARS)
-
-    lines = [
+    caption_text = str(content.get("instagram_caption") or "")
+    concept_text = str(content.get("ai_image_concept") or "") if config.AI_IMAGE_ENABLED else ""
+    header = [
         f"🆕 <b>New {'AliExpress' if is_aliexpress else 'Amazon'} product suggestion #{candidate['id']}</b>",
         "",
         f"<b>{esc(str(content.get('title') or candidate.get('title') or ''))}</b>",
@@ -101,12 +116,26 @@ def build_approval_caption(candidate: Dict[str, Any]) -> str:
         f"🏷 {esc(str(product.get('category') or 'Uncategorized'))} · {id_label} {esc(candidate['asin'])}",
         f"🔗 {esc(str(candidate.get('product_url') or ''))}",
         "",
-        f"📝 <i>Instagram caption:</i>\n{esc(preview)}",
-        "",
-        *([f"🎨 <i>AI image idea:</i> {esc(concept)}", ""] if concept else []),
-        _approval_summary(len(content.get("image_urls") or [])),
     ]
-    return "\n".join(lines)
+    summary = _approval_summary(len(content.get("image_urls") or []))
+
+    # Telegram cuts photo captions at 1024 chars; shrink the previews (not the
+    # summary) so the AI image hint at the end always stays visible.
+    preview_chars, concept_chars = CAPTION_PREVIEW_CHARS, CONCEPT_PREVIEW_CHARS
+    while True:
+        preview = _shorten(caption_text, preview_chars)
+        concept = _shorten(concept_text, concept_chars)
+        lines = header + [
+            f"📝 <i>Instagram caption:</i>\n{esc(preview)}",
+            "",
+            *([f"🎨 <i>AI image idea:</i> {esc(concept)}", ""] if concept else []),
+            summary,
+        ]
+        text = "\n".join(lines)
+        if len(text) <= CAPTION_LIMIT or (preview_chars <= 40 and concept_chars <= 40):
+            return text
+        preview_chars = max(40, preview_chars - 40)
+        concept_chars = max(40, concept_chars - 30)
 
 
 def _shorten(text: str, limit: int) -> str:
@@ -114,15 +143,17 @@ def _shorten(text: str, limit: int) -> str:
 
 
 def _approval_summary(original_image_count: int) -> str:
-    steps = ["add it to kaymio.com (original images)"]
+    targets = ["kaymio.com", f"Instagram ({original_image_count} original photos)"]
+    if config.PINTEREST_ENABLED:
+        targets.append("Pinterest (main photo)")
+    summary = "✅ Approve → " + " + ".join(targets) + "."
     if config.AI_IMAGE_ENABLED:
-        steps.append(f"generate an AI hero image ({config.AI_IMAGE_MODEL})")
-        steps.append(f"post it + {original_image_count} original image(s) to Instagram")
-        if config.PINTEREST_ENABLED:
-            steps.append("pin the AI image on Pinterest")
-    else:
-        steps.append(f"post {original_image_count} image(s) to Instagram")
-    return "Approve to " + ", ".join(steps) + "."
+        summary += (
+            f"\n🤖 Tick <b>Use AI image</b> to add an AI hero image ({html.escape(config.AI_IMAGE_MODEL)}) "
+            "first on Instagram and pin it on Pinterest."
+        )
+    return summary
+
 
 
 def notify(text: str, *, reply_to_message_id: Optional[int] = None) -> None:
@@ -200,6 +231,10 @@ def _handle_callback(query: CallbackQuery) -> None:
     if candidate["status"] == STATUS_PENDING and _is_stale(candidate):
         transition_candidate(candidate_id, from_statuses={STATUS_PENDING}, to_status=STATUS_EXPIRED)
 
+    if action == ACTION_TOGGLE_AI:
+        _toggle_ai_image(query, candidate)
+        return
+
     if action == ACTION_APPROVE:
         claimed = start_publish(candidate_id)
         reply = "Approved — publishing now…" if claimed else _status_reply(candidate_id)
@@ -226,6 +261,29 @@ def _handle_callback(query: CallbackQuery) -> None:
             f"{'⏳' if action == ACTION_APPROVE and claimed else 'ℹ️'} #{candidate_id}: {html.escape(reply)}",
             reply_to_message_id=query.message_id,
         )
+
+
+def _toggle_ai_image(query: CallbackQuery, candidate: Dict[str, Any]) -> None:
+    bot = get_telegram_bot()
+    if candidate["status"] != STATUS_PENDING:
+        bot.answer_callback_query(query.id, _status_reply(candidate["id"]))
+        return
+    content = dict(candidate.get("content") or {})
+    content["use_ai_image"] = not bool(content.get("use_ai_image"))
+    update_candidate(candidate["id"], content=content)
+    if query.message_id:
+        try:
+            bot.edit_inline_keyboard(
+                query.chat_id,
+                query.message_id,
+                approval_keyboard(candidate["id"], use_ai_image=content["use_ai_image"]),
+            )
+        except TelegramApiError:
+            logger.debug("Could not update the AI image toggle.", exc_info=True)
+    bot.answer_callback_query(
+        query.id,
+        "AI hero image ON" if content["use_ai_image"] else "AI image OFF — original photos only",
+    )
 
 
 def _is_stale(candidate: Dict[str, Any]) -> bool:

@@ -40,6 +40,8 @@ class AutoPostContent:
     pinterest_title: str = ""
     pinterest_description: str = ""  # hashtags from website_tags are appended on publish
     ai_image_concept: str = ""  # scene for the AI hero image (environment only, product unchanged)
+    # Set from the "Use AI image" toggle on the Telegram approval message (off by default).
+    use_ai_image: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)

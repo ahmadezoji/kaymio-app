@@ -140,6 +140,12 @@ class TelegramBotClient:
             payload["reply_markup"] = reply_markup
         return self.call("sendPhoto", payload)
 
+    def edit_inline_keyboard(self, chat_id: str, message_id: int, reply_markup: Dict[str, Any]) -> None:
+        self.call(
+            "editMessageReplyMarkup",
+            {"chat_id": chat_id, "message_id": message_id, "reply_markup": reply_markup},
+        )
+
     def remove_inline_keyboard(self, chat_id: str, message_id: int) -> None:
         self.call(
             "editMessageReplyMarkup",
