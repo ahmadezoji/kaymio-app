@@ -8,6 +8,7 @@ import logging
 import math
 import os
 import random
+import re
 import time
 from typing import Dict, List, Optional, Sequence, Tuple, Union
 
@@ -48,9 +49,16 @@ def _get_client() -> OpenAI:
     return _client
 
 
+def _strip_code_fences(text: str) -> str:
+    """Models sometimes wrap JSON in ```json ... ``` fences; return the bare JSON text."""
+    stripped = (text or "").strip()
+    match = re.match(r"^```[a-zA-Z0-9_-]*\s*(.*?)\s*```$", stripped, re.DOTALL)
+    return match.group(1) if match else stripped
+
+
 def _safe_json_loads(payload: str) -> Dict[str, str]:
     try:
-        return json.loads(payload)
+        return json.loads(_strip_code_fences(payload))
     except json.JSONDecodeError:
         logger.warning("OpenAI response was not valid JSON: %s", payload)
         return {}
@@ -646,7 +654,7 @@ def generate_tags_for_product_for_pintrest(title: str, description: str) -> List
             ],
         )
         text = response.output_text
-        tags = json.loads(text)
+        tags = json.loads(_strip_code_fences(text))
         return [str(tag).strip() for tag in tags if str(tag).strip()][:8]
     except Exception as exc:  # pragma: no cover
         logger.exception("OpenAI generate_tags_for_product_for_pintrest failed: %s", exc)
@@ -698,7 +706,7 @@ def generate_hashtags_for_instagram(title: str, description: str) -> List[str]:
         return fallback
 
     try:
-        tags = json.loads(text)
+        tags = json.loads(_strip_code_fences(text))
         return [str(tag).strip().lstrip("#") for tag in tags if str(tag).strip()][:15]
     except json.JSONDecodeError:
         logger.warning("Instagram hashtags response was not JSON: %s", text)
@@ -741,7 +749,7 @@ def generate_hashtags_for_tiktok(title: str, description: str) -> List[str]:
     if not text:
         return fallback
     try:
-        tags = json.loads(text)
+        tags = json.loads(_strip_code_fences(text))
         return [str(tag).strip().lstrip("#") for tag in tags if str(tag).strip()][:10]
     except json.JSONDecodeError:
         logger.warning("TikTok hashtags were not JSON: %s", text)
@@ -775,7 +783,7 @@ def generate_youtube_metadata(title: str, description: str) -> Dict[str, str]:
         return fallback
 
     try:
-        data = json.loads(text)
+        data = json.loads(_strip_code_fences(text))
     except json.JSONDecodeError:
         logger.warning("YouTube metadata response not JSON: %s", text)
         return fallback

@@ -22,6 +22,9 @@ from kaymio.wordpress.wordpress_api_helper import _fetch_all_woocommerce_product
 
 logger = logging.getLogger(__name__)
 
+# Only these product fields are needed to find ASINs; asking for less keeps listing fast.
+WEBSITE_ASIN_FIELDS = ("id", "external_url", "sku", "permalink")
+
 BARE_ASIN_RE = re.compile(r"\b(B0[A-Z0-9]{8})\b")
 
 
@@ -40,7 +43,7 @@ def find_website_amazon_asins() -> Set[str]:
     Raises RuntimeError when WooCommerce can't be read: publishing a duplicate is
     worse than skipping a run.
     """
-    result = _fetch_all_woocommerce_products()
+    result = _fetch_all_woocommerce_products(fields=WEBSITE_ASIN_FIELDS)
     if result.get("error"):
         raise RuntimeError(f"Cannot check existing kaymio.com products: {result['error']}")
     asins: Set[str] = set()
