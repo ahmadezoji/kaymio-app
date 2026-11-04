@@ -1,4 +1,8 @@
-"""Publish an approved candidate to kaymio.com (WooCommerce) and Instagram.
+"""Publish an approved candidate: kaymio.com, AI hero image, Instagram, Pinterest.
+
+Order: website (original Amazon images) -> AI hero image generated from the
+primary photo -> Instagram carousel (AI image first, then the originals) ->
+Pinterest pin (AI image only, linking to the affiliate URL).
 
 Each step stores its result as soon as it succeeds, so a retry after a
 partial failure (e.g. website done, Instagram failed) only redoes what's left.
@@ -7,7 +11,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from kaymio.database.auto_post import (
     STATUS_FAILED,
@@ -16,7 +20,7 @@ from kaymio.database.auto_post import (
     update_candidate,
 )
 from kaymio.database.instagram_state import register_media_reply_route
-from kaymio.features.auto_post.config import FEED_IMAGE_SIZE
+from kaymio.features.auto_post import config
 from kaymio.features.auto_post.content import AutoPostContent
 from kaymio.integrations.amazon.amazon_crawler import AmazonProduct
 from kaymio.integrations.instagram.instagram_api_helper import (
@@ -24,13 +28,16 @@ from kaymio.integrations.instagram.instagram_api_helper import (
     publish_instagram_carousel,
     publish_instagram_post,
 )
-from kaymio.utils.image_utils import pad_to_canvas
+from kaymio.integrations.pintrest.pinterest_helper import create_pinterest_pin
+from kaymio.utils.image_utils import cover_to_size, pad_to_canvas
 from kaymio.utils.media_storage import (
     build_public_media_url,
     delete_media,
     download_image_bytes,
+    load_media,
     save_generated_image,
 )
+from kaymio.utils.openai_helper import edit_image, generate_product_scene_concept
 from kaymio.wordpress.wordpress_api_helper import (
     create_woocommerce_product,
     find_wordpress_nearest_category,
@@ -40,7 +47,7 @@ logger = logging.getLogger(__name__)
 
 
 def publish_candidate(candidate_id: int) -> Dict[str, Any]:
-    """Run the website + Instagram publish for a candidate already marked ``publishing``.
+    """Run every publish step for a candidate already marked ``publishing``.
 
     Returns the updated candidate; on failure the candidate is marked ``failed``
     with the error and the exception is re-raised.
@@ -57,10 +64,18 @@ def publish_candidate(candidate_id: int) -> Dict[str, Any]:
             website_url = publish_to_website(product, content)
             update_candidate(candidate_id, website_product_url=website_url)
 
+        ai_image: Optional[bytes] = None
+        if config.AI_IMAGE_ENABLED:
+            ai_image = _ensure_ai_image(candidate_id, candidate.get("ai_image_path") or "", product, content)
+
         media_id = candidate.get("instagram_media_id") or ""
         if not media_id:
-            media_id = publish_to_instagram(product, content, website_url=website_url)
+            media_id = publish_to_instagram(product, content, website_url=website_url, lead_image=ai_image)
             update_candidate(candidate_id, instagram_media_id=media_id)
+
+        if config.PINTEREST_ENABLED and ai_image and not candidate.get("pinterest_pin_url"):
+            pin_url = publish_to_pinterest(product, content, ai_image)
+            update_candidate(candidate_id, pinterest_pin_url=pin_url)
     except Exception as exc:
         logger.exception("Auto-post publish failed for candidate %s", candidate_id)
         update_candidate(candidate_id, status=STATUS_FAILED, error=f"{type(exc).__name__}: {exc}")
@@ -96,6 +111,8 @@ def publish_to_website(product: AmazonProduct, content: AutoPostContent) -> str:
         images=list(content.image_urls),
         affiliate_link=product.affiliate_link,
         category_id=category_id,
+        # AliExpress affiliate links are opaque short links; the SKU keeps the id for de-duplication.
+        sku=f"AE-{product.asin}" if product.source == "aliexpress" else None,
     )
     if not product_url:
         raise RuntimeError("WooCommerce did not create the product (check WC credentials and logs).")
@@ -103,13 +120,89 @@ def publish_to_website(product: AmazonProduct, content: AutoPostContent) -> str:
     return product_url
 
 
-def publish_to_instagram(product: AmazonProduct, content: AutoPostContent, *, website_url: str) -> str:
-    """Publish the product images as a feed carousel (single post if only one image)."""
+def build_ai_image_prompt(product: AmazonProduct, content: AutoPostContent) -> str:
+    """Strict keep-the-product-identical prompt plus the product-specific scene concept."""
+    concept = content.ai_image_concept or generate_product_scene_concept(content.title, _summary(product))
+    if not concept:
+        return config.AI_IMAGE_PROMPT
+    return f"{config.AI_IMAGE_PROMPT}\nScene concept (environment only, product unchanged): {concept}"
+
+
+def generate_ai_image(product: AmazonProduct, content: AutoPostContent) -> bytes:
+    """Place the product's primary (hero) photo into a new scene with the configured OpenAI model.
+
+    Only the hero image is sent, so the model has a single, unambiguous product reference.
+    """
+    if not content.image_urls:
+        raise RuntimeError("Product has no image to generate the AI hero image from.")
+    hero = download_image_bytes(content.image_urls[0])
+    return edit_image(
+        hero,
+        prompt=build_ai_image_prompt(product, content),
+        context=f"{content.title}. {_summary(product)}",
+        aspect_ratio=config.AI_IMAGE_ASPECT_RATIO,
+        model=config.AI_IMAGE_MODEL,
+        quality=config.AI_IMAGE_QUALITY,
+        input_fidelity=config.AI_IMAGE_INPUT_FIDELITY,
+    )
+
+
+def _summary(product: AmazonProduct) -> str:
+    return " ".join(product.bullets[:3]) or product.description or product.title
+
+
+def _ensure_ai_image(
+    candidate_id: int,
+    stored_path: str,
+    product: AmazonProduct,
+    content: AutoPostContent,
+) -> bytes:
+    """Reuse the stored AI image on retries; generate and store it otherwise."""
+    existing = load_media(stored_path)
+    if existing:
+        return existing
+    image = generate_ai_image(product, content)
+    update_candidate(candidate_id, ai_image_path=save_generated_image(image))
+    logger.info("Auto-post: generated AI hero image for %s with %s", product.asin, config.AI_IMAGE_MODEL)
+    return image
+
+
+def publish_to_pinterest(product: AmazonProduct, content: AutoPostContent, ai_image: bytes) -> str:
+    """Pin the AI hero image, linking to the affiliate URL. Returns the pin URL."""
+    response = create_pinterest_pin(
+        cover_to_size(ai_image, config.PINTEREST_IMAGE_SIZE),
+        content.pinterest_title or content.title,
+        content.pinterest_description or (product.bullets[0] if product.bullets else content.title),
+        product.affiliate_link,
+        content.website_tags,
+    )
+    if not response or response.get("status") == "skipped":
+        raise RuntimeError("Pinterest is not configured (access token or board missing).")
+    pin_url = str(response.get("url") or "")
+    if not pin_url:
+        raise RuntimeError("Pinterest did not return a pin URL.")
+    logger.info("Auto-post: published Pinterest pin %s for %s", pin_url, product.asin)
+    return pin_url
+
+
+def publish_to_instagram(
+    product: AmazonProduct,
+    content: AutoPostContent,
+    *,
+    website_url: str,
+    lead_image: Optional[bytes] = None,
+) -> str:
+    """Publish a feed carousel: ``lead_image`` (if any) first, then the original product photos."""
     relative_paths: List[str] = []
     try:
-        for image_url in content.image_urls:
+        if lead_image:
+            relative_paths.append(
+                save_generated_image(cover_to_size(lead_image, config.FEED_IMAGE_SIZE), suffix=".jpg")
+            )
+        max_originals = config.INSTAGRAM_CAROUSEL_MAX_ITEMS - len(relative_paths)
+        for image_url in content.image_urls[:max_originals]:
             try:
-                framed = pad_to_canvas(download_image_bytes(image_url), FEED_IMAGE_SIZE)
+                framed = pad_to_canvas(download_image_bytes(image_url), config.FEED_IMAGE_SIZE)
             except Exception as exc:
                 logger.warning("Skipping image %s: %s", image_url, exc)
                 continue
@@ -135,7 +228,7 @@ def publish_to_instagram(product: AmazonProduct, content: AutoPostContent, *, we
     register_media_reply_route(
         media_id,
         {
-            "product_id": f"amazon:{product.asin}",
+            "product_id": f"{product.source}:{product.asin}",
             "affiliate_link": product.affiliate_link,
             "product_url": website_url,
             "title": content.title,

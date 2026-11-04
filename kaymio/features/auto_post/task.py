@@ -17,6 +17,7 @@ from kaymio.features.auto_post.discovery import (
     find_top_trending_product,
     find_website_amazon_asins,
 )
+from kaymio.integrations.amazon.amazon_crawler import AmazonProduct
 from kaymio.integrations.telegram import get_telegram_settings
 from kaymio.tasks import OptionField, ScheduledTask, TaskSettings, register_task
 
@@ -27,10 +28,6 @@ def run_auto_post(settings: TaskSettings) -> None:
     if not get_telegram_settings().is_configured:
         # Approval is mandatory; never publish without a way to ask for it.
         raise RuntimeError("Telegram is not configured (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID).")
-
-    expired = expire_stale_candidates(config.APPROVAL_TIMEOUT_HOURS)
-    if expired:
-        logger.info("Expired %d unanswered auto-post suggestion(s).", len(expired))
 
     options = settings.options
     criteria = DiscoveryCriteria(
@@ -50,11 +47,25 @@ def run_auto_post(settings: TaskSettings) -> None:
         )
         return
 
-    content = generate_auto_post_content(
+    expire_and_propose(
         product,
         image_count=int(options["image_count"]),
-        call_to_action=config.CAPTION_CTA,
         website_boost_prompt=config.WEBSITE_BOOST_PROMPT,
+    )
+
+
+def expire_and_propose(product: AmazonProduct, *, image_count: int, website_boost_prompt: str) -> None:
+    """Shared by every source: expire old suggestions, write the copy, ask on Telegram."""
+    expired = expire_stale_candidates(config.APPROVAL_TIMEOUT_HOURS)
+    if expired:
+        logger.info("Expired %d unanswered auto-post suggestion(s).", len(expired))
+
+    content = generate_auto_post_content(
+        product,
+        image_count=image_count,
+        call_to_action=config.CAPTION_CTA,
+        website_boost_prompt=website_boost_prompt,
+        include_ai_image_concept=config.AI_IMAGE_ENABLED,
     )
     candidate = create_candidate(
         asin=product.asin,
@@ -70,7 +81,9 @@ def run_auto_post(settings: TaskSettings) -> None:
         # Unsent suggestions must never become publishable; drop it so it can be proposed again.
         delete_candidate(candidate["id"])
         raise
-    logger.info("Auto-post: sent %s (%s) for approval.", product.asin, product.title[:80])
+    logger.info(
+        "Auto-post: sent %s %s (%s) for approval.", product.source_label, product.asin, product.title[:80]
+    )
 
 
 AUTO_POST_TASK = ScheduledTask(
@@ -78,7 +91,8 @@ AUTO_POST_TASK = ScheduledTask(
     label="Instagram auto-post (Amazon trending)",
     description=(
         "Finds the top trending, well-rated Amazon product that kaymio.com doesn't have yet, "
-        "asks for approval on Telegram, then adds it to the website and posts a carousel to Instagram."
+        "asks for approval on Telegram, then adds it to the website, generates an AI hero image, "
+        "posts a carousel to Instagram (AI image first) and pins the AI image on Pinterest."
     ),
     run=run_auto_post,
     default_enabled=config.ENABLED,

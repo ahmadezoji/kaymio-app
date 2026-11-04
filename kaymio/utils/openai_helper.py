@@ -188,8 +188,13 @@ def edit_image(
     model: Optional[str] = None,
     reference_images: Optional[Sequence[Union[bytes, bytearray, str, "Image.Image"]]] = None,
     quality: Optional[str] = None,
+    input_fidelity: Optional[str] = None,
 ) -> bytes:
-    """Edit an image with OpenAI using the source product image as an exact reference."""
+    """Edit an image with OpenAI using the source product image as an exact reference.
+
+    ``input_fidelity="high"`` asks the model to keep the reference's details (shape,
+    labels, faces) intact; models that don't support it are retried without it.
+    """
 
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
@@ -224,20 +229,34 @@ def edit_image(
         mime_type, file_name = _detect_image_upload_meta(image_bytes, fallback_index=index)
         files.append(("image[]", (file_name, image_bytes, mime_type)))
 
+    request_data = {
+        "model": resolved_model,
+        "prompt": final_prompt,
+        "size": size,
+        "quality": requested_quality,
+        "output_format": "png",
+    }
+    if input_fidelity:
+        request_data["input_fidelity"] = input_fidelity
+
     try:
         response = requests.post(
             "https://api.openai.com/v1/images/edits",
             headers={"Authorization": f"Bearer {api_key}"},
-            data={
-                "model": resolved_model,
-                "prompt": final_prompt,
-                "size": size,
-                "quality": requested_quality,
-                "output_format": "png",
-            },
+            data=request_data,
             files=files,
-            timeout=120,
+            timeout=180,
         )
+        if response.status_code == 400 and input_fidelity and "input_fidelity" in response.text:
+            logger.warning("Model %s rejected input_fidelity; retrying without it.", resolved_model)
+            request_data.pop("input_fidelity")
+            response = requests.post(
+                "https://api.openai.com/v1/images/edits",
+                headers={"Authorization": f"Bearer {api_key}"},
+                data=request_data,
+                files=files,
+                timeout=180,
+            )
         response.raise_for_status()
     except requests.HTTPError as exc:  # pragma: no cover - network/runtime guard
         detail = ""
@@ -431,6 +450,68 @@ def generate_text(
     except Exception as exc:  # pragma: no cover - runtime guard
         logger.exception("generate_text failed: %s", exc)
         return (title or "Unknown Concept").strip() or "Unknown Concept"
+
+
+def generate_product_scene_concept(title: str, description: str) -> str:
+    """Art direction for a product ad photo: the scene/use case only, never the product itself.
+
+    Example: a shaver -> a split before/after grooming scene in a bright bathroom.
+    Returns "" when OpenAI is unavailable (the generic prompt is used alone).
+    """
+    text = _generate_response_text(
+        "You are a creative director for e-commerce ad photography. You decide the scene, "
+        "setting and story that sells a product best. You never describe changes to the "
+        "product itself, because the real product photo is placed into your scene unchanged.",
+        (
+            "Work out what this product is, who uses it and the main result it delivers. Then "
+            "describe ONE photorealistic scene for its hero ad image in 2-3 sentences: the "
+            "environment, props, lighting, and how people or results show the benefit. If the "
+            "product has a visible transformation (e.g. shaver, cleaner, skincare, organizer), "
+            "use a clear before/after composition with the product between or beside the two "
+            "states. Do not mention text overlays, prices or logos, and do not alter the product.\n"
+            f"Product title: {title}\nDescription: {description}"
+        ),
+        temperature=0.8,
+        max_output_tokens=180,
+    )
+    return (text or "").strip()
+
+
+def generate_pinterest_title(title: str, description: str, extra_context: str = "") -> str:
+    """Keyword-rich Pinterest pin title (max ~70 chars); falls back to ``title``."""
+    refined = generate_text(
+        f"Title: {title}\nDescription: {description}\nExtra Pinterest Context: {extra_context}",
+        context=(
+            "You are a Pinterest SEO copywriter. Craft concise, keyword-rich product titles "
+            "that entice shoppers in under 70 characters."
+        ),
+        user_prompt=(
+            "Generate a Pinterest-ready product title (max 70 characters) from this context:\n{text}"
+        ),
+    )
+    if not refined or refined.lower() == "unknown concept":
+        return title
+    return refined
+
+
+def generate_pinterest_description(title: str, description: str, extra_context: str = "") -> str:
+    """Two-sentence, conversion-focused pin description; falls back to ``description``."""
+    generated = generate_text(
+        f"Product Title: {title}\nDescription: {description}\nExtra Pinterest Context: {extra_context}",
+        context=(
+            "You are an affiliate marketing copywriter who writes compelling Pinterest pin "
+            "descriptions that highlight benefits, urgency, and relevance."
+        ),
+        user_prompt=(
+            "Write a two sentence Pinterest pin description from this information. "
+            "Make it descriptive, energetic, and conversion-focused:\n{text}"
+        ),
+        max_tokens=120,
+        temperature=0.5,
+    )
+    if not generated or generated.lower() == "unknown concept":
+        return description or "Compelling Pinterest-ready description."
+    return generated
 
 
 def build_website_description(title: str, base_description: str, boost_prompt: str) -> str:

@@ -44,6 +44,8 @@ def _to_dict(row: AutoPostCandidate) -> Dict[str, Any]:
         "telegram_message_id": row.telegram_message_id,
         "website_product_url": row.website_product_url,
         "instagram_media_id": row.instagram_media_id,
+        "ai_image_path": row.ai_image_path,
+        "pinterest_pin_url": row.pinterest_pin_url,
         "error": row.error,
         "created_at": _iso(row.created_at),
         "updated_at": _iso(row.updated_at),

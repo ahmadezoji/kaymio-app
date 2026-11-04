@@ -58,8 +58,11 @@ time and options, run it now, or reset it to the `.env` defaults. UI edits are s
    title, price, images, bullets and category. Canopy fills any gaps when `CANOPY_API_KEY` is set.
 3. Generates the store title/description/tags and the Instagram caption (same CTA and hashtag format as manual posts).
 4. Sends the top image and details to Telegram with **Approve** and **Cancel** buttons. Nothing is published before you approve.
-5. On approval, it creates the WooCommerce external product and posts the images as an Instagram carousel
-   (padded to 1080×1350). It also registers the post so "comment BUY" replies DM the affiliate link.
+5. On approval, it creates the WooCommerce external product with the **original** Amazon images. It then
+   generates an AI hero image from the primary photo (`INSTAGRAM_AUTO_POST_AI_IMAGE_MODEL`, default `gpt-image-2`)
+   and posts an Instagram carousel with the AI image first and the originals after it (1080×1350).
+   It pins **only the AI image** on Pinterest, linked to the affiliate URL, and registers the Instagram post
+   so "comment BUY" replies DM the affiliate link.
    If a step fails, you can retry it from the Automation page, and steps that already succeeded are skipped.
 
 Telegram setup: create a bot with @BotFather, set `TELEGRAM_BOT_TOKEN`, send `/start` to the bot to see your chat id,

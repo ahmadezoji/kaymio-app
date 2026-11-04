@@ -41,6 +41,32 @@ WEBSITE_BOOST_PROMPT = os.getenv(
 # Instagram feed portrait size; product photos are padded (never cropped) to fit.
 FEED_IMAGE_SIZE = (1080, 1350)
 
+# AI hero image generated from the product's primary photo after Telegram approval.
+# It leads the Instagram carousel and is the only image pinned to Pinterest; the
+# website product keeps the original Amazon images.
+AI_IMAGE_ENABLED = os.getenv("INSTAGRAM_AUTO_POST_AI_IMAGE_ENABLED", "1").lower() in TRUTHY_VALUES
+DEFAULT_AI_IMAGE_PROMPT = (
+    "Place the EXACT product from the reference photo into a new, scroll-stopping scene. "
+    "The product itself must stay identical to the original photo: same shape, proportions, "
+    "angle, colors, materials, buttons, labels, logos and packaging. Do not redraw, restyle, "
+    "resize unevenly, add effects, glow, reflections, or any changes to the product or its front "
+    "face. Only change the environment around it: background, surfaces, props, lighting, and "
+    "people or results that show the product's benefit in real use. Keep the product sharp, fully "
+    "visible and centered with generous space above and below it. Photorealistic, premium "
+    "advertising photography. No text, captions, prices, watermarks or extra logos."
+)
+# Empty values in .env fall back to the defaults.
+AI_IMAGE_MODEL = os.getenv("INSTAGRAM_AUTO_POST_AI_IMAGE_MODEL", "").strip() or "gpt-image-2"
+AI_IMAGE_PROMPT = os.getenv("INSTAGRAM_AUTO_POST_AI_IMAGE_PROMPT", "").strip() or DEFAULT_AI_IMAGE_PROMPT
+AI_IMAGE_QUALITY = os.getenv("INSTAGRAM_AUTO_POST_AI_IMAGE_QUALITY", "").strip() or "high"
+# "high" asks OpenAI to preserve the reference product's details as closely as possible.
+AI_IMAGE_INPUT_FIDELITY = os.getenv("INSTAGRAM_AUTO_POST_AI_IMAGE_INPUT_FIDELITY", "").strip() or "high"
+# 2:3 portrait suits Pinterest; Instagram gets a centered 4:5 crop of the same image.
+AI_IMAGE_ASPECT_RATIO = "2:3"
+PINTEREST_IMAGE_SIZE = (1000, 1500)
+PINTEREST_ENABLED = os.getenv("INSTAGRAM_AUTO_POST_PINTEREST_ENABLED", "1").lower() in TRUTHY_VALUES
+INSTAGRAM_CAROUSEL_MAX_ITEMS = 10
+
 
 def split_source_urls(raw: str) -> List[str]:
     return [url for url in (part.strip() for part in re.split(r"[\s,]+", raw or "")) if url]

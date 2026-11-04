@@ -22,7 +22,7 @@ from kaymio.database.auto_post import (
     transition_candidate,
     update_candidate,
 )
-from kaymio.features.auto_post.config import APPROVAL_TIMEOUT_HOURS
+from kaymio.features.auto_post import config
 from kaymio.features.auto_post.publisher import publish_candidate
 from kaymio.integrations.telegram import (
     CallbackQuery,
@@ -39,7 +39,8 @@ logger = logging.getLogger(__name__)
 CALLBACK_NAMESPACE = "autopost"
 ACTION_APPROVE = "approve"
 ACTION_CANCEL = "cancel"
-CAPTION_PREVIEW_CHARS = 350
+CAPTION_PREVIEW_CHARS = 300
+CONCEPT_PREVIEW_CHARS = 220
 
 
 # --------------------------------------------------------------------------- #
@@ -73,29 +74,55 @@ def build_approval_caption(candidate: Dict[str, Any]) -> str:
     facts = []
     if product.get("price"):
         facts.append(f"💲 {esc(str(product['price']))}")
+    if product.get("orders"):
+        facts.append(f"🛒 {int(product['orders']):,} recent orders")
+    if product.get("positive_rate") is not None:
+        facts.append(f"👍 {product['positive_rate']:g}% positive")
+    if product.get("commission_rate"):
+        facts.append(f"💰 {esc(str(product['commission_rate']))} commission")
     if product.get("rating") is not None:
         reviews = product.get("review_count")
         facts.append(f"⭐ {product['rating']}" + (f" ({reviews:,} ratings)" if reviews else ""))
+    is_aliexpress = product.get("source") == "aliexpress"
     if product.get("source_rank"):
-        facts.append(f"🔥 #{product['source_rank']} on Amazon list")
+        where = f"for “{esc(str(product.get('source_list_url') or '').removeprefix('aliexpress:'))}”" \
+            if is_aliexpress else "on Amazon list"
+        facts.append(f"🔥 #{product['source_rank']} {where}")
+    id_label = "AliExpress ID" if is_aliexpress else "ASIN"
 
-    preview = str(content.get("instagram_caption") or "")
-    if len(preview) > CAPTION_PREVIEW_CHARS:
-        preview = preview[:CAPTION_PREVIEW_CHARS].rstrip() + "…"
+    preview = _shorten(str(content.get("instagram_caption") or ""), CAPTION_PREVIEW_CHARS)
+    concept = _shorten(str(content.get("ai_image_concept") or ""), CONCEPT_PREVIEW_CHARS)
 
     lines = [
-        f"🆕 <b>New product suggestion #{candidate['id']}</b>",
+        f"🆕 <b>New {'AliExpress' if is_aliexpress else 'Amazon'} product suggestion #{candidate['id']}</b>",
         "",
         f"<b>{esc(str(content.get('title') or candidate.get('title') or ''))}</b>",
         " · ".join(facts),
-        f"🏷 {esc(str(product.get('category') or 'Uncategorized'))} · ASIN {esc(candidate['asin'])}",
+        f"🏷 {esc(str(product.get('category') or 'Uncategorized'))} · {id_label} {esc(candidate['asin'])}",
         f"🔗 {esc(str(candidate.get('product_url') or ''))}",
         "",
         f"📝 <i>Instagram caption:</i>\n{esc(preview)}",
         "",
-        f"Approve to add it to kaymio.com and post {len(content.get('image_urls') or [])} image(s) to Instagram.",
+        *([f"🎨 <i>AI image idea:</i> {esc(concept)}", ""] if concept else []),
+        _approval_summary(len(content.get("image_urls") or [])),
     ]
     return "\n".join(lines)
+
+
+def _shorten(text: str, limit: int) -> str:
+    return text if len(text) <= limit else text[:limit].rstrip() + "…"
+
+
+def _approval_summary(original_image_count: int) -> str:
+    steps = ["add it to kaymio.com (original images)"]
+    if config.AI_IMAGE_ENABLED:
+        steps.append(f"generate an AI hero image ({config.AI_IMAGE_MODEL})")
+        steps.append(f"post it + {original_image_count} original image(s) to Instagram")
+        if config.PINTEREST_ENABLED:
+            steps.append("pin the AI image on Pinterest")
+    else:
+        steps.append(f"post {original_image_count} image(s) to Instagram")
+    return "Approve to " + ", ".join(steps) + "."
 
 
 def notify(text: str, *, reply_to_message_id: Optional[int] = None) -> None:
@@ -148,7 +175,8 @@ def _publish_and_report(candidate_id: int, reply_to_message_id: Optional[int]) -
     notify(
         f"🎉 #{candidate_id} published!\n"
         f"🛒 Website: {html.escape(result.get('website_product_url') or '-')}\n"
-        f"📸 Instagram media id: {html.escape(result.get('instagram_media_id') or '-')}",
+        f"📸 Instagram media id: {html.escape(result.get('instagram_media_id') or '-')}\n"
+        f"📌 Pinterest: {html.escape(result.get('pinterest_pin_url') or '-')}",
         reply_to_message_id=reply_to_message_id,
     )
 
@@ -202,7 +230,7 @@ def _handle_callback(query: CallbackQuery) -> None:
 
 def _is_stale(candidate: Dict[str, Any]) -> bool:
     created_at = dt.datetime.fromisoformat(candidate["created_at"])
-    return dt.datetime.utcnow() - created_at > dt.timedelta(hours=APPROVAL_TIMEOUT_HOURS)
+    return dt.datetime.utcnow() - created_at > dt.timedelta(hours=config.APPROVAL_TIMEOUT_HOURS)
 
 
 def _status_reply(candidate_id: int) -> str:

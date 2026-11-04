@@ -40,3 +40,17 @@ def pad_to_canvas(
     output = BytesIO()
     canvas.save(output, format="JPEG", quality=jpeg_quality, optimize=True)
     return output.getvalue()
+
+
+def cover_to_size(image_bytes: bytes, size: Tuple[int, int], *, jpeg_quality: int = 92) -> bytes:
+    """Center-crop and resize to exactly ``size`` (no bars) and return JPEG bytes.
+
+    Use for generated artwork that already has the subject centered; product
+    photos should use ``pad_to_canvas`` so nothing is cut off.
+    """
+    with Image.open(BytesIO(image_bytes)) as source:
+        image = ImageOps.exif_transpose(source).convert("RGB")
+        fitted = ImageOps.fit(image, size, method=Image.LANCZOS)
+    output = BytesIO()
+    fitted.save(output, format="JPEG", quality=jpeg_quality, optimize=True)
+    return output.getvalue()

@@ -122,6 +122,7 @@ def init_db() -> None:
         "price": "VARCHAR(64)",
         "affiliate_link": "TEXT",
     })
+    _ensure_columns("auto_post_candidates", {"ai_image_path": "TEXT", "pinterest_pin_url": "TEXT"})
     # wc_product_id was originally NOT NULL; Amazon-sourced rows leave it
     # NULL, so a pre-existing table needs the constraint relaxed.
     _ensure_nullable("collection_products", "wc_product_id", "INT")

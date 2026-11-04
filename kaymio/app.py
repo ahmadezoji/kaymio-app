@@ -39,6 +39,8 @@ from kaymio.utils.openai_helper import (
     generate_hashtags_for_instagram,
     generate_hashtags_for_tiktok,
     generate_instagram_comment_acknowledgement,
+    generate_pinterest_description,
+    generate_pinterest_title,
     generate_tags_for_product_for_pintrest,
     generate_text,
     generate_youtube_metadata,
@@ -2700,43 +2702,10 @@ def generate_pinterest():
     extra_context = form_values.get("pinterest_extra", "")
 
     try:
-        title_payload = (
-            f"Title: {raw_title}\nDescription: {raw_description}\nExtra Pinterest Context: {extra_context}"
+        refined_title = generate_pinterest_title(raw_title, raw_description, extra_context)
+        generated_description = generate_pinterest_description(
+            refined_title or raw_title, raw_description, extra_context
         )
-        refined_title = generate_text(
-            title_payload,
-            context=(
-                "You are a Pinterest SEO copywriter. Craft concise, keyword-rich product titles "
-                "that entice shoppers in under 70 characters."
-            ),
-            user_prompt=(
-                "Generate a Pinterest-ready product title (max 70 characters) from this context:\n{text}"
-            ),
-        )
-        if not refined_title or refined_title.lower() == "unknown concept":
-            refined_title = raw_title
-
-        description_payload = (
-            f"Product Title: {refined_title or raw_title}\nDescription: {raw_description}\n"
-            f"Extra Pinterest Context: {extra_context}"
-        )
-        generated_description = generate_text(
-            description_payload,
-            context=(
-                "You are an affiliate marketing copywriter who writes compelling Pinterest pin "
-                "descriptions that highlight benefits, urgency, and relevance."
-            ),
-            user_prompt=(
-                "Write a two sentence Pinterest pin description from this information. "
-                "Make it descriptive, energetic, and conversion-focused:\n{text}"
-            ),
-            max_tokens=120,
-            temperature=0.5,
-        )
-        if not generated_description or generated_description.lower() == "unknown concept":
-            generated_description = (
-                raw_description or "Compelling Pinterest-ready description."
-            )
 
         tags = sanitize_tag_list(generate_tags_for_product_for_pintrest(
             refined_title,
