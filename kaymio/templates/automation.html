@@ -180,7 +180,8 @@
         const value = task.options[field.name];
         const help = field.help ? `<div class="help">${esc(field.help)}</div>` : "";
         if (field.kind === "text") {
-          const lines = String(value ?? "").split(/[\s,]+/).filter(Boolean).join("\n");
+          // One entry per line; spaces stay inside an entry (e.g. "kitchen gadgets").
+          const lines = String(value ?? "").split(/[\n,]+/).map((v) => v.trim()).filter(Boolean).join("\n");
           return `<div class="field wide"><label for="${id}">${esc(field.label)}</label>
             <textarea id="${id}" data-option="${esc(field.name)}">${esc(lines)}</textarea>${help}</div>`;
         }
@@ -248,7 +249,7 @@
         const options = {};
         panel.querySelectorAll("[data-option]").forEach((el) => {
           options[el.dataset.option] = el.tagName === "TEXTAREA"
-            ? el.value.split(/\s+/).filter(Boolean).join("\n")
+            ? el.value.split(/[\n,]+/).map((v) => v.trim()).filter(Boolean).join("\n")
             : el.value;
         });
         return {
