@@ -295,7 +295,7 @@ class ScheduledTaskSetting(Base):
 
 
 class AutoPostCandidate(Base):
-    """An Amazon product proposed by the auto-post task and its approval/publish lifecycle."""
+    """An Amazon/AliExpress product proposed by an auto-post task and its approval/publish lifecycle."""
 
     __tablename__ = "auto_post_candidates"
 

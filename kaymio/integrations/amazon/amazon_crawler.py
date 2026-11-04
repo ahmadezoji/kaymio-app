@@ -63,6 +63,16 @@ class AmazonProduct:
     brand: str = ""
     source_list_url: str = ""
     source_rank: Optional[int] = None
+    # Marketplace the product comes from. "aliexpress" products reuse this model:
+    # ``asin`` then holds the AliExpress product id.
+    source: str = "amazon"
+    orders: Optional[int] = None  # AliExpress: recent sales volume
+    positive_rate: Optional[float] = None  # AliExpress: positive feedback, 0-100
+    commission_rate: str = ""
+
+    @property
+    def source_label(self) -> str:
+        return "AliExpress" if self.source == "aliexpress" else "Amazon"
 
     @property
     def price_value(self) -> Optional[float]:

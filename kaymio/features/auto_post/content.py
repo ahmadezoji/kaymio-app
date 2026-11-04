@@ -58,7 +58,7 @@ def generate_auto_post_content(
     website_boost_prompt: str = "",
     include_ai_image_concept: bool = False,
 ) -> AutoPostContent:
-    title = _store_title(product.title)
+    title = _store_title(product.title, product.source_label)
     summary = _product_summary(product)
 
     caption = generate_caption_for_instagram(title, summary, call_to_action=call_to_action or None)
@@ -81,8 +81,8 @@ def generate_auto_post_content(
     )
 
 
-def _store_title(amazon_title: str) -> str:
-    """Amazon titles are keyword-stuffed; ask for a clean product name instead."""
+def _store_title(amazon_title: str, source_label: str = "Amazon") -> str:
+    """Marketplace titles are keyword-stuffed; ask for a clean product name instead."""
     short_title = generate_text(
         amazon_title,
         context=(
@@ -90,7 +90,7 @@ def _store_title(amazon_title: str) -> str:
             "clean, catchy product names."
         ),
         user_prompt=(
-            f"Rewrite this Amazon product title as a store product name under {STORE_TITLE_MAX_CHARS} "
+            f"Rewrite this {source_label} product title as a store product name under {STORE_TITLE_MAX_CHARS} "
             "characters. Keep the brand if present, drop keyword lists, sizes and colors. "
             "Return only the name:\n{text}"
         ),

@@ -111,6 +111,8 @@ def publish_to_website(product: AmazonProduct, content: AutoPostContent) -> str:
         images=list(content.image_urls),
         affiliate_link=product.affiliate_link,
         category_id=category_id,
+        # AliExpress affiliate links are opaque short links; the SKU keeps the id for de-duplication.
+        sku=f"AE-{product.asin}" if product.source == "aliexpress" else None,
     )
     if not product_url:
         raise RuntimeError("WooCommerce did not create the product (check WC credentials and logs).")
@@ -226,7 +228,7 @@ def publish_to_instagram(
     register_media_reply_route(
         media_id,
         {
-            "product_id": f"amazon:{product.asin}",
+            "product_id": f"{product.source}:{product.asin}",
             "affiliate_link": product.affiliate_link,
             "product_url": website_url,
             "title": content.title,

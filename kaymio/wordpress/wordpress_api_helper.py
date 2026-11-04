@@ -233,7 +233,7 @@ def upload_media_to_wordpress_ext(image_path):
         return image_url
     return None
         
-def create_woocommerce_product(name, description, price, image_path=None, tags=None, images=None, affiliate_link=None, category_id=None):
+def create_woocommerce_product(name, description, price, image_path=None, tags=None, images=None, affiliate_link=None, category_id=None, sku=None):
     if not all([consumer_key, consumer_secret]):
         print("WooCommerce API credentials not found")
         return None
@@ -281,6 +281,8 @@ def create_woocommerce_product(name, description, price, image_path=None, tags=N
         "external_url": affiliate_link,
         "button_text": "Buy Product"  # Button text
     }
+    if sku:
+        product_data["sku"] = sku
 
     # Create product
     response = requests.post(

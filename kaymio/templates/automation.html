@@ -296,8 +296,10 @@
             <td>${c.image_url ? `<img src="${esc(c.image_url)}" alt="" />` : ""}</td>
             <td>
               <div><strong>#${c.id}</strong> ${esc(content.title || c.title || "")}</div>
-              <div class="meta">${esc(product.price || "")} · ⭐ ${esc(product.rating ?? "—")} · ${esc(c.asin)}</div>
-              <a href="${esc(c.product_url || "#")}" target="_blank" rel="noopener">Amazon</a>
+              <div class="meta">${esc(product.price || "")} · ${product.source === "aliexpress"
+                ? `🛒 ${esc(product.orders ?? "—")} orders · 👍 ${esc(product.positive_rate ?? "—")}%`
+                : `⭐ ${esc(product.rating ?? "—")}`} · ${esc(c.asin)}</div>
+              <a href="${esc(c.product_url || "#")}" target="_blank" rel="noopener">${product.source === "aliexpress" ? "AliExpress" : "Amazon"}</a>
               ${c.website_product_url ? ` · <a href="${esc(c.website_product_url)}" target="_blank" rel="noopener">kaymio.com</a>` : ""}
               ${c.pinterest_pin_url ? ` · <a href="${esc(c.pinterest_pin_url)}" target="_blank" rel="noopener">Pinterest</a>` : ""}
               ${c.error ? `<div class="meta err" style="color:#fca5a5;">${esc(c.error)}</div>` : ""}

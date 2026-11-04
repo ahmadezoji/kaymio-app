@@ -74,21 +74,31 @@ def build_approval_caption(candidate: Dict[str, Any]) -> str:
     facts = []
     if product.get("price"):
         facts.append(f"💲 {esc(str(product['price']))}")
+    if product.get("orders"):
+        facts.append(f"🛒 {int(product['orders']):,} recent orders")
+    if product.get("positive_rate") is not None:
+        facts.append(f"👍 {product['positive_rate']:g}% positive")
+    if product.get("commission_rate"):
+        facts.append(f"💰 {esc(str(product['commission_rate']))} commission")
     if product.get("rating") is not None:
         reviews = product.get("review_count")
         facts.append(f"⭐ {product['rating']}" + (f" ({reviews:,} ratings)" if reviews else ""))
+    is_aliexpress = product.get("source") == "aliexpress"
     if product.get("source_rank"):
-        facts.append(f"🔥 #{product['source_rank']} on Amazon list")
+        where = f"for “{esc(str(product.get('source_list_url') or '').removeprefix('aliexpress:'))}”" \
+            if is_aliexpress else "on Amazon list"
+        facts.append(f"🔥 #{product['source_rank']} {where}")
+    id_label = "AliExpress ID" if is_aliexpress else "ASIN"
 
     preview = _shorten(str(content.get("instagram_caption") or ""), CAPTION_PREVIEW_CHARS)
     concept = _shorten(str(content.get("ai_image_concept") or ""), CONCEPT_PREVIEW_CHARS)
 
     lines = [
-        f"🆕 <b>New product suggestion #{candidate['id']}</b>",
+        f"🆕 <b>New {'AliExpress' if is_aliexpress else 'Amazon'} product suggestion #{candidate['id']}</b>",
         "",
         f"<b>{esc(str(content.get('title') or candidate.get('title') or ''))}</b>",
         " · ".join(facts),
-        f"🏷 {esc(str(product.get('category') or 'Uncategorized'))} · ASIN {esc(candidate['asin'])}",
+        f"🏷 {esc(str(product.get('category') or 'Uncategorized'))} · {id_label} {esc(candidate['asin'])}",
         f"🔗 {esc(str(candidate.get('product_url') or ''))}",
         "",
         f"📝 <i>Instagram caption:</i>\n{esc(preview)}",
