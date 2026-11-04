@@ -10,7 +10,7 @@ import datetime
 import shutil
 import uuid
 import re
-from typing import Optional
+from typing import Optional, Sequence
 
 if __package__ in {None, ""}:
     project_root = Path(__file__).resolve().parents[2]
@@ -33,6 +33,7 @@ wp_password = os.getenv('WORDPRESS_PASSWORD')
 wc_url = os.getenv('WORDPRESS_API_URL')  # Your base site URL
 consumer_key = os.getenv('WC_CONSUMER_KEY')
 consumer_secret = os.getenv('WC_CONSUMER_SECRET')
+WC_API_TIMEOUT_SECONDS = int(os.getenv('WC_API_TIMEOUT_SECONDS', '60'))
 
 all_categories = []
 ALIEXPRESS_MATCH_TOKENS = (
@@ -498,27 +499,41 @@ def update_affiliate_links():
     except Exception as e:
         print(f"Error updating affiliate links: {e}")
 
-def list_woocommerce_products(page: int = 1, per_page: int = 100, status: Optional[str] = None):
+def list_woocommerce_products(
+    page: int = 1,
+    per_page: int = 100,
+    status: Optional[str] = None,
+    fields: Optional[Sequence[str]] = None,
+):
     """Return paginated WooCommerce products with total headers.
 
     ``status`` (e.g. "publish") filters server-side; WooCommerce's default is "any",
-    which includes drafts and private products.
+    which includes drafts and private products. ``fields`` limits the response to
+    those keys (WordPress ``_fields``), which makes large catalogs much faster to list.
     """
     if not all([wc_url, consumer_key, consumer_secret]):
         return {"error": "WooCommerce API credentials are missing."}
     params = {"page": max(1, int(page)), "per_page": max(1, min(int(per_page), 100))}
     if status:
         params["status"] = status
-    try:
-        response = requests.get(
-            f"{wc_url}/wp-json/wc/v3/products",
-            params=params,
-            auth=(consumer_key, consumer_secret),
-            headers={"Content-Type": "application/json"},
-            timeout=30,
-        )
-    except Exception as exc:
-        return {"error": f"Unable to fetch WooCommerce products: {exc}"}
+    if fields:
+        params["_fields"] = ",".join(fields)
+    response = None
+    for attempt in range(2):  # one retry: the shop is occasionally slow to answer
+        try:
+            response = requests.get(
+                f"{wc_url}/wp-json/wc/v3/products",
+                params=params,
+                auth=(consumer_key, consumer_secret),
+                headers={"Content-Type": "application/json"},
+                timeout=WC_API_TIMEOUT_SECONDS,
+            )
+            break
+        except (requests.Timeout, requests.ConnectionError) as exc:
+            if attempt == 1:
+                return {"error": f"Unable to fetch WooCommerce products: {exc}"}
+        except Exception as exc:
+            return {"error": f"Unable to fetch WooCommerce products: {exc}"}
 
     if response.status_code >= 400:
         return {"error": f"WooCommerce products list failed: {response.status_code} - {response.text}"}
@@ -713,11 +728,15 @@ def _extract_product_media_ids(product):
     return media_ids
 
 
-def _fetch_all_woocommerce_products(per_page: int = 100, status: Optional[str] = None):
+def _fetch_all_woocommerce_products(
+    per_page: int = 100,
+    status: Optional[str] = None,
+    fields: Optional[Sequence[str]] = None,
+):
     products = []
     page = 1
     while True:
-        result = list_woocommerce_products(page=page, per_page=per_page, status=status)
+        result = list_woocommerce_products(page=page, per_page=per_page, status=status, fields=fields)
         if result.get("error"):
             return {"error": result["error"], "items": products}
         page_items = result.get("items") or []
