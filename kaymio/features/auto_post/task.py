@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Sequence
 
 from kaymio.database.auto_post import (
     create_candidate,
@@ -12,14 +13,12 @@ from kaymio.database.auto_post import (
 from kaymio.features.auto_post import config
 from kaymio.features.auto_post.approval import notify, send_approval_request
 from kaymio.features.auto_post.content import generate_auto_post_content
-from kaymio.features.auto_post.discovery import (
-    DiscoveryCriteria,
-    find_top_trending_product,
-    find_website_amazon_asins,
-)
+from kaymio.features.auto_post.catalog import load_website_catalog
+from kaymio.features.auto_post.discovery import DiscoveryCriteria, find_top_trending_products
 from kaymio.integrations.amazon.amazon_crawler import AmazonProduct
 from kaymio.integrations.telegram import get_telegram_settings
 from kaymio.tasks import OptionField, ScheduledTask, TaskSettings, register_task
+from kaymio.tasks.scheduler import parse_weekdays
 
 logger = logging.getLogger(__name__)
 
@@ -36,10 +35,15 @@ def run_auto_post(settings: TaskSettings) -> None:
         min_reviews=int(options["min_reviews"]),
         max_detail_fetches=config.MAX_DETAIL_FETCHES,
         canopy_fallback=config.CANOPY_FALLBACK,
+        lists_per_run=config.LISTS_PER_RUN,
     )
-    exclude_asins = find_website_amazon_asins() | known_candidate_asins()
-    product = find_top_trending_product(criteria, exclude_asins)
-    if product is None:
+    products = find_top_trending_products(
+        criteria,
+        load_website_catalog(),
+        known_candidate_asins(),
+        limit=int(options["suggestions_per_run"]),
+    )
+    if not products:
         logger.warning("Auto-post: no new Amazon product matched the criteria.")
         notify(
             "🤷 Auto-post: no new Amazon product matched today "
@@ -47,19 +51,35 @@ def run_auto_post(settings: TaskSettings) -> None:
         )
         return
 
-    expire_and_propose(
-        product,
+    propose_products(
+        products,
         image_count=int(options["image_count"]),
         website_boost_prompt=config.WEBSITE_BOOST_PROMPT,
     )
 
 
-def expire_and_propose(product: AmazonProduct, *, image_count: int, website_boost_prompt: str) -> None:
-    """Shared by every source: expire old suggestions, write the copy, ask on Telegram."""
+def propose_products(products: Sequence[AmazonProduct], *, image_count: int, website_boost_prompt: str) -> int:
+    """Shared by every source: expire old suggestions, then send each product for approval.
+
+    One failing product doesn't stop the others. Returns how many were sent.
+    """
     expired = expire_stale_candidates(config.APPROVAL_TIMEOUT_HOURS)
     if expired:
         logger.info("Expired %d unanswered auto-post suggestion(s).", len(expired))
+    sent = 0
+    for product in products:
+        try:
+            propose_product(product, image_count=image_count, website_boost_prompt=website_boost_prompt)
+            sent += 1
+        except Exception:
+            logger.exception("Auto-post: could not propose %s %s.", product.source_label, product.asin)
+    if products and not sent:
+        raise RuntimeError("None of the selected products could be sent for approval (see logs).")
+    return sent
 
+
+def propose_product(product: AmazonProduct, *, image_count: int, website_boost_prompt: str) -> None:
+    """Write the copy, store the candidate and ask on Telegram."""
     content = generate_auto_post_content(
         product,
         image_count=image_count,
@@ -90,20 +110,24 @@ AUTO_POST_TASK = ScheduledTask(
     key=config.TASK_KEY,
     label="Instagram auto-post (Amazon trending)",
     description=(
-        "Finds the top trending, well-rated Amazon product that kaymio.com doesn't have yet, "
-        "asks for approval on Telegram, then adds it to the website, generates an AI hero image, "
+        "Finds the best trending, well-rated Amazon products that kaymio.com doesn't have yet "
+        "(scored, niches rotate daily), asks for approval on Telegram, then adds it to the website, generates an AI hero image, "
         "posts a carousel to Instagram (AI image first) and pins the AI image on Pinterest."
     ),
     run=run_auto_post,
     default_enabled=config.ENABLED,
     default_run_time=config.RUN_TIME,
+    default_every_days=config.EVERY_DAYS,
+    default_weekdays=parse_weekdays(config.WEEKDAYS),
     option_fields=(
+        OptionField("suggestions_per_run", "Suggestions per run", "int", config.SUGGESTIONS_PER_RUN,
+                    min=1, max=10, help="Each one arrives as its own Telegram approval message."),
         OptionField("image_count", "Images per post", "int", config.IMAGE_COUNT, min=1, max=10,
                     help="Carousel size (Instagram allows up to 10)."),
         OptionField("min_rating", "Minimum rating", "float", config.MIN_RATING, min=0, max=5),
         OptionField("min_reviews", "Minimum reviews", "int", config.MIN_REVIEWS, min=0),
         OptionField("source_urls", "Amazon lists (one per line)", "text", config.SOURCE_URLS,
-                    help="Checked in order; the first qualifying product wins."),
+                    help="Lists rotate daily; the best-scoring products across them are suggested."),
     ),
 )
 

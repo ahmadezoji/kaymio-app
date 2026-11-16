@@ -290,6 +290,8 @@ class ScheduledTaskSetting(Base):
     task_key: Mapped[str] = mapped_column(String(64), primary_key=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     run_time: Mapped[str] = mapped_column(String(5))  # HH:MM, server local time
+    every_days: Mapped[int | None] = mapped_column(Integer)  # run every N days (1 = daily)
+    weekdays: Mapped[str | None] = mapped_column(String(32))  # "0,3" = Mon+Thu; empty = any day
     options: Mapped[str | None] = mapped_column(Text)  # JSON-encoded dict
     updated_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
 

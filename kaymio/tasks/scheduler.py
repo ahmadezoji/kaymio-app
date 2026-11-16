@@ -29,6 +29,8 @@ from kaymio.database.scheduled_tasks import (
 logger = logging.getLogger(__name__)
 
 TICK_SECONDS = 20
+MIN_EVERY_DAYS, MAX_EVERY_DAYS = 1, 30
+WEEKDAY_NAMES = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 RUN_TIME_RE = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
 
 
@@ -75,6 +77,8 @@ class TaskSettings:
     run_time: str
     options: Dict[str, Any]
     overridden: bool = False
+    every_days: int = 1  # 1 = every day, 2 = every other day, ...
+    weekdays: Tuple[int, ...] = ()  # 0=Mon .. 6=Sun; empty = any day
 
     @property
     def hour_minute(self) -> Tuple[int, int]:
@@ -91,6 +95,8 @@ class ScheduledTask:
     default_enabled: bool
     default_run_time: str
     option_fields: Tuple[OptionField, ...] = field(default_factory=tuple)
+    default_every_days: int = 1
+    default_weekdays: Tuple[int, ...] = ()
 
     @property
     def state_key(self) -> str:
@@ -101,6 +107,8 @@ class ScheduledTask:
             enabled=self.default_enabled,
             run_time=normalize_run_time(self.default_run_time),
             options={f.name: f.default for f in self.option_fields},
+            every_days=self.default_every_days,
+            weekdays=self.default_weekdays,
         )
 
 
@@ -142,6 +150,35 @@ def normalize_run_time(raw: str) -> str:
     return value
 
 
+def normalize_every_days(raw: Any) -> int:
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        raise ValueError("Run every N days must be a whole number.") from None
+    if not MIN_EVERY_DAYS <= value <= MAX_EVERY_DAYS:
+        raise ValueError(f"Run every N days must be between {MIN_EVERY_DAYS} and {MAX_EVERY_DAYS}.")
+    return value
+
+
+def parse_weekdays(raw: Any) -> Tuple[int, ...]:
+    """Accept "0,3", "mon,thu", or a list of ints/names; empty means any day."""
+    if raw in (None, ""):
+        return ()
+    items = raw if isinstance(raw, (list, tuple)) else str(raw).split(",")
+    days = set()
+    for item in items:
+        token = str(item).strip().lower()[:3]
+        if not token:
+            continue
+        if token.isdigit() and int(token) in range(7):
+            days.add(int(token))
+        elif token in WEEKDAY_NAMES:
+            days.add(WEEKDAY_NAMES.index(token))
+        else:
+            raise ValueError(f"Unknown weekday {item!r}.")
+    return tuple(sorted(days)) if len(days) < 7 else ()
+
+
 def resolve_settings(task: ScheduledTask) -> TaskSettings:
     defaults = task.default_settings()
     override = load_task_settings_override(task.key)
@@ -158,7 +195,19 @@ def resolve_settings(task: ScheduledTask) -> TaskSettings:
         run_time = normalize_run_time(override["run_time"])
     except ValueError:
         run_time = defaults.run_time
-    return TaskSettings(enabled=override["enabled"], run_time=run_time, options=options, overridden=True)
+    try:
+        every_days = normalize_every_days(override.get("every_days") or defaults.every_days)
+        weekdays = parse_weekdays(override.get("weekdays")) if override.get("weekdays") is not None else defaults.weekdays
+    except ValueError:
+        every_days, weekdays = defaults.every_days, defaults.weekdays
+    return TaskSettings(
+        enabled=override["enabled"],
+        run_time=run_time,
+        options=options,
+        overridden=True,
+        every_days=every_days,
+        weekdays=weekdays,
+    )
 
 
 def update_settings(task_key: str, payload: Dict[str, Any]) -> TaskSettings:
@@ -172,7 +221,16 @@ def update_settings(task_key: str, payload: Dict[str, Any]) -> TaskSettings:
             options[option.name] = option.coerce(raw_options[option.name])
     enabled = bool(payload["enabled"]) if "enabled" in payload else current.enabled
     run_time = normalize_run_time(payload["run_time"]) if "run_time" in payload else current.run_time
-    save_task_settings_override(task_key, enabled=enabled, run_time=run_time, options=options)
+    every_days = normalize_every_days(payload["every_days"]) if "every_days" in payload else current.every_days
+    weekdays = parse_weekdays(payload["weekdays"]) if "weekdays" in payload else current.weekdays
+    save_task_settings_override(
+        task_key,
+        enabled=enabled,
+        run_time=run_time,
+        options=options,
+        every_days=every_days,
+        weekdays=",".join(str(day) for day in weekdays),
+    )
     return resolve_settings(task)
 
 
@@ -236,12 +294,18 @@ def _run_worker(task: ScheduledTask, settings: TaskSettings, trigger: str, lock:
 
 def _is_due(settings: TaskSettings, state: Dict[str, Any], now: dt.datetime) -> bool:
     target_hour, target_minute = settings.hour_minute
-    return (
-        settings.enabled
-        and now.hour == target_hour
-        and now.minute >= target_minute
-        and state.get("last_run_date") != now.date().isoformat()
-    )
+    if not (settings.enabled and now.hour == target_hour and now.minute >= target_minute):
+        return False
+    if settings.weekdays and now.weekday() not in settings.weekdays:
+        return False
+    last_run_date = state.get("last_run_date")
+    if not last_run_date:
+        return True
+    try:
+        days_since = (now.date() - dt.date.fromisoformat(last_run_date)).days
+    except ValueError:
+        return True
+    return days_since >= settings.every_days
 
 
 def _tick(now: dt.datetime) -> None:

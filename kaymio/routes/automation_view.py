@@ -36,6 +36,8 @@ def _task_to_dict(task: ScheduledTask) -> Dict[str, Any]:
         "description": task.description,
         "enabled": settings.enabled,
         "run_time": settings.run_time,
+        "every_days": settings.every_days,
+        "weekdays": list(settings.weekdays),
         "options": settings.options,
         "overridden": settings.overridden,
         "option_fields": [field.to_dict() for field in task.option_fields],

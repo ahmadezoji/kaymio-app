@@ -19,6 +19,7 @@ from kaymio.utils.openai_helper import (
     build_website_description,
     generate_caption_for_instagram,
     generate_hashtags_for_instagram,
+    generate_product_marketing_bundle,
     generate_pinterest_description,
     generate_pinterest_title,
     generate_product_scene_concept,
@@ -60,27 +61,59 @@ def generate_auto_post_content(
     website_boost_prompt: str = "",
     include_ai_image_concept: bool = False,
 ) -> AutoPostContent:
-    title = _store_title(product.title, product.source_label)
+    """Write all copy with one OpenAI request; any missing piece falls back to its own helper."""
     summary = _product_summary(product)
-
-    caption = generate_caption_for_instagram(title, summary, call_to_action=call_to_action or None)
-    hashtags = sanitize_tag_list(generate_hashtags_for_instagram(title, summary))
-    instagram_caption = compose_caption_with_hashtags(
-        prepend_comment_reply_caption_cta(caption),
-        hashtags,
+    bundle = generate_product_marketing_bundle(
+        product.title,
+        summary,
+        source_label=product.source_label,
+        call_to_action=call_to_action,
+        website_boost_prompt=website_boost_prompt,
+        include_scene_concept=include_ai_image_concept,
     )
 
-    pinterest_title = generate_pinterest_title(title, summary)
+    title = _bundle_text(bundle, "store_title")
+    if not title or len(title) > STORE_TITLE_MAX_CHARS * 2:
+        title = _store_title(product.title, product.source_label)
+    caption = _bundle_text(bundle, "instagram_caption") or generate_caption_for_instagram(
+        title, summary, call_to_action=call_to_action or None
+    )
+    hashtags = sanitize_tag_list(
+        _bundle_list(bundle, "instagram_hashtags") or generate_hashtags_for_instagram(title, summary)
+    )
+    pinterest_title = _bundle_text(bundle, "pinterest_title") or generate_pinterest_title(title, summary)
+    concept = ""
+    if include_ai_image_concept:
+        concept = _bundle_text(bundle, "scene_concept") or generate_product_scene_concept(title, summary)
+
     return AutoPostContent(
         title=title,
-        website_description=_website_description(title, summary, product.bullets, website_boost_prompt),
-        website_tags=sanitize_tag_list(generate_tags_for_product_for_pintrest(title, summary)),
-        instagram_caption=instagram_caption,
+        website_description=_website_description(
+            _bundle_text(bundle, "website_description") or build_website_description(title, summary, website_boost_prompt),
+            product.bullets,
+        ),
+        website_tags=sanitize_tag_list(
+            _bundle_list(bundle, "tags") or generate_tags_for_product_for_pintrest(title, summary)
+        ),
+        instagram_caption=compose_caption_with_hashtags(prepend_comment_reply_caption_cta(caption), hashtags),
         image_urls=product.image_urls[: max(1, image_count)],
         pinterest_title=pinterest_title,
-        pinterest_description=generate_pinterest_description(pinterest_title, summary),
-        ai_image_concept=generate_product_scene_concept(title, summary) if include_ai_image_concept else "",
+        pinterest_description=(
+            _bundle_text(bundle, "pinterest_description")
+            or generate_pinterest_description(pinterest_title, summary)
+        ),
+        ai_image_concept=concept,
     )
+
+
+def _bundle_text(bundle: Dict[str, Any], key: str) -> str:
+    value = bundle.get(key)
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _bundle_list(bundle: Dict[str, Any], key: str) -> List[str]:
+    value = bundle.get(key)
+    return [str(item) for item in value if str(item).strip()] if isinstance(value, list) else []
 
 
 def _store_title(amazon_title: str, source_label: str = "Amazon") -> str:
@@ -109,8 +142,7 @@ def _product_summary(product: AmazonProduct) -> str:
     return " ".join(part for part in parts if part)[:1500] or product.title
 
 
-def _website_description(title: str, summary: str, bullets: List[str], boost_prompt: str) -> str:
-    intro = build_website_description(title, summary, boost_prompt)
+def _website_description(intro: str, bullets: List[str]) -> str:
     if not bullets:
         return intro
     items = "".join(f"<li>{html.escape(bullet)}</li>" for bullet in bullets[:6])

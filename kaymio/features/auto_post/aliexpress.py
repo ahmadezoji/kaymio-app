@@ -9,33 +9,32 @@ pipeline.
 """
 from __future__ import annotations
 
-import datetime as dt
 import logging
 import os
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Set
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from kaymio.config import TRUTHY_VALUES
 from kaymio.database.auto_post import known_candidate_asins
 from kaymio.features.auto_post import config
 from kaymio.features.auto_post.approval import notify
-from kaymio.features.auto_post.task import expire_and_propose
+from kaymio.features.auto_post.catalog import WebsiteCatalog, load_website_catalog, rotate
+from kaymio.features.auto_post.ranking import ai_rerank, aliexpress_score
+from kaymio.features.auto_post.task import propose_products
 from kaymio.integrations.aliexpress import (
     AliExpressApiError,
     AliExpressClient,
-    extract_item_ids,
     get_aliexpress_client,
 )
 from kaymio.integrations.amazon.amazon_crawler import AmazonProduct
 from kaymio.integrations.telegram import get_telegram_settings
 from kaymio.tasks import OptionField, ScheduledTask, TaskSettings, register_task
-from kaymio.wordpress.wordpress_api_helper import _fetch_all_woocommerce_products
+from kaymio.tasks.scheduler import parse_weekdays
 
 logger = logging.getLogger(__name__)
 
 TASK_KEY = "aliexpress_auto_post"
-SKU_PREFIX = "AE-"
 # AliExpress product ids are 16 digits; the candidate key column holds 16 chars.
 MAX_PRODUCT_ID_LENGTH = 16
 
@@ -57,6 +56,11 @@ MIN_ORDERS = int(os.getenv("ALIEXPRESS_AUTO_POST_MIN_ORDERS", "500"))
 MIN_POSITIVE_RATE = float(os.getenv("ALIEXPRESS_AUTO_POST_MIN_POSITIVE_RATE", "90"))
 MIN_PRICE = float(os.getenv("ALIEXPRESS_AUTO_POST_MIN_PRICE", "3"))
 MAX_PRICE = float(os.getenv("ALIEXPRESS_AUTO_POST_MAX_PRICE", "80"))
+SUGGESTIONS_PER_RUN = int(os.getenv("ALIEXPRESS_AUTO_POST_SUGGESTIONS_PER_RUN", "3"))
+# Keyword lines searched per run (in today's rotation); each search is one free API call.
+QUERIES_PER_RUN = int(os.getenv("ALIEXPRESS_AUTO_POST_QUERIES_PER_RUN", "3"))
+EVERY_DAYS = int(os.getenv("ALIEXPRESS_AUTO_POST_EVERY_DAYS", "1"))
+WEEKDAYS = os.getenv("ALIEXPRESS_AUTO_POST_WEEKDAYS", "")
 # Try the Advanced-API hot product list first (falls back automatically when not granted).
 USE_HOT_PRODUCTS = os.getenv("ALIEXPRESS_USE_HOT_PRODUCTS", "1").lower() in TRUTHY_VALUES
 # Bulk/reseller listings look bad on the store; skip titles containing any of these words.
@@ -78,6 +82,7 @@ class AliExpressCriteria:
     min_positive_rate: float
     min_price: float
     max_price: float
+    queries_per_run: int = QUERIES_PER_RUN
 
 
 # --------------------------------------------------------------------------- #
@@ -87,39 +92,19 @@ def split_queries(raw: str) -> List[str]:
     return [line.strip() for line in re.split(r"[\n,]+", raw or "") if line.strip()]
 
 
-def find_website_aliexpress_ids() -> Set[str]:
-    """AliExpress ids already on kaymio.com (our ``AE-<id>`` SKUs or item URLs)."""
-    result = _fetch_all_woocommerce_products()
-    if result.get("error"):
-        raise RuntimeError(f"Cannot check existing kaymio.com products: {result['error']}")
-    ids: Set[str] = set()
-    for product in result.get("items") or []:
-        sku = str(product.get("sku") or "")
-        if sku.upper().startswith(SKU_PREFIX):
-            ids.add(sku[len(SKU_PREFIX):])
-        haystack = " ".join(str(product.get(key) or "") for key in ("external_url", "permalink", "description"))
-        ids.update(extract_item_ids(haystack))
-    return ids
-
-
-def rotate(items: Sequence[str], today: Optional[dt.date] = None) -> List[str]:
-    """Start from a different query each day so posts cover different niches."""
-    if not items:
-        return []
-    start = (today or dt.date.today()).toordinal() % len(items)
-    return list(items[start:]) + list(items[:start])
-
-
-def find_top_aliexpress_product(
+def find_top_aliexpress_products(
     criteria: AliExpressCriteria,
+    catalog: WebsiteCatalog,
     exclude_ids: Iterable[str],
     *,
+    limit: int,
     client: Optional[AliExpressClient] = None,
-) -> Optional[AmazonProduct]:
-    """Best-selling product of the first query (in today's rotation) that passes every rule."""
+) -> List[AmazonProduct]:
+    """Best ``limit`` products across today's first few keyword lines (scored, then AI re-ranked)."""
     client = client or get_aliexpress_client()
-    excluded = {str(pid) for pid in exclude_ids}
-    for query in rotate(criteria.queries):
+    excluded = {str(pid) for pid in exclude_ids} | catalog.aliexpress_ids
+    pool: List[Tuple[float, AmazonProduct]] = []
+    for query in rotate(criteria.queries)[: max(1, criteria.queries_per_run)]:
         try:
             items = _search(client, query, criteria)
         except AliExpressApiError as exc:
@@ -128,11 +113,17 @@ def find_top_aliexpress_product(
         logger.info("AliExpress query %r returned %d products", query, len(items))
         for rank, item in enumerate(items, start=1):
             product = product_from_api(item, query=query, rank=rank)
-            if product is None or product.asin in excluded:
+            if product is None or product.asin in excluded or not _passes(product, criteria):
                 continue
-            if _passes(product, criteria):
-                return product
-    return None
+            if catalog.has_similar_title(product.title):
+                continue
+            excluded.add(product.asin)
+            pool.append((aliexpress_score(product.orders, product.positive_rate, product.commission_rate), product))
+
+    pool.sort(key=lambda entry: entry[0], reverse=True)
+    ranked = ai_rerank([product for _, product in pool], [product.title for _, product in pool])
+    logger.info("AliExpress discovery: %d candidate(s), %d selected.", len(pool), min(limit, len(ranked)))
+    return ranked[:limit]
 
 
 def _search(client: AliExpressClient, query: str, criteria: AliExpressCriteria) -> List[Dict[str, Any]]:
@@ -240,23 +231,28 @@ def run_aliexpress_auto_post(settings: TaskSettings) -> None:
         min_price=float(options["min_price"]),
         max_price=float(options["max_price"]),
     )
-    exclude = find_website_aliexpress_ids() | known_candidate_asins()
-    product = find_top_aliexpress_product(criteria, exclude, client=client)
-    if product is None:
+    products = find_top_aliexpress_products(
+        criteria,
+        load_website_catalog(),
+        known_candidate_asins(),
+        limit=int(options["suggestions_per_run"]),
+        client=client,
+    )
+    if not products:
         notify(
             "🤷 AliExpress auto-post: no new product matched today "
             f"(≥ {criteria.min_orders} orders, ≥ {criteria.min_positive_rate:g}% positive, "
             f"${criteria.min_price:g}–${criteria.max_price:g}, not on kaymio.com)."
         )
         return
-    expire_and_propose(product, image_count=int(options["image_count"]), website_boost_prompt=WEBSITE_BOOST_PROMPT)
+    propose_products(products, image_count=int(options["image_count"]), website_boost_prompt=WEBSITE_BOOST_PROMPT)
 
 
 ALIEXPRESS_AUTO_POST_TASK = ScheduledTask(
     key=TASK_KEY,
     label="Instagram auto-post (AliExpress hot products)",
     description=(
-        "Finds the best-selling, well-reviewed AliExpress product (Affiliate API) that kaymio.com "
+        "Finds the best-selling, well-reviewed AliExpress products (Affiliate API, scored) that kaymio.com "
         "doesn't have yet, asks for approval on Telegram, then adds it to the website with your "
         "AliExpress affiliate link, generates an AI hero image, posts an Instagram carousel and "
         "pins the AI image on Pinterest."
@@ -264,7 +260,11 @@ ALIEXPRESS_AUTO_POST_TASK = ScheduledTask(
     run=run_aliexpress_auto_post,
     default_enabled=ENABLED,
     default_run_time=RUN_TIME,
+    default_every_days=EVERY_DAYS,
+    default_weekdays=parse_weekdays(WEEKDAYS),
     option_fields=(
+        OptionField("suggestions_per_run", "Suggestions per run", "int", SUGGESTIONS_PER_RUN,
+                    min=1, max=10, help="Each one arrives as its own Telegram approval message."),
         OptionField("image_count", "Images per post", "int", config.IMAGE_COUNT, min=1, max=10,
                     help="Carousel size (Instagram allows up to 10)."),
         OptionField("min_orders", "Minimum recent orders", "int", MIN_ORDERS, min=0),
@@ -273,7 +273,7 @@ ALIEXPRESS_AUTO_POST_TASK = ScheduledTask(
         OptionField("min_price", "Minimum price (USD)", "float", MIN_PRICE, min=0),
         OptionField("max_price", "Maximum price (USD)", "float", MAX_PRICE, min=0),
         OptionField("queries", "Keywords or category ids (one per line)", "text", QUERIES,
-                    help="A different line leads each day; the best seller that qualifies wins."),
+                    help="Lines rotate daily; the best-scoring products across them are suggested."),
     ),
 )
 

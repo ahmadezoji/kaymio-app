@@ -1,31 +1,25 @@
-"""Pick the top trending, well-rated Amazon product that kaymio.com does not sell yet."""
+"""Pick the best trending, well-rated Amazon products that kaymio.com does not sell yet."""
 from __future__ import annotations
 
 import logging
 import os
-import re
 from dataclasses import dataclass
-from typing import Iterable, Optional, Sequence, Set
+from typing import Iterable, List, Optional, Sequence, Tuple
 
+from kaymio.features.auto_post.catalog import WebsiteCatalog, rotate
+from kaymio.features.auto_post.ranking import ai_rerank, amazon_listing_score
 from kaymio.integrations.amazon.amazon_api import build_affiliate_link, fetch_product_from_canopy
 from kaymio.integrations.amazon.amazon_crawler import (
     AmazonCrawlError,
     AmazonListingItem,
     AmazonProduct,
-    extract_asins_from_text,
     fetch_listing,
     fetch_product,
     parse_price_value,
 )
 from kaymio.integrations.crawl4ai import Crawl4AIError
-from kaymio.wordpress.wordpress_api_helper import _fetch_all_woocommerce_products
 
 logger = logging.getLogger(__name__)
-
-# Only these product fields are needed to find ASINs; asking for less keeps listing fast.
-WEBSITE_ASIN_FIELDS = ("id", "external_url", "sku", "permalink")
-
-BARE_ASIN_RE = re.compile(r"\b(B0[A-Z0-9]{8})\b")
 
 
 @dataclass(frozen=True)
@@ -35,61 +29,53 @@ class DiscoveryCriteria:
     min_reviews: int
     max_detail_fetches: int
     canopy_fallback: bool
+    lists_per_run: int = 3
 
 
-def find_website_amazon_asins() -> Set[str]:
-    """ASINs of every WooCommerce product whose affiliate/SKU data points to Amazon.
-
-    Raises RuntimeError when WooCommerce can't be read: publishing a duplicate is
-    worse than skipping a run.
-    """
-    result = _fetch_all_woocommerce_products(fields=WEBSITE_ASIN_FIELDS)
-    if result.get("error"):
-        raise RuntimeError(f"Cannot check existing kaymio.com products: {result['error']}")
-    asins: Set[str] = set()
-    for product in result.get("items") or []:
-        haystack = " ".join(
-            str(product.get(key) or "") for key in ("external_url", "sku", "permalink")
-        )
-        asins.update(extract_asins_from_text(haystack))
-        asins.update(match.upper() for match in BARE_ASIN_RE.findall(haystack.upper()))
-    return asins
-
-
-def find_top_trending_product(
+def find_top_trending_products(
     criteria: DiscoveryCriteria,
+    catalog: WebsiteCatalog,
     exclude_asins: Iterable[str],
-) -> Optional[AmazonProduct]:
-    """Walk Amazon's lists in order and return the first product passing every rule.
+    *,
+    limit: int,
+) -> List[AmazonProduct]:
+    """Best ``limit`` products from today's Amazon lists that pass every rule.
 
-    Source lists are tried in configured order (hottest first by default) and
-    products in Amazon's own rank order, so "top 1" means the highest-ranked
-    product that is new to the site, rated >= min_rating with >= min_reviews,
-    and has a price and images.
+    1. Crawl up to ``lists_per_run`` lists, rotating which ones lead each day.
+    2. Score every new listing item (rank, rating, reviews, list type) -- no AI.
+    3. Optionally let one cheap AI call re-order the top few by appeal.
+    4. Open product pages in that order until ``limit`` products qualify.
     """
-    excluded = {asin.upper() for asin in exclude_asins}
-    detail_fetches = 0
-    for source_url in criteria.source_urls:
+    excluded = {asin.upper() for asin in exclude_asins} | catalog.amazon_asins
+    pool: List[Tuple[float, AmazonListingItem, str]] = []
+    for source_url in rotate(criteria.source_urls)[: max(1, criteria.lists_per_run)]:
         try:
             listing = fetch_listing(source_url)
         except (AmazonCrawlError, Crawl4AIError) as exc:
             logger.warning("Skipping Amazon list %s: %s", source_url, exc)
             continue
         logger.info("Amazon list %s returned %d products", source_url, len(listing))
-
         for item in listing:
             if item.asin in excluded or not _listing_passes(item, criteria):
                 continue
-            if detail_fetches >= criteria.max_detail_fetches:
-                logger.info("Reached max product detail fetches (%d).", criteria.max_detail_fetches)
-                return None
-            detail_fetches += 1
+            if item.title and catalog.has_similar_title(item.title):
+                continue
             excluded.add(item.asin)
+            pool.append((amazon_listing_score(item, source_url, len(listing)), item, source_url))
 
-            product = _load_product(item, source_url, criteria.canopy_fallback)
-            if product and _product_passes(product, criteria):
-                return product
-    return None
+    pool.sort(key=lambda entry: entry[0], reverse=True)
+    pool = ai_rerank(pool, [item.title or item.asin for _, item, _ in pool])
+
+    products: List[AmazonProduct] = []
+    max_fetches = max(criteria.max_detail_fetches, limit * 3)
+    for fetches, (_, item, source_url) in enumerate(pool):
+        if len(products) >= limit or fetches >= max_fetches:
+            break
+        product = _load_product(item, source_url, criteria.canopy_fallback)
+        if product and _product_passes(product, criteria) and not catalog.has_similar_title(product.title):
+            products.append(product)
+    logger.info("Amazon discovery: %d candidate(s), %d selected.", len(pool), len(products))
+    return products
 
 
 def _listing_passes(item: AmazonListingItem, criteria: DiscoveryCriteria) -> bool:

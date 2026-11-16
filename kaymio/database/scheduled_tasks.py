@@ -9,7 +9,7 @@ from .models import ScheduledTaskSetting
 
 
 def load_task_settings_override(task_key: str) -> Optional[Dict[str, Any]]:
-    """Return ``{enabled, run_time, options}`` saved from the UI, or None to use .env defaults."""
+    """Return ``{enabled, run_time, every_days, weekdays, options}`` saved from the UI, or None."""
     with session_scope() as session:
         row = session.get(ScheduledTaskSetting, task_key)
         if row is None:
@@ -21,12 +21,22 @@ def load_task_settings_override(task_key: str) -> Optional[Dict[str, Any]]:
         return {
             "enabled": bool(row.enabled),
             "run_time": row.run_time,
+            "every_days": row.every_days,
+            "weekdays": row.weekdays,
             "options": options if isinstance(options, dict) else {},
             "updated_at": row.updated_at.isoformat() if row.updated_at else None,
         }
 
 
-def save_task_settings_override(task_key: str, *, enabled: bool, run_time: str, options: Dict[str, Any]) -> None:
+def save_task_settings_override(
+    task_key: str,
+    *,
+    enabled: bool,
+    run_time: str,
+    options: Dict[str, Any],
+    every_days: int = 1,
+    weekdays: str = "",
+) -> None:
     with session_scope() as session:
         row = session.get(ScheduledTaskSetting, task_key)
         if row is None:
@@ -34,6 +44,8 @@ def save_task_settings_override(task_key: str, *, enabled: bool, run_time: str, 
             session.add(row)
         row.enabled = enabled
         row.run_time = run_time
+        row.every_days = every_days
+        row.weekdays = weekdays
         row.options = json.dumps(options)
 
 

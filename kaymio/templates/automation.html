@@ -77,6 +77,9 @@
       }
       .field textarea { min-height: 84px; resize: vertical; }
       .field .help { font-size: 0.75rem; color: #64748b; margin-top: 4px; }
+      .weekdays { display: flex; flex-wrap: wrap; gap: 6px 14px; }
+      .weekday { display: inline-flex; align-items: center; gap: 6px; font-size: 0.85rem; color: #cbd5e1; cursor: pointer; }
+      .weekday input { width: auto; }
       .switch { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-weight: 600; }
       .switch input { width: 18px; height: 18px; }
       .badge {
@@ -217,6 +220,19 @@
                 <label for="time-${esc(task.key)}">Daily run time (HH:MM)</label>
                 <input id="time-${esc(task.key)}" type="time" data-field="run_time" value="${esc(task.run_time)}" />
               </div>
+              <div class="field">
+                <label for="every-${esc(task.key)}">Run every N days</label>
+                <input id="every-${esc(task.key)}" type="number" min="1" max="30" step="1" data-field="every_days" value="${esc(task.every_days)}" />
+                <div class="help">1 = daily, 2 = every other day, 7 = weekly.</div>
+              </div>
+              <div class="field wide">
+                <label>Only on these days (none ticked = any day)</label>
+                <div class="weekdays">
+                  ${WEEKDAYS.map((name, day) => `
+                    <label class="weekday"><input type="checkbox" data-weekday="${day}" ${(task.weekdays || []).includes(day) ? "checked" : ""} /> ${name}</label>
+                  `).join("")}
+                </div>
+              </div>
               ${task.option_fields.map((field) => optionInput(task, field)).join("")}
             </div>
             <div class="meta">
@@ -245,6 +261,8 @@
         }
       }
 
+      const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
       function collectTaskPayload(panel) {
         const options = {};
         panel.querySelectorAll("[data-option]").forEach((el) => {
@@ -255,6 +273,8 @@
         return {
           enabled: panel.querySelector('[data-field="enabled"]').checked,
           run_time: panel.querySelector('[data-field="run_time"]').value,
+          every_days: panel.querySelector('[data-field="every_days"]').value,
+          weekdays: [...panel.querySelectorAll("[data-weekday]:checked")].map((el) => Number(el.dataset.weekday)),
           options,
         };
       }

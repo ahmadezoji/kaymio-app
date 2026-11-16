@@ -10,7 +10,7 @@ import os
 import random
 import re
 import time
-from typing import Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import requests
 from openai import OpenAI
@@ -483,6 +483,80 @@ def generate_product_scene_concept(title: str, description: str) -> str:
         max_output_tokens=180,
     )
     return (text or "").strip()
+
+
+def generate_product_marketing_bundle(
+    title: str,
+    summary: str,
+    *,
+    source_label: str = "Amazon",
+    call_to_action: str = "",
+    website_boost_prompt: str = "",
+    include_scene_concept: bool = False,
+) -> Dict[str, Any]:
+    """All marketing copy for one product in a single request (instead of ~8 separate calls).
+
+    Keys: store_title, instagram_caption, instagram_hashtags, tags, pinterest_title,
+    pinterest_description, website_description and (optionally) scene_concept.
+    Returns {} when OpenAI is unavailable or the answer isn't valid JSON; callers fill
+    missing keys with the single-purpose helpers.
+    """
+    scene_rule = (
+        '"scene_concept": 2-3 sentences describing ONE photorealistic ad scene (environment, props, '
+        "lighting, people/results showing the benefit; a before/after composition if the product "
+        "transforms something). Never change the product itself and never mention text or logos.\n"
+        if include_scene_concept
+        else ""
+    )
+    prompt = (
+        "Return one JSON object with exactly these keys:\n"
+        f'"store_title": clean store product name under 70 characters from this {source_label} listing '
+        "(keep the brand, drop keyword lists, sizes and colors).\n"
+        '"instagram_caption": playful, benefit-first Instagram caption with emoji dividers and short '
+        "spaced lines, 500-900 characters, social proof and urgency, ending with this call to action: "
+        f'"{call_to_action or "Shop via the link in bio."}". No hashtags in it.\n'
+        '"instagram_hashtags": array of 12-15 short niche hashtags without the # sign.\n'
+        '"tags": array of 6-8 SEO keywords for the web store and Pinterest.\n'
+        '"pinterest_title": keyword-rich Pinterest title under 70 characters.\n'
+        '"pinterest_description": two energetic, conversion-focused sentences.\n'
+        '"website_description": store-ready product description under 180 words, plain text. '
+        f"Guidance: {website_boost_prompt or 'lead with the main benefit and who it is for'}.\n"
+        f"{scene_rule}"
+        f"\nProduct title: {title}\nDetails: {summary[:1500]}"
+    )
+    text = _generate_response_text(
+        "You are an affiliate e-commerce copywriter for Instagram, Pinterest and a web store. "
+        "You answer with valid JSON only.",
+        prompt,
+        temperature=0.7,
+        max_output_tokens=1400,
+    )
+    data = _safe_json_loads(text or "")
+    return data if isinstance(data, dict) else {}
+
+
+def rank_titles_by_appeal(titles: List[str]) -> List[int]:
+    """Indices of ``titles`` ordered from most to least exciting to post. One short call.
+
+    Returns [] when OpenAI is unavailable or the answer can't be parsed.
+    """
+    if not titles:
+        return []
+    numbered = "\n".join(f"{index}. {title[:140]}" for index, title in enumerate(titles))
+    text = _generate_response_text(
+        "You pick products for an affiliate Instagram shop. Favor products that are surprising, "
+        "visual, useful, giftable or 'TikTok-made-me-buy-it' style; avoid boring commodities "
+        "(batteries, paper towels, basic supplies).",
+        "Order these products from most to least exciting to post. Reply with only a JSON array "
+        f"of their numbers, e.g. [2,0,1].\n{numbered}",
+        temperature=0.2,
+        max_output_tokens=60,
+    )
+    try:
+        order = json.loads(_strip_code_fences(text or ""))
+        return [int(index) for index in order]
+    except (ValueError, TypeError):
+        return []
 
 
 def generate_pinterest_title(title: str, description: str, extra_context: str = "") -> str:

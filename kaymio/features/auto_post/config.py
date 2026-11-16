@@ -26,6 +26,14 @@ MIN_RATING = float(os.getenv("AMAZON_TRENDING_MIN_RATING", "4.3"))
 MIN_REVIEWS = int(os.getenv("AMAZON_TRENDING_MIN_REVIEWS", "100"))
 SOURCE_URLS = os.getenv("AMAZON_TRENDING_SOURCE_URLS", ",".join(DEFAULT_SOURCE_URLS))
 
+# How many products to send to Telegram per run (each is approved separately).
+SUGGESTIONS_PER_RUN = int(os.getenv("INSTAGRAM_AUTO_POST_SUGGESTIONS_PER_RUN", "3"))
+# Amazon lists crawled per run; the list order rotates daily so different niches lead.
+LISTS_PER_RUN = int(os.getenv("AMAZON_TRENDING_LISTS_PER_RUN", "3"))
+# Schedule: run every N days and/or only on some weekdays (e.g. "mon,thu"); editable in the UI.
+EVERY_DAYS = int(os.getenv("INSTAGRAM_AUTO_POST_EVERY_DAYS", "1"))
+WEEKDAYS = os.getenv("INSTAGRAM_AUTO_POST_WEEKDAYS", "")
+
 # Upper bound on product pages crawled per run (each is one Crawl4AI request).
 MAX_DETAIL_FETCHES = int(os.getenv("AMAZON_TRENDING_MAX_DETAIL_FETCHES", "5"))
 # Fill gaps (missing price/images) from the Canopy API when CANOPY_API_KEY is set.
@@ -58,7 +66,8 @@ DEFAULT_AI_IMAGE_PROMPT = (
 # Empty values in .env fall back to the defaults.
 AI_IMAGE_MODEL = os.getenv("INSTAGRAM_AUTO_POST_AI_IMAGE_MODEL", "").strip() or "gpt-image-2"
 AI_IMAGE_PROMPT = os.getenv("INSTAGRAM_AUTO_POST_AI_IMAGE_PROMPT", "").strip() or DEFAULT_AI_IMAGE_PROMPT
-AI_IMAGE_QUALITY = os.getenv("INSTAGRAM_AUTO_POST_AI_IMAGE_QUALITY", "").strip() or "high"
+# "medium" keeps the per-image cost low; "high" costs roughly 3-4x more.
+AI_IMAGE_QUALITY = os.getenv("INSTAGRAM_AUTO_POST_AI_IMAGE_QUALITY", "").strip() or "medium"
 # "high" asks OpenAI to preserve the reference product's details as closely as possible.
 AI_IMAGE_INPUT_FIDELITY = os.getenv("INSTAGRAM_AUTO_POST_AI_IMAGE_INPUT_FIDELITY", "").strip() or "high"
 # 2:3 portrait suits Pinterest; Instagram gets a centered 4:5 crop of the same image.
