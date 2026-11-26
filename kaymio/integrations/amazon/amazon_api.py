@@ -10,7 +10,7 @@ CANOPY_REST_ENDPOINT = "https://rest.canopyapi.co/api/amazon/product"
 CANOPY_SEARCH_ENDPOINT = "https://rest.canopyapi.co/api/amazon/search"
 
 
-STORE_ID = os.getenv("AMAZON_ASSOCIATE_TAG", "kaymio09-20")
+STORE_ID = os.getenv("AMAZON_ASSOCIATE_TAG", "kaymio03-20")
 
 
 # ============ HELPERS =============
