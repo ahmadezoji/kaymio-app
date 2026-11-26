@@ -8,12 +8,13 @@ from __future__ import annotations
 
 import html
 from dataclasses import asdict, dataclass, field
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from kaymio.features.instagram_caption import (
     compose_caption_with_hashtags,
     prepend_comment_reply_caption_cta,
 )
+from kaymio.features.events import PromoEvent
 from kaymio.integrations.amazon.amazon_crawler import AmazonProduct
 from kaymio.utils.openai_helper import (
     build_website_description,
@@ -41,6 +42,10 @@ class AutoPostContent:
     pinterest_title: str = ""
     pinterest_description: str = ""  # hashtags from website_tags are appended on publish
     ai_image_concept: str = ""  # scene for the AI hero image (environment only, product unchanged)
+    # Promo event active when the copy was written (empty outside events).
+    event_name: str = ""
+    event_line: str = ""  # e.g. "🖤 Black Friday deal: -35% off"
+    event_category: str = ""  # extra website category, e.g. "Black Friday Deals"
     # Set from the "Use AI image" toggle on the Telegram approval message (off by default).
     use_ai_image: bool = False
 
@@ -60,8 +65,13 @@ def generate_auto_post_content(
     call_to_action: str = "",
     website_boost_prompt: str = "",
     include_ai_image_concept: bool = False,
+    event: Optional[PromoEvent] = None,
 ) -> AutoPostContent:
-    """Write all copy with one OpenAI request; any missing piece falls back to its own helper."""
+    """Write all copy with one OpenAI request; any missing piece falls back to its own helper.
+
+    During a promo event the event name is passed to that same request (no extra AI call),
+    and the event line + hashtags are added deterministically.
+    """
     summary = _product_summary(product)
     bundle = generate_product_marketing_bundle(
         product.title,
@@ -70,7 +80,9 @@ def generate_auto_post_content(
         call_to_action=call_to_action,
         website_boost_prompt=website_boost_prompt,
         include_scene_concept=include_ai_image_concept,
+        occasion=event.name if event else "",
     )
+    event_line = event.caption_for(product.discount_percent) if event else ""
 
     title = _bundle_text(bundle, "store_title")
     if not title or len(title) > STORE_TITLE_MAX_CHARS * 2:
@@ -79,8 +91,11 @@ def generate_auto_post_content(
         title, summary, call_to_action=call_to_action or None
     )
     hashtags = sanitize_tag_list(
-        _bundle_list(bundle, "instagram_hashtags") or generate_hashtags_for_instagram(title, summary)
+        (event.hashtags if event else [])
+        + (_bundle_list(bundle, "instagram_hashtags") or generate_hashtags_for_instagram(title, summary))
     )
+    if event_line:
+        caption = f"{event_line}\n\n{caption}"
     pinterest_title = _bundle_text(bundle, "pinterest_title") or generate_pinterest_title(title, summary)
     concept = ""
     if include_ai_image_concept:
@@ -98,12 +113,19 @@ def generate_auto_post_content(
         instagram_caption=compose_caption_with_hashtags(prepend_comment_reply_caption_cta(caption), hashtags),
         image_urls=product.image_urls[: max(1, image_count)],
         pinterest_title=pinterest_title,
-        pinterest_description=(
-            _bundle_text(bundle, "pinterest_description")
-            or generate_pinterest_description(pinterest_title, summary)
+        pinterest_description=_with_event_line(
+            event_line,
+            _bundle_text(bundle, "pinterest_description") or generate_pinterest_description(pinterest_title, summary),
         ),
         ai_image_concept=concept,
+        event_name=event.name if event else "",
+        event_line=event_line,
+        event_category=event.website_category if event else "",
     )
+
+
+def _with_event_line(event_line: str, text: str) -> str:
+    return f"{event_line} {text}".strip() if event_line else text
 
 
 def _bundle_text(bundle: Dict[str, Any], key: str) -> str:

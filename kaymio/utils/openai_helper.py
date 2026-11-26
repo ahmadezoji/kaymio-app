@@ -493,6 +493,7 @@ def generate_product_marketing_bundle(
     call_to_action: str = "",
     website_boost_prompt: str = "",
     include_scene_concept: bool = False,
+    occasion: str = "",
 ) -> Dict[str, Any]:
     """All marketing copy for one product in a single request (instead of ~8 separate calls).
 
@@ -522,7 +523,9 @@ def generate_product_marketing_bundle(
         '"website_description": store-ready product description under 180 words, plain text. '
         f"Guidance: {website_boost_prompt or 'lead with the main benefit and who it is for'}.\n"
         f"{scene_rule}"
-        f"\nProduct title: {title}\nDetails: {summary[:1500]}"
+        + (f"This is a {occasion} post: work the occasion into the caption and Pinterest copy naturally.\n"
+           if occasion else "")
+        + f"\nProduct title: {title}\nDetails: {summary[:1500]}"
     )
     text = _generate_response_text(
         "You are an affiliate e-commerce copywriter for Instagram, Pinterest and a web store. "

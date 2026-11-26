@@ -25,6 +25,7 @@ from kaymio.database.auto_post import (
     update_candidate,
 )
 from kaymio.features.auto_post import config
+from kaymio.integrations.amazon.amazon_crawler import AmazonProduct
 from kaymio.features.auto_post.publisher import publish_candidate
 from kaymio.integrations.telegram import (
     CallbackQuery,
@@ -90,6 +91,9 @@ def build_approval_caption(candidate: Dict[str, Any]) -> str:
     facts = []
     if product.get("price"):
         facts.append(f"💲 {esc(str(product['price']))}")
+    discount = AmazonProduct.from_dict(product).discount_percent if product else None
+    if discount:
+        facts.append(f"📉 -{discount}% (was {esc(str(product.get('list_price') or ''))})")
     if product.get("orders"):
         facts.append(f"🛒 {int(product['orders']):,} recent orders")
     if product.get("positive_rate") is not None:
@@ -108,8 +112,10 @@ def build_approval_caption(candidate: Dict[str, Any]) -> str:
 
     caption_text = str(content.get("instagram_caption") or "")
     concept_text = str(content.get("ai_image_concept") or "") if config.AI_IMAGE_ENABLED else ""
+    event_name = str(content.get("event_name") or "")
     header = [
-        f"🆕 <b>New {'AliExpress' if is_aliexpress else 'Amazon'} product suggestion #{candidate['id']}</b>",
+        f"🆕 <b>New {'AliExpress' if is_aliexpress else 'Amazon'} product suggestion #{candidate['id']}</b>"
+        + (f" · 🎉 {esc(event_name)}" if event_name else ""),
         "",
         f"<b>{esc(str(content.get('title') or candidate.get('title') or ''))}</b>",
         " · ".join(facts),

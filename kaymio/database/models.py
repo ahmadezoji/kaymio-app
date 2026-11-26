@@ -11,6 +11,7 @@ from typing import List
 
 from sqlalchemy import (
     Boolean,
+    Date,
     DateTime,
     ForeignKey,
     Integer,
@@ -324,3 +325,26 @@ class AutoPostCandidate(Base):
     updated_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
     decided_at: Mapped[dt.datetime | None] = mapped_column(DateTime)
     published_at: Mapped[dt.datetime | None] = mapped_column(DateTime)
+
+
+class PromoEvent(Base):
+    """A shopping event (Black Friday, Christmas, ...) that steers discovery and copy while active."""
+
+    __tablename__ = "promo_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(120))
+    start_date: Mapped[dt.date] = mapped_column(Date)
+    end_date: Mapped[dt.date] = mapped_column(Date)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    # One per line; tried before the task's own lists/keywords while the event is active.
+    amazon_lists: Mapped[str | None] = mapped_column(Text)
+    aliexpress_queries: Mapped[str | None] = mapped_column(Text)
+    hashtags: Mapped[str | None] = mapped_column(Text)  # comma/space separated, without '#'
+    # Caption line; {event} and {discount} are filled in (discount line is dropped when unknown).
+    caption_line: Mapped[str | None] = mapped_column(Text)
+    website_category: Mapped[str | None] = mapped_column(String(191))
+    min_discount_percent: Mapped[int] = mapped_column(Integer, default=0)
+    source: Mapped[str] = mapped_column(String(32), default="manual")  # manual | preset | ai
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow)
+    updated_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)

@@ -234,7 +234,12 @@ def upload_media_to_wordpress_ext(image_path):
         return image_url
     return None
         
-def create_woocommerce_product(name, description, price, image_path=None, tags=None, images=None, affiliate_link=None, category_id=None, sku=None):
+def create_woocommerce_product(name, description, price, image_path=None, tags=None, images=None, affiliate_link=None, category_id=None, sku=None, sale_price=None, extra_category_ids=None):
+    """Create an external (affiliate) product and return its permalink.
+
+    ``price`` is the regular price; ``sale_price`` (lower) makes WooCommerce show it as on sale.
+    ``extra_category_ids`` adds the product to more categories (e.g. an event category).
+    """
     if not all([consumer_key, consumer_secret]):
         print("WooCommerce API credentials not found")
         return None
@@ -278,12 +283,16 @@ def create_woocommerce_product(name, description, price, image_path=None, tags=N
         "images": image_payloads,
         "tags": [{"name": tag} for tag in tags] if tags else [],
         # Use category ID instead of name
-        "categories": [{"id": category_id}] if category_id else [],
+        "categories": [
+            {"id": cid} for cid in dict.fromkeys([category_id, *(extra_category_ids or [])]) if cid
+        ],
         "external_url": affiliate_link,
         "button_text": "Buy Product"  # Button text
     }
     if sku:
         product_data["sku"] = sku
+    if sale_price:
+        product_data["sale_price"] = str(sale_price)
 
     # Create product
     response = requests.post(
@@ -327,6 +336,21 @@ def upload_wordpress_media(file_path, wp_url, username, password):
     except Exception as e:
         print(f"Error uploading media: {e}")
         return None
+
+def ensure_woocommerce_category(name):
+    """Id of the product category named ``name`` (case-insensitive), creating it if missing."""
+    global all_categories
+    wanted = (name or "").strip()
+    if not wanted:
+        return None
+    for category in get_all_categories() or []:
+        if str(category.get("name") or "").strip().casefold() == wanted.casefold():
+            return category.get("id")
+    category_id = create_woocommerce_category(wanted)
+    if category_id:
+        all_categories = []  # refresh the cache next time
+    return category_id
+
 
 def create_woocommerce_category(name, parent_id=None):
     url = f"{wc_url}/wp-json/wc/v3/products/categories"

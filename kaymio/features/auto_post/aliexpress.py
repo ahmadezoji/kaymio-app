@@ -20,8 +20,9 @@ from kaymio.database.auto_post import known_candidate_asins
 from kaymio.features.auto_post import config
 from kaymio.features.auto_post.approval import notify
 from kaymio.features.auto_post.catalog import WebsiteCatalog, load_website_catalog, rotate
-from kaymio.features.auto_post.ranking import ai_rerank, aliexpress_score
+from kaymio.features.auto_post.ranking import ai_rerank, aliexpress_score, prefer_discounts
 from kaymio.features.auto_post.task import propose_products
+from kaymio.features.events import get_active_event
 from kaymio.integrations.aliexpress import (
     AliExpressApiError,
     AliExpressClient,
@@ -83,6 +84,10 @@ class AliExpressCriteria:
     min_price: float
     max_price: float
     queries_per_run: int = QUERIES_PER_RUN
+    # Set while a promo event is active (see the Amazon DiscoveryCriteria).
+    priority_queries: Sequence[str] = ()
+    prefer_discount: bool = False
+    min_discount_percent: int = 0
 
 
 # --------------------------------------------------------------------------- #
@@ -104,7 +109,8 @@ def find_top_aliexpress_products(
     client = client or get_aliexpress_client()
     excluded = {str(pid) for pid in exclude_ids} | catalog.aliexpress_ids
     pool: List[Tuple[float, AmazonProduct]] = []
-    for query in rotate(criteria.queries)[: max(1, criteria.queries_per_run)]:
+    base_queries = rotate([query for query in criteria.queries if query not in criteria.priority_queries])
+    for query in list(criteria.priority_queries) + base_queries[: max(1, criteria.queries_per_run)]:
         try:
             items = _search(client, query, criteria)
         except AliExpressApiError as exc:
@@ -122,6 +128,8 @@ def find_top_aliexpress_products(
 
     pool.sort(key=lambda entry: entry[0], reverse=True)
     ranked = ai_rerank([product for _, product in pool], [product.title for _, product in pool])
+    if criteria.prefer_discount:
+        ranked = prefer_discounts(ranked, criteria.min_discount_percent)
     logger.info("AliExpress discovery: %d candidate(s), %d selected.", len(pool), min(limit, len(ranked)))
     return ranked[:limit]
 
@@ -188,12 +196,17 @@ def product_from_api(item: Dict[str, Any], *, query: str = "", rank: Optional[in
         orders=_int(item.get("lastest_volume")),
         positive_rate=_percent(item.get("evaluate_rate")),
         commission_rate=str(item.get("commission_rate") or ""),
+        list_price=_format_price(item, original=True),
     )
 
 
-def _format_price(item: Dict[str, Any]) -> str:
-    value = item.get("target_sale_price") or item.get("target_app_sale_price") or item.get("sale_price")
-    currency = item.get("target_sale_price_currency") or item.get("sale_price_currency") or ""
+def _format_price(item: Dict[str, Any], *, original: bool = False) -> str:
+    if original:
+        value = item.get("target_original_price") or item.get("original_price")
+        currency = item.get("target_original_price_currency") or item.get("original_price_currency") or ""
+    else:
+        value = item.get("target_sale_price") or item.get("target_app_sale_price") or item.get("sale_price")
+        currency = item.get("target_sale_price_currency") or item.get("sale_price_currency") or ""
     if not value:
         return ""
     return f"${value}" if currency == "USD" else f"{value} {currency}".strip()
@@ -224,12 +237,16 @@ def run_aliexpress_auto_post(settings: TaskSettings) -> None:
         logger.warning("ALIEXPRESS_TRACKING_ID is empty: links may not be credited to your tracking id.")
 
     options = settings.options
+    event = get_active_event()
     criteria = AliExpressCriteria(
         queries=split_queries(options["queries"]),
         min_orders=int(options["min_orders"]),
         min_positive_rate=float(options["min_positive_rate"]),
         min_price=float(options["min_price"]),
         max_price=float(options["max_price"]),
+        priority_queries=event.aliexpress_queries if event else (),
+        prefer_discount=event is not None,
+        min_discount_percent=event.min_discount_percent if event else 0,
     )
     products = find_top_aliexpress_products(
         criteria,
@@ -245,7 +262,12 @@ def run_aliexpress_auto_post(settings: TaskSettings) -> None:
             f"${criteria.min_price:g}–${criteria.max_price:g}, not on kaymio.com)."
         )
         return
-    propose_products(products, image_count=int(options["image_count"]), website_boost_prompt=WEBSITE_BOOST_PROMPT)
+    propose_products(
+        products,
+        image_count=int(options["image_count"]),
+        website_boost_prompt=WEBSITE_BOOST_PROMPT,
+        event=event,
+    )
 
 
 ALIEXPRESS_AUTO_POST_TASK = ScheduledTask(

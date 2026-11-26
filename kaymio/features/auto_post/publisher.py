@@ -41,6 +41,7 @@ from kaymio.utils.media_storage import (
 from kaymio.utils.openai_helper import edit_image, generate_product_scene_concept
 from kaymio.wordpress.wordpress_api_helper import (
     create_woocommerce_product,
+    ensure_woocommerce_category,
     find_wordpress_nearest_category,
 )
 
@@ -102,12 +103,26 @@ def publish_to_website(product: AmazonProduct, content: AutoPostContent) -> str:
             category_id = find_wordpress_nearest_category(product.category)
         except Exception as exc:
             logger.warning("Category lookup failed for %r: %s", product.category, exc)
+    extra_category_ids = []
+    if content.event_category:
+        try:
+            event_category_id = ensure_woocommerce_category(content.event_category)
+        except Exception as exc:
+            event_category_id = None
+            logger.warning("Event category %r failed: %s", content.event_category, exc)
+        if event_category_id:
+            extra_category_ids.append(event_category_id)
+
+    # A real discount shows as a sale on the store: regular = original price, sale = current price.
+    original_price = product.list_price_value
 
     # WooCommerce sideloads remote image URLs itself, so no local download is needed.
     product_url = create_woocommerce_product(
         name=content.title,
         description=content.website_description,
-        price=f"{price_value:.2f}",
+        price=f"{(original_price or price_value):.2f}",
+        sale_price=f"{price_value:.2f}" if original_price else None,
+        extra_category_ids=extra_category_ids,
         tags=content.website_tags,
         images=list(content.image_urls),
         affiliate_link=product.affiliate_link,

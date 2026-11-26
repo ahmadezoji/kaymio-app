@@ -69,6 +69,8 @@ class AmazonProduct:
     orders: Optional[int] = None  # AliExpress: recent sales volume
     positive_rate: Optional[float] = None  # AliExpress: positive feedback, 0-100
     commission_rate: str = ""
+    # Price before discount ("List price" on Amazon, original price on AliExpress).
+    list_price: str = ""
 
     @property
     def source_label(self) -> str:
@@ -77,6 +79,19 @@ class AmazonProduct:
     @property
     def price_value(self) -> Optional[float]:
         return parse_price_value(self.price)
+
+    @property
+    def list_price_value(self) -> Optional[float]:
+        """Original price, only when it is really higher than the current price."""
+        original, current = parse_price_value(self.list_price), self.price_value
+        return original if original and current and original > current else None
+
+    @property
+    def discount_percent(self) -> Optional[int]:
+        original = self.list_price_value
+        if not original:
+            return None
+        return round((1 - self.price_value / original) * 100) or None
 
     @property
     def is_publishable(self) -> bool:
@@ -177,6 +192,7 @@ def parse_product_html(html: str, *, asin: str, product_url: str) -> AmazonProdu
         product_url=product_url,
         affiliate_link=build_affiliate_link(asin),
         price=_product_price(soup),
+        list_price=_product_list_price(soup),
         rating=parse_rating(rating_text or ""),
         review_count=parse_int(_text(soup.select_one("#acrCustomerReviewText"))),
         image_urls=_product_images(html, soup),
@@ -273,6 +289,22 @@ def _product_price(soup: BeautifulSoup) -> str:
         "#priceblock_ourprice",
         "#priceblock_dealprice",
         ".a-price .a-offscreen",
+    ):
+        price = _first_price(_text(soup.select_one(selector)))
+        if price:
+            return price
+    return ""
+
+
+def _product_list_price(soup: BeautifulSoup) -> str:
+    """The struck-through "List Price" / "Typical price" shown next to a deal price."""
+    for selector in (
+        "#corePriceDisplay_desktop_feature_div .basisPrice .a-offscreen",
+        "#corePriceDisplay_desktop_feature_div .a-price.a-text-price .a-offscreen",
+        "#corePrice_feature_div .a-price.a-text-price .a-offscreen",
+        "#apex_desktop .a-price.a-text-price .a-offscreen",
+        "#listPrice",
+        "#priceblock_listprice",
     ):
         price = _first_price(_text(soup.select_one(selector)))
         if price:

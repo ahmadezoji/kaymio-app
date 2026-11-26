@@ -12,7 +12,7 @@ import os
 from typing import List, Optional, Sequence, TypeVar
 
 from kaymio.config import TRUTHY_VALUES
-from kaymio.integrations.amazon.amazon_crawler import AmazonListingItem
+from kaymio.integrations.amazon.amazon_crawler import AmazonListingItem, AmazonProduct
 from kaymio.utils.openai_helper import rank_titles_by_appeal
 
 logger = logging.getLogger(__name__)
@@ -54,6 +54,19 @@ def aliexpress_score(orders: Optional[int], positive_rate: Optional[float], comm
         commission = 0.0
     commission_score = _clamp(commission / 15)
     return 0.5 * orders_score + 0.3 * feedback_score + 0.2 * commission_score
+
+
+def prefer_discounts(products: Sequence[AmazonProduct], min_discount_percent: int = 0) -> List[AmazonProduct]:
+    """During an event: products meeting the minimum discount first, then by discount size.
+
+    Stable, so products with equal discounts keep their score order. Products without a
+    known discount are still kept (last), so an event never empties the suggestions.
+    """
+    def key(product: AmazonProduct):
+        discount = product.discount_percent or 0
+        return (discount >= min_discount_percent and discount > 0, discount)
+
+    return sorted(products, key=key, reverse=True)
 
 
 def ai_rerank(candidates: Sequence[T], titles: Sequence[str]) -> List[T]:

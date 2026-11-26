@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Iterable, List, Optional, Sequence, Tuple
 
 from kaymio.features.auto_post.catalog import WebsiteCatalog, rotate
-from kaymio.features.auto_post.ranking import ai_rerank, amazon_listing_score
+from kaymio.features.auto_post.ranking import ai_rerank, amazon_listing_score, prefer_discounts
 from kaymio.integrations.amazon.amazon_api import build_affiliate_link, fetch_product_from_canopy
 from kaymio.integrations.amazon.amazon_crawler import (
     AmazonCrawlError,
@@ -30,6 +30,11 @@ class DiscoveryCriteria:
     max_detail_fetches: int
     canopy_fallback: bool
     lists_per_run: int = 3
+    # Set while a promo event is active: its lists are crawled first, and discounted
+    # products (>= min_discount_percent first) are preferred.
+    priority_urls: Sequence[str] = ()
+    prefer_discount: bool = False
+    min_discount_percent: int = 0
 
 
 def find_top_trending_products(
@@ -48,7 +53,8 @@ def find_top_trending_products(
     """
     excluded = {asin.upper() for asin in exclude_asins} | catalog.amazon_asins
     pool: List[Tuple[float, AmazonListingItem, str]] = []
-    for source_url in rotate(criteria.source_urls)[: max(1, criteria.lists_per_run)]:
+    base_urls = rotate([url for url in criteria.source_urls if url not in criteria.priority_urls])
+    for source_url in list(criteria.priority_urls) + base_urls[: max(1, criteria.lists_per_run)]:
         try:
             listing = fetch_listing(source_url)
         except (AmazonCrawlError, Crawl4AIError) as exc:
@@ -68,14 +74,18 @@ def find_top_trending_products(
 
     products: List[AmazonProduct] = []
     max_fetches = max(criteria.max_detail_fetches, limit * 3)
+    # During an event collect a few extra so the best discounts can be picked.
+    wanted = limit * 2 if criteria.prefer_discount else limit
     for fetches, (_, item, source_url) in enumerate(pool):
-        if len(products) >= limit or fetches >= max_fetches:
+        if len(products) >= wanted or fetches >= max_fetches:
             break
         product = _load_product(item, source_url, criteria.canopy_fallback)
         if product and _product_passes(product, criteria) and not catalog.has_similar_title(product.title):
             products.append(product)
-    logger.info("Amazon discovery: %d candidate(s), %d selected.", len(pool), len(products))
-    return products
+    if criteria.prefer_discount:
+        products = prefer_discounts(products, criteria.min_discount_percent)
+    logger.info("Amazon discovery: %d candidate(s), %d qualified.", len(pool), len(products))
+    return products[:limit]
 
 
 def _listing_passes(item: AmazonListingItem, criteria: DiscoveryCriteria) -> bool:

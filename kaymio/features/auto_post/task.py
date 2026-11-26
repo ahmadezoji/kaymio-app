@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Sequence
+from typing import Optional, Sequence
 
 from kaymio.database.auto_post import (
     create_candidate,
@@ -15,6 +15,7 @@ from kaymio.features.auto_post.approval import notify, send_approval_request
 from kaymio.features.auto_post.content import generate_auto_post_content
 from kaymio.features.auto_post.catalog import load_website_catalog
 from kaymio.features.auto_post.discovery import DiscoveryCriteria, find_top_trending_products
+from kaymio.features.events import PromoEvent, get_active_event
 from kaymio.integrations.amazon.amazon_crawler import AmazonProduct
 from kaymio.integrations.telegram import get_telegram_settings
 from kaymio.tasks import OptionField, ScheduledTask, TaskSettings, register_task
@@ -29,6 +30,7 @@ def run_auto_post(settings: TaskSettings) -> None:
         raise RuntimeError("Telegram is not configured (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID).")
 
     options = settings.options
+    event = get_active_event()
     criteria = DiscoveryCriteria(
         source_urls=config.split_source_urls(options["source_urls"]),
         min_rating=float(options["min_rating"]),
@@ -36,6 +38,9 @@ def run_auto_post(settings: TaskSettings) -> None:
         max_detail_fetches=config.MAX_DETAIL_FETCHES,
         canopy_fallback=config.CANOPY_FALLBACK,
         lists_per_run=config.LISTS_PER_RUN,
+        priority_urls=event.amazon_lists if event else (),
+        prefer_discount=event is not None,
+        min_discount_percent=event.min_discount_percent if event else 0,
     )
     products = find_top_trending_products(
         criteria,
@@ -55,10 +60,17 @@ def run_auto_post(settings: TaskSettings) -> None:
         products,
         image_count=int(options["image_count"]),
         website_boost_prompt=config.WEBSITE_BOOST_PROMPT,
+        event=event,
     )
 
 
-def propose_products(products: Sequence[AmazonProduct], *, image_count: int, website_boost_prompt: str) -> int:
+def propose_products(
+    products: Sequence[AmazonProduct],
+    *,
+    image_count: int,
+    website_boost_prompt: str,
+    event: Optional[PromoEvent] = None,
+) -> int:
     """Shared by every source: expire old suggestions, then send each product for approval.
 
     One failing product doesn't stop the others. Returns how many were sent.
@@ -69,7 +81,9 @@ def propose_products(products: Sequence[AmazonProduct], *, image_count: int, web
     sent = 0
     for product in products:
         try:
-            propose_product(product, image_count=image_count, website_boost_prompt=website_boost_prompt)
+            propose_product(
+                product, image_count=image_count, website_boost_prompt=website_boost_prompt, event=event
+            )
             sent += 1
         except Exception:
             logger.exception("Auto-post: could not propose %s %s.", product.source_label, product.asin)
@@ -78,7 +92,13 @@ def propose_products(products: Sequence[AmazonProduct], *, image_count: int, web
     return sent
 
 
-def propose_product(product: AmazonProduct, *, image_count: int, website_boost_prompt: str) -> None:
+def propose_product(
+    product: AmazonProduct,
+    *,
+    image_count: int,
+    website_boost_prompt: str,
+    event: Optional[PromoEvent] = None,
+) -> None:
     """Write the copy, store the candidate and ask on Telegram."""
     content = generate_auto_post_content(
         product,
@@ -86,6 +106,7 @@ def propose_product(product: AmazonProduct, *, image_count: int, website_boost_p
         call_to_action=config.CAPTION_CTA,
         website_boost_prompt=website_boost_prompt,
         include_ai_image_concept=config.AI_IMAGE_ENABLED,
+        event=event,
     )
     candidate = create_candidate(
         asin=product.asin,

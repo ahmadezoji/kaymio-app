@@ -1,11 +1,14 @@
 """Automation page: pause/edit/run scheduled tasks and review auto-post suggestions."""
 from __future__ import annotations
 
+import datetime as dt
 import logging
 from typing import Any, Dict
 
 from flask import Blueprint, jsonify, render_template, request
 
+from kaymio.database.promo_events import delete_promo_event, list_promo_events, save_promo_event
+from kaymio.features.events import build_preset, get_active_event, list_presets, validate_event_payload
 from kaymio.database.auto_post import STATUS_FAILED, get_candidate, list_candidates
 from kaymio.features.auto_post import start_publish
 from kaymio.integrations.crawl4ai import Crawl4AIError, get_crawl4ai_client
@@ -141,3 +144,50 @@ def api_health():
             telegram_status.update(ok=False, error=str(exc))
 
     return jsonify({"crawl4ai": crawl_status, "telegram": telegram_status})
+
+
+# --------------------------------------------------------------------------- #
+# Promo events
+# --------------------------------------------------------------------------- #
+@automation_bp.route("/events", methods=["GET"])
+def api_list_events():
+    active = get_active_event()
+    return jsonify({
+        "events": list_promo_events(),
+        "presets": list_presets(dt.date.today().year),
+        "active_event_id": active.id if active else None,
+    })
+
+
+@automation_bp.route("/events", methods=["POST"])
+def api_create_event():
+    payload = request.get_json(silent=True) or {}
+    if payload.get("preset"):
+        try:
+            payload = build_preset(str(payload["preset"]), int(payload.get("year") or dt.date.today().year))
+        except (KeyError, ValueError) as exc:
+            return jsonify({"error": str(exc)}), 400
+    try:
+        fields = validate_event_payload(payload)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"event": save_promo_event(fields)}), 201
+
+
+@automation_bp.route("/events/<int:event_id>", methods=["PUT"])
+def api_update_event(event_id: int):
+    try:
+        fields = validate_event_payload(request.get_json(silent=True) or {}, partial=True)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    event = save_promo_event(fields, event_id)
+    if event is None:
+        return jsonify({"error": "Event not found."}), 404
+    return jsonify({"event": event})
+
+
+@automation_bp.route("/events/<int:event_id>", methods=["DELETE"])
+def api_delete_event(event_id: int):
+    if not delete_promo_event(event_id):
+        return jsonify({"error": "Event not found."}), 404
+    return jsonify({"ok": True})

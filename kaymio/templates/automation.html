@@ -134,6 +134,20 @@
 
       <div class="panel">
         <div class="task-head">
+          <h2>Promo events</h2>
+          <div class="actions-row">
+            <select id="preset-select" class="btn"></select>
+            <button class="btn" id="add-preset-btn">Add preset</button>
+            <button class="btn" id="add-event-btn">Add blank event</button>
+          </div>
+        </div>
+        <p class="muted">While an event is active, auto-posts search its lists/keywords first, prefer discounted
+          products, add its line + hashtags to captions, and put products in its website category.</p>
+        <div id="event-list"><div class="empty-state">Loading…</div></div>
+      </div>
+
+      <div class="panel">
+        <div class="task-head">
           <h2>Auto-post suggestions</h2>
           <button class="btn" id="refresh-candidates-btn">Refresh</button>
         </div>
@@ -390,7 +404,125 @@
 
       document.getElementById("refresh-candidates-btn").addEventListener("click", loadCandidates);
 
+      // ---------------------------------------------------------- promo events
+      const eventListEl = document.getElementById("event-list");
+      const EVENT_TEXT_FIELDS = [
+        ["amazon_lists", "Amazon lists (one per line, searched first)", true],
+        ["aliexpress_queries", "AliExpress keywords (one per line, searched first)", true],
+        ["hashtags", "Hashtags (comma separated, no #)", false],
+        ["caption_line", "Caption line ({event} and {discount} are filled in)", false],
+        ["website_category", "Website category", false],
+      ];
+
+      function renderEvent(ev, activeId) {
+        const textFields = EVENT_TEXT_FIELDS.map(([name, label, multi]) => `
+          <div class="field ${multi ? "wide" : ""}">
+            <label>${esc(label)}</label>
+            ${multi
+              ? `<textarea data-event-field="${name}">${esc(ev[name])}</textarea>`
+              : `<input type="text" data-event-field="${name}" value="${esc(ev[name])}" />`}
+          </div>`).join("");
+        return `
+          <div class="panel" data-event="${ev.id}" style="margin-bottom:12px;">
+            <div class="task-head">
+              <div>
+                ${ev.id === activeId ? '<span class="badge on">Active now</span>' : ""}
+                <span class="badge ${ev.enabled ? "" : "off"}">${ev.enabled ? "Enabled" : "Disabled"}</span>
+                <span class="badge">${esc(ev.source)}</span>
+              </div>
+              <label class="switch"><input type="checkbox" data-event-field="enabled" ${ev.enabled ? "checked" : ""} /> Enabled</label>
+            </div>
+            <div class="fields">
+              <div class="field"><label>Name</label><input type="text" data-event-field="name" value="${esc(ev.name)}" /></div>
+              <div class="field"><label>Start date</label><input type="date" data-event-field="start_date" value="${esc(ev.start_date)}" /></div>
+              <div class="field"><label>End date</label><input type="date" data-event-field="end_date" value="${esc(ev.end_date)}" /></div>
+              <div class="field"><label>Preferred min. discount (%)</label>
+                <input type="number" min="0" max="90" data-event-field="min_discount_percent" value="${esc(ev.min_discount_percent)}" />
+                <div class="help">Products at or above it are suggested first.</div></div>
+              ${textFields}
+            </div>
+            <div class="actions-row">
+              <button class="btn btn-primary" data-event-action="save">Save</button>
+              <button class="btn" data-event-action="delete">Delete</button>
+            </div>
+          </div>`;
+      }
+
+      async function loadEvents() {
+        try {
+          const data = await api("/events");
+          const presets = data.presets || [];
+          document.getElementById("preset-select").innerHTML = presets
+            .map((p) => `<option value="${esc(p.key)}">${esc(p.name)} (${esc(p.start_date)} → ${esc(p.end_date)})</option>`)
+            .join("");
+          const events = data.events || [];
+          eventListEl.innerHTML = events.length
+            ? events.map((ev) => renderEvent(ev, data.active_event_id)).join("")
+            : '<div class="empty-state">No events yet. Add a preset (e.g. Black Friday) to start.</div>';
+        } catch (err) {
+          eventListEl.innerHTML = `<div class="empty-state">${esc(err.message)}</div>`;
+        }
+      }
+
+      function collectEvent(panel) {
+        const payload = {};
+        panel.querySelectorAll("[data-event-field]").forEach((el) => {
+          payload[el.dataset.eventField] = el.type === "checkbox" ? el.checked : el.value;
+        });
+        return payload;
+      }
+
+      eventListEl.addEventListener("click", async (event) => {
+        const button = event.target.closest("button[data-event-action]");
+        if (!button) return;
+        const panel = button.closest("[data-event]");
+        const id = panel.dataset.event;
+        button.disabled = true;
+        try {
+          if (button.dataset.eventAction === "save") {
+            await api(`/events/${id}`, { method: "PUT", body: JSON.stringify(collectEvent(panel)) });
+            flash("Event saved.", "success");
+          } else {
+            if (!confirm("Delete this event?")) return;
+            await api(`/events/${id}`, { method: "DELETE" });
+            flash("Event deleted.", "success");
+          }
+          await loadEvents();
+        } catch (err) {
+          flash(err.message, "error");
+        } finally {
+          button.disabled = false;
+        }
+      });
+
+      document.getElementById("add-preset-btn").addEventListener("click", async () => {
+        try {
+          await api("/events", {
+            method: "POST",
+            body: JSON.stringify({ preset: document.getElementById("preset-select").value }),
+          });
+          flash("Event added. Review it below and click Save if you change anything.", "success");
+          await loadEvents();
+        } catch (err) {
+          flash(err.message, "error");
+        }
+      });
+
+      document.getElementById("add-event-btn").addEventListener("click", async () => {
+        const today = new Date().toISOString().slice(0, 10);
+        try {
+          await api("/events", {
+            method: "POST",
+            body: JSON.stringify({ name: "New event", start_date: today, end_date: today, enabled: false }),
+          });
+          await loadEvents();
+        } catch (err) {
+          flash(err.message, "error");
+        }
+      });
+
       loadTasks();
+      loadEvents();
       loadCandidates();
     </script>
   </body>
